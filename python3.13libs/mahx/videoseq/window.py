@@ -190,6 +190,55 @@ class VideoInfo:
 
 # ─── Helper Functions（实现在 mahx/videoseq/ffmpeg.py）───────────────
 
+def _video_path_from_mime(mime) -> str:
+    """从拖放数据提取第一个有效的视频文件路径，无则返回空串。
+
+    兼容资源管理器（URL）与纯文本路径（含引号包裹）；
+    非视频扩展名或文件不存在返回空串。
+    """
+    candidates = []
+    if mime.hasUrls():
+        candidates.extend(url.toLocalFile() for url in mime.urls())
+    if mime.hasText():
+        text = mime.text().strip().strip('"').strip()
+        if text:
+            candidates.append(text)
+    for path in candidates:
+        if path.lower().endswith(tuple(VIDEO_EXTENSIONS)) and os.path.isfile(path):
+            return path
+    return ""
+
+
+class _VideoSourceGroup(QGroupBox):
+    """视频源分组框 —— 支持把视频文件直接拖入。
+
+    识别逻辑见模块级 ``_video_path_from_mime``；子控件忽略的拖放事件
+    会沿父链传播到这里，拖到组内任意位置都生效。
+    窗口级（``_VideoToSequenceWindow``）也接收拖放作为兜底。
+    """
+
+    videoDropped = Signal(str)
+
+    def __init__(self, title, parent=None):
+        super().__init__(title, parent)
+        self.setAcceptDrops(True)
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802 — Qt 命名约定
+        if _video_path_from_mime(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:  # noqa: N802 — Qt 命名约定
+        # dragEnter 接受后，dragMove 也须接受，drop 才会触发
+        event.acceptProposedAction()
+
+    def dropEvent(self, event) -> None:  # noqa: N802 — Qt 命名约定
+        path = _video_path_from_mime(event.mimeData())
+        if path:
+            self.videoDropped.emit(path)
+            event.acceptProposedAction()
+
 
 # ─── Worker Threads ──────────────────────────────────────────────────
 
@@ -608,6 +657,8 @@ class _VideoToSequenceWindow(QDialog):
         self._build_ui()
         self.setStyleSheet(STYLE_SHEET)
         self._apply_window_flags()
+        # 整窗接收视频文件拖放（视频源分组框也单独支持，子控件未命中时兜底）
+        self.setAcceptDrops(True)
 
     # ── Window flags (Windows) ───────────────────────────────────────
 
@@ -640,8 +691,9 @@ class _VideoToSequenceWindow(QDialog):
         main_layout.addStretch()
 
     def _build_source_section(self, parent_layout):
-        group = QGroupBox("视频源")
+        group = _VideoSourceGroup("视频源")
         group.setStyleSheet(_GROUPBOX_INLINE_STYLE)
+        group.videoDropped.connect(self._load_video)
         layout = QVBoxLayout(group)
         layout.setContentsMargins(8, 10, 8, 6)
         layout.setSpacing(6)
@@ -651,8 +703,16 @@ class _VideoToSequenceWindow(QDialog):
         self._browse_btn.setObjectName("browseBtn")
         self._browse_btn.clicked.connect(self._on_browse)
         self._path_edit = QLineEdit()
-        self._path_edit.setReadOnly(True)
-        self._path_edit.setPlaceholderText("请选择视频文件...")
+        self._path_edit.setPlaceholderText("请选择、拖入或粘贴视频路径...")
+        self._path_edit.setToolTip(
+            "支持把视频文件直接拖进本区域；\n"
+            "也可手动编辑路径，按 Enter 或移开焦点后加载，清空则重置"
+        )
+        # 可编辑后必须关闭自身拖放接收：否则拖文件到框上会被 Qt 当作
+        # "插入文本"而非"加载视频"，事件也不再向父级分组框传播
+        self._path_edit.setAcceptDrops(False)
+        self._path_edit.textChanged.connect(self._on_path_text_changed)
+        self._path_edit.editingFinished.connect(self._on_path_editing_finished)
         file_row.addWidget(self._path_edit, 1)
         file_row.addWidget(self._browse_btn)
         layout.addLayout(file_row)
@@ -816,11 +876,13 @@ class _VideoToSequenceWindow(QDialog):
         btn_row.addStretch()
         self._convert_btn = QPushButton("开始转换")
         self._convert_btn.setObjectName("convertBtn")
+        self._convert_btn.setAutoDefault(False)
         self._convert_btn.clicked.connect(self._on_convert)
         btn_row.addWidget(self._convert_btn)
 
         self._cancel_btn = QPushButton("取消")
         self._cancel_btn.setObjectName("cancelBtn")
+        self._cancel_btn.setAutoDefault(False)
         self._cancel_btn.clicked.connect(self._on_cancel)
         self._cancel_btn.hide()
         btn_row.addWidget(self._cancel_btn)
@@ -848,21 +910,71 @@ class _VideoToSequenceWindow(QDialog):
         )
         if not filepath:
             return
+        self._load_video(filepath)
 
+    def _load_video(self, filepath: str):
+        """加载视频：重置状态、按文件名填充输出目录并启动后台探测。
+
+        浏览按钮、拖放（窗口级与 _VideoSourceGroup）和路径框手动加载
+        共用此入口。
+        """
+        self._reset_video_state()
         self._current_video_path = filepath
         self._video_info = None
-        self._path_edit.setText(filepath)
+        self._path_edit.setText(filepath)  # textChanged: text==loaded → no-op
+        video_name = os.path.splitext(os.path.basename(filepath))[0]
+        self._output_dir_edit.setText(f"$HIP/images/{video_name}/")
+        self._update_output_preview()
+        self._probe_video(filepath)
+
+    def _reset_video_state(self):
+        """清空已加载的视频状态（路径框被手动清空时也走这里）。"""
+        self._current_video_path = ""
+        self._video_info = None
         self._status_label.setText("")
         self._status_label.setVisible(False)
         self._progress_bar.setValue(0)
         self._reset_info_labels()
 
-        # 自动填充输出目录
-        video_name = os.path.splitext(os.path.basename(filepath))[0]
-        self._output_dir_edit.setText(f"$HIP/images/{video_name}/")
-        self._update_output_preview()
+    def _on_path_text_changed(self, text: str):
+        """路径框即时编辑响应：手动清空 → 重置已加载状态。
 
-        self._probe_video(filepath)
+        程序化 setText 在 _load_video 中先设好 _current_video_path，
+        因此触发本槽时 text 总等于已加载路径，不会误清。
+        """
+        if not text.strip():
+            self._reset_video_state()
+
+    def _on_path_editing_finished(self):
+        """路径框按 Enter / 失焦：有效视频路径则加载，无效则恢复原值。"""
+        text = self._path_edit.text().strip()
+        if not text or text == self._current_video_path:
+            return
+        if text.lower().endswith(tuple(VIDEO_EXTENSIONS)) and os.path.isfile(text):
+            self._load_video(text)
+            return
+        self._status_label.setVisible(True)
+        self._status_label.setText("路径无效或不是支持的视频格式，已恢复")
+        self._status_label.setStyleSheet("color: #d1283e; font-size: 12px;")
+        self._path_edit.setText(self._current_video_path)
+
+    # ── 拖放（整窗接收；光标落在视频源分组框内时由分组框优先处理）──
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802 — Qt 命名约定
+        if _video_path_from_mime(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:  # noqa: N802 — Qt 命名约定
+        # dragEnter 接受后，dragMove 也须接受，drop 才会触发
+        event.acceptProposedAction()
+
+    def dropEvent(self, event) -> None:  # noqa: N802 — Qt 命名约定
+        path = _video_path_from_mime(event.mimeData())
+        if path:
+            event.acceptProposedAction()
+            self._load_video(path)
 
     def _on_browse_output_dir(self):
         directory = QFileDialog.getExistingDirectory(self, "选择输出目录")
