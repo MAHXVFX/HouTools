@@ -26,8 +26,9 @@ if _qt_bin.exists():
 
 
 def main():
-    ET.parse(ROOT / "MainMenuCommon.xml")
-    print("MainMenuCommon.xml: well-formed")
+    for menu_file in ("MainMenuCommon.xml", "NetworkViewMenu.xml"):
+        ET.parse(ROOT / menu_file)
+    print("menu XMLs: well-formed")
 
     import mahx
     import mahx.core.constants

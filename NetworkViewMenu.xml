@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mainMenu>
+  <menuBar>
+    <!-- 网络编辑器面板菜单栏：MAHX 顶层菜单，插在 Help 之前。
+         注入写法参照 SideFXLabs 的 NetworkViewMenu.xml（同机制已在 H22 验证）。
+         菜单结构改动需重启 Houdini；scriptCode 是薄分发器，工具代码照常热加载。 -->
+    <subMenu id="mahx_network_view_menu">
+      <modifyItem>
+        <insertBefore>help_menu</insertBefore>
+      </modifyItem>
+      <label>MAHX</label>
+
+      <!-- item id 用 mahx.networkview.* 独立前缀，避免与主菜单条目热键冲突 -->
+      <scriptItem id="mahx.networkview.ma_automation">
+        <label>MA Automation</label>
+        <scriptCode><![CDATA[
+import mahx.dev.dispatcher as _mahx_dispatcher
+_mahx_dispatcher.run("ma_automation")
+        ]]></scriptCode>
+      </scriptItem>
+
+      <scriptItem id="mahx.networkview.video_to_sequence">
+        <label>Video to Sequence</label>
+        <scriptCode><![CDATA[
+import mahx.dev.dispatcher as _mahx_dispatcher
+_mahx_dispatcher.run("video_to_sequence")
+        ]]></scriptCode>
+      </scriptItem>
+    </subMenu>
+  </menuBar>
+</mainMenu>

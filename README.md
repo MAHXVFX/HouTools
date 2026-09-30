@@ -18,7 +18,7 @@
 | `mahx/` 下任意工具/核心/UI 代码 | 菜单 `MAHX Tools → Reload Modules (Dev)`，立即生效 |
 | 已打开的工具窗口 | Reload 时自动关闭，重新打开即新代码 |
 | `python_panels/*.pypanel`（如新增） | 面板自带 Reload 按钮 |
-| `MainMenuCommon.xml` 菜单结构 | **重启 Houdini**（H22 硬约束，无法运行时重载） |
+| `MainMenuCommon.xml` / `NetworkViewMenu.xml` 菜单结构 | **重启 Houdini**（H22 硬约束，无法运行时重载） |
 | `mahx/dev/` 热加载框架自身 | 重启 Houdini（刻意不参与重载） |
 
 验收闭环：修改任意 `mahx/` 模块 → 保存 → 菜单点 Reload → 重新打开对应工具，改动即生效
@@ -74,6 +74,7 @@ _mahx_dispatcher.run("<tool_id>")
 ```
 MAHX_Tools/
 ├── MainMenuCommon.xml             # 顶部菜单（Houdini 规定文件名）
+├── NetworkViewMenu.xml            # 网络编辑器面板菜单栏（MAHX 顶层菜单，注入机制同上）
 ├── MAHX_Tools.json                # 包清单副本（生效的一份在 packages/ 下）
 ├── python3.13libs/mahx/
 │   ├── dev/                       # 热加载框架（reloader / dispatcher，不参与重载）
