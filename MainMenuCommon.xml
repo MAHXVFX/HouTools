@@ -19,11 +19,19 @@ _mahx_reloader.reload_all()
 
       <!-- 工具入口：scriptCode 只写两行薄分发器，
            工具逻辑改动通过 Reload 按钮热加载，无需重启 -->
-      <scriptItem id="mahx.example_tool">
-        <label>Example Tool</label>
+      <scriptItem id="mahx.ma_automation">
+        <label>MA Automation</label>
         <scriptCode><![CDATA[
 import mahx.dev.dispatcher as _mahx_dispatcher
-_mahx_dispatcher.run("example_tool")
+_mahx_dispatcher.run("ma_automation")
+        ]]></scriptCode>
+      </scriptItem>
+
+      <scriptItem id="mahx.video_to_sequence">
+        <label>Video to Sequence</label>
+        <scriptCode><![CDATA[
+import mahx.dev.dispatcher as _mahx_dispatcher
+_mahx_dispatcher.run("video_to_sequence")
         ]]></scriptCode>
       </scriptItem>
     </subMenu>

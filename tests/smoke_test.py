@@ -33,11 +33,29 @@ def main():
     import mahx.core.constants
     import mahx.core.settings
     import mahx.dev.dispatcher  # noqa: F401
-    import mahx.tools.example_tool
+    import mahx.automation.window  # noqa: F401
+    import mahx.videoseq.window  # noqa: F401
+    import mahx.videoseq.ffmpeg
+    from mahx.automation import task_types
     from mahx.dev import reloader
 
     print("imports OK, mahx", mahx.__version__)
     assert mahx.core.constants.PROJECT_ROOT == ROOT, PROJECT_ROOT_MESSAGE
+
+    # TaskItem 序列化 / 反序列化闭环
+    item = task_types.TaskItem(
+        task_type=task_types.TaskType.BUTTON_CLICK,
+        params=task_types.ButtonClickParams(
+            node_path="/obj/grid1", parm_name="execute"),
+        enabled=True,
+    )
+    restored = task_types.TaskItem.from_dict(item.to_dict())
+    assert restored.params.node_path == "/obj/grid1"
+    assert restored.params.parm_name == "execute"
+    print("task_types round-trip OK")
+
+    # ffmpeg 查找函数可执行（无头环境找不到也不算失败）
+    print("find_ffmpeg ->", mahx.videoseq.ffmpeg.find_ffmpeg())
 
     summary = reloader.reload_all()
     print("reload_all ->", summary)

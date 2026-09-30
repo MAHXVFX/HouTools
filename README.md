@@ -21,8 +21,20 @@
 | `MainMenuCommon.xml` 菜单结构 | **重启 Houdini**（H22 硬约束，无法运行时重载） |
 | `mahx/dev/` 热加载框架自身 | 重启 Houdini（刻意不参与重载） |
 
-验收闭环：修改 `python3.13libs/mahx/tools/example_tool.py` 里的 `WINDOW_TITLE` → 保存 →
-菜单点 Reload → 重新打开 Example Tool，标题已更新。
+验收闭环：修改任意 `mahx/` 模块 → 保存 → 菜单点 Reload → 重新打开对应工具，改动即生效
+（已打开的工具窗口会在 Reload 时自动关闭）。
+
+## 工具列表
+
+| 工具 | 菜单项 | 说明 |
+|------|--------|------|
+| MA Automation | `MAHX Tools → MA Automation` | 自动化批处理：节点按钮点击 / Flipbook 拍屏 / HomeAssistant Webhook；QThread 后台执行，配置 JSON 按 `$HIP` 存储 |
+| 视频转序列图 | `MAHX Tools → Video to Sequence` | ffmpeg 提取视频为 JPG 序列（帧级进度、质量/起始帧/位数/前缀可调），可选自动设置相机 Background Image |
+
+> 菜单栏标签一律用英文：H22 菜单栏对中文字符渲染不可靠；工具窗口内部的中文 UI 不受影响。
+
+ffmpeg 说明：优先使用 Houdini 自带的 `$HFS/bin/hffmpeg`，**无需单独安装**；如需指定版本，
+把 `ffmpeg.exe` 放到项目根目录即可（已被 `.gitignore` 排除，不入库）。
 
 ## 新增一个工具
 
@@ -67,7 +79,10 @@ MAHX_Tools/
 │   ├── dev/                       # 热加载框架（reloader / dispatcher，不参与重载）
 │   ├── core/                      # 路径常量 / 日志 / JSON 设置
 │   ├── ui/                        # window_manager 窗口登记
-│   └── tools/                     # 工具模块（<tool_id>.py 暴露 run()）
+│   ├── automation/                # MA Automation（任务类型/持久化/执行引擎/窗口）
+│   ├── videoseq/                  # 视频转序列图（ffmpeg 查找 + 窗口）
+│   ├── icons/                     # UI 图标（SVG）
+│   └── tools/                     # 工具入口（<tool_id>.py 暴露 run()）
 ├── tests/smoke_test.py
 ├── PLAN.md                        # 完整规划
 └── settings/                      # 运行时生成
