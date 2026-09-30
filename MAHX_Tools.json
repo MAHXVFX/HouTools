@@ -1,0 +1,7 @@
+{
+    "enable" : true,
+    "env":
+    [
+        {"HOUDINI_PATH" : "$HOUDINI_PACKAGE_PATH/../MAHX_Tools"},
+    ]
+}

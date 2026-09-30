@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# 运行时生成的用户数据（窗口状态、工具设置）
+settings/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,61 @@
+"""Headless smoke test: menu XML, package imports, hot reload.
+
+Run with Houdini's Python (no GUI, no Houdini session needed):
+
+    "C:\\Program Files\\Side Effects Software\\Houdini 22.0.429\\python313\\python.exe" tests\\smoke_test.py
+"""
+
+import os
+import sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "python3.13libs"))
+
+# Houdini's PySide6 lives in the "forced" site-packages and links against
+# the Qt DLLs in $HFS/bin; a plain python.exe has neither on its search
+# path, so add both (inside Houdini neither line is needed).
+HOUDINI_ROOT = Path(r"C:\Program Files\Side Effects Software\Houdini 22.0.429")
+_pyside_dir = HOUDINI_ROOT / "python313" / "lib" / "site-packages-forced"
+if _pyside_dir.exists():
+    sys.path.append(str(_pyside_dir))
+_qt_bin = HOUDINI_ROOT / "bin"
+if _qt_bin.exists():
+    os.add_dll_directory(str(_qt_bin))
+
+
+def main():
+    ET.parse(ROOT / "MainMenuCommon.xml")
+    print("MainMenuCommon.xml: well-formed")
+
+    import mahx
+    import mahx.core.constants
+    import mahx.core.settings
+    import mahx.dev.dispatcher  # noqa: F401
+    import mahx.tools.example_tool
+    from mahx.dev import reloader
+
+    print("imports OK, mahx", mahx.__version__)
+    assert mahx.core.constants.PROJECT_ROOT == ROOT, PROJECT_ROOT_MESSAGE
+
+    summary = reloader.reload_all()
+    print("reload_all ->", summary)
+    assert "FAILED" not in summary, summary
+
+    # Settings round-trip against the real settings/ directory.
+    store = mahx.core.settings.JsonStore("_smoke_test.json", defaults={"n": 1})
+    store.set("n", 2, save=True)
+    assert store.get("n") == 2
+    store.path.unlink(missing_ok=True)
+    print("settings round-trip OK")
+
+    print("SMOKE TEST OK")
+
+
+PROJECT_ROOT_MESSAGE = (
+    "PROJECT_ROOT mismatch - check parents[3] in core/constants.py"
+)
+
+if __name__ == "__main__":
+    main()
