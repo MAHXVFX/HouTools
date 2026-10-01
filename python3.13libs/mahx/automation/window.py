@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QGraphicsDropShadowEffect, QApplication, QMessageBox, QMenu,
 )
 from PySide6.QtCore import Qt, Signal, QPoint, QSize, QRect
+from PySide6.QtGui import QColor, QIcon, QKeySequence, QShortcut
 from PySide6.QtGui import QColor, QIcon
 
 from mahx.automation.data_manager import MA_Automation_DataManager
@@ -52,6 +53,13 @@ QComboBox#configCombo::down-arrow {{
     margin-right: 4px;
 }}
 """
+
+_TOOLBAR_BTN_STYLE = (
+    "QPushButton { background-color: #2d2d2d; color: #e0e0e0; border: none;"
+    " padding: 6px 16px; border-radius: 4px; font-size: 13px; }"
+    "QPushButton:hover { background-color: #3d3d3d; }"
+    "QPushButton:pressed { background-color: #0d6399; }"
+)
 
 
 # ── Windows 文件名保留名(用于 _get_save_target_name 拒绝) ─────────
@@ -378,6 +386,13 @@ class AutomationWindow(QWidget):
         self.setFocusPolicy(Qt.StrongFocus)
         self.setStyleSheet(STYLE_SHEET)
 
+        # Delete 用 QShortcut 认领（WidgetWithChildren 上下文优先于
+        # Houdini 的全局快捷键）；焦点在输入框内时 QLineEdit 自己会
+        # 接受 ShortcutOverride，快捷键自动让路给文本编辑
+        delete_sc = QShortcut(QKeySequence.StandardKey.Delete, self)
+        delete_sc.setContext(Qt.WidgetWithChildrenShortcut)
+        delete_sc.activated.connect(self._on_delete_shortcut)
+
         # ── 状态 ──
         self._slot_widgets: list[QWidget] = []
         # 平行于 _slot_widgets 的 handle 引用列表,在 _create_slot_widget 时
@@ -475,6 +490,10 @@ class AutomationWindow(QWidget):
         settings_btn = QPushButton("设置")
         settings_btn.setObjectName("settingsBtn")
         settings_btn.clicked.connect(lambda: self._open_settings())
+        # pane 内 Houdini 全局样式表会压过窗口级类型选择器，这三个按钮
+        # 用部件级内联样式（Qt 中优先级最高）保证底色可见
+        for btn in (auto_fill_btn, clear_btn, settings_btn):
+            btn.setStyleSheet(_TOOLBAR_BTN_STYLE)
 
         # 顺序:配置 → start → auto fill → clear   <stretch>   设置
         toolbar1.addWidget(self._config_label)
@@ -1122,6 +1141,15 @@ class AutomationWindow(QWidget):
             event.accept()
             return
         super().keyPressEvent(event)
+
+    def _on_delete_shortcut(self):
+        """QShortcut 版删除：在 Houdini 全局快捷键拦截前认领 Delete。
+
+        焦点在输入框内时 QLineEdit 会接受 ShortcutOverride，本快捷键
+        不触发，Delete 保持正常的文本编辑行为。
+        """
+        if self._selected_index is not None:
+            self._remove_slot(self._selected_index)
 
     # ── 鼠标事件(空白处取消选中) ───────────────────────────────
 
