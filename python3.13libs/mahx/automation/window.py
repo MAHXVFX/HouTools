@@ -490,31 +490,30 @@ class AutomationWindow(QWidget):
             app.installEventFilter(self)
 
     def eventFilter(self, obj, event):
-        etype = event.type()
-        if getattr(event, "key", lambda: None)() == Qt.Key_Delete \
-                and self._selected_index is not None:
-            # Houdini 浮动面板会在鼠标释放后清空部件焦点（focus=None），
-            # 此时 Delete 直接投递给原生 QWindow，任何部件处理器都收不到。
-            # 若该原生窗口正是本面板，视为"删除选定任务"并在源头消费。
-            if obj is self.window().windowHandle():
-                if etype == QEvent.KeyPress:
-                    _debug_log(
-                        "spy: Delete on our QWindow -> delete slot "
-                        f"idx={self._selected_index}"
-                    )
-                    self._remove_slot(self._selected_index)
-                    return True
-                if etype == QEvent.ShortcutOverride:
-                    return True  # 阻止 Houdini 全局快捷键先吃掉 Delete
-        if etype in (QEvent.KeyPress, QEvent.ShortcutOverride) \
-                and getattr(event, "key", lambda: None)() == Qt.Key_Delete:
-            fw = QApplication.focusWidget()
-            _debug_log(
-                f"spy type={'KeyPress' if etype == QEvent.KeyPress else 'ShortcutOverride'} "
-                f"obj={type(obj).__name__} "
-                f"focus={type(fw).__name__ if fw else None}"
-            )
-        return super().eventFilter(obj, event)
+        # 过滤器挂在 QApplication 上会收到所有对象的事件；面板开关过程
+        # 中部分 QWindow 的 C++ 对象已销毁，透传时 PySide 抛 RuntimeError
+        # ——过滤器自身绝不能向外抛异常
+        try:
+            etype = event.type()
+            if getattr(event, "key", lambda: None)() == Qt.Key_Delete \
+                    and self._selected_index is not None:
+                # Houdini 浮动面板会在鼠标释放后清空部件焦点（focus=None），
+                # 此时 Delete 直接投递给原生 QWindow，任何部件处理器都收
+                # 不到。若该原生窗口正是本面板，视为"删除选定任务"并在
+                # 源头消费。
+                if obj is self.window().windowHandle():
+                    if etype == QEvent.KeyPress:
+                        _debug_log(
+                            "spy: Delete on our QWindow -> delete slot "
+                            f"idx={self._selected_index}"
+                        )
+                        self._remove_slot(self._selected_index)
+                        return True
+                    if etype == QEvent.ShortcutOverride:
+                        return True  # 阻止 Houdini 全局快捷键先吃掉 Delete
+            return super().eventFilter(obj, event)
+        except RuntimeError:
+            return False
 
     # ── UI 构建 ────────────────────────────────────────────
 
@@ -587,13 +586,6 @@ class AutomationWindow(QWidget):
         # 用部件级内联样式（Qt 中优先级最高）保证底色可见
         for btn in (auto_fill_btn, clear_btn, settings_btn):
             btn.setStyleSheet(_TOOLBAR_BTN_STYLE)
-        # 临时探针：亮红色——若截图中可见则内联渲染通路正常（此前 #2d2d2d
-        # 只是对比度过低）；不可见则渲染层有问题（转自绘方案）
-        auto_fill_btn.setStyleSheet(
-            "QPushButton { background-color: #ff5555; color: white;"
-            " border: 2px solid #ff0000; padding: 6px 16px;"
-            " border-radius: 4px; font-size: 13px; }"
-        )
 
         # 顺序:配置 → start → auto fill → clear   <stretch>   设置
         toolbar1.addWidget(self._config_label)
