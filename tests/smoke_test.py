@@ -30,6 +30,9 @@ def main():
         ET.parse(ROOT / menu_file)
     print("menu XMLs: well-formed")
 
+    ET.parse(ROOT / "python_panels" / "MA_Automation.pypanel")
+    print("MA_Automation.pypanel: well-formed")
+
     import mahx
     import mahx.core.constants
     import mahx.core.settings

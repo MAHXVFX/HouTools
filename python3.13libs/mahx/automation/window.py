@@ -1,7 +1,9 @@
 """
-MA Automation — 主窗口 UI
-=========================
-Singleton QDialog，非模态独立窗口。
+MA Automation — 主界面（Python Panel 部件）
+==========================================
+以 .pypanel 载入 Houdini 面板体系（默认由菜单在浮动面板中打开）。
+网络编辑器的节点拖放可直落入参数路径框——Houdini 面板体系内走原生
+投递，不会像独立 QDialog 那样把待定工具快捷方式泄漏到 3D 视窗。
 提供任务槽列表编辑、持久化保存、ExecutionEngine 集成。
 """
 
@@ -32,6 +34,7 @@ from mahx.automation.task_types import (
 from mahx.automation.execution_engine import ExecutionEngine
 from mahx.automation.styles import STYLE_SHEET
 
+from mahx.core.constants import PROJECT_ROOT
 from mahx.core.log import get_logger
 logger = get_logger("automation.window")
 
@@ -150,58 +153,39 @@ def _extract_parm_path(text: str) -> str:
     return text
 
 
-# ── Window lifecycle（单例由 mahx.ui.window_manager 统一登记）──
+# ── Python Panel 接入 ────────────────────────────────────────
 
-def _apply_window_flags(window):
-    """应用 Win32 扩展样式，让 MA Automation 窗口在 Houdini 中保持在前。
+INTERFACE_NAME = "MA_Automation"
+"""MA_Automation.pypanel 中 <interface name> 的名字。"""
 
-    复用 hdr_library/main.py 同款实现：
-    通过 SetWindowLongW 设置 ``WS_EX_APPWINDOW`` (0x00040000)，
-    标记窗口为独立应用窗口，避免 Houdini 宿主进程把它压到 Z 序底部。
-    ``SetCurrentProcessExplicitAppUserModelID`` 让任务栏图标和窗口分组正确。
 
-    必须在 ``setWindowFlags`` 之后调用（``winId()`` 第一次访问会触发原生窗口创建）。
-    失败时静默忽略（跨平台兼容、ctypes 缺失等场景）。
+def create_panel_widget(parent=None):
+    """创建 Python Panel 界面部件（.pypanel 的 onCreateInterface 入口）。"""
+    return AutomationWindow(parent)
+
+
+def open_floating_panel():
+    """在 Houdini 浮动面板中打开 MA Automation（Python Panel 界面）。
+
+    用 Houdini 管理的浮动面板而非独立 QDialog：网络编辑器的节点拖放
+    对 Houdini 面板体系走内部投递，不会像跨入独立原生窗口那样把待定
+    的工具快捷方式泄漏到 3D 视窗。
     """
-    try:
-        from ctypes import windll
-        GWL_EXSTYLE = -20
-        WS_EX_APPWINDOW = 0x00040000
-        hwnd = int(window.winId())
-        SetWindowLong = windll.user32.SetWindowLongW
-        GetWindowLong = windll.user32.GetWindowLongW
-        style = GetWindowLong(hwnd, GWL_EXSTYLE)
-        style |= WS_EX_APPWINDOW
-        SetWindowLong(hwnd, GWL_EXSTYLE, style)
-        windll.shell32.SetCurrentProcessExplicitAppUserModelID('MA.Automation.1')
-    except Exception:
-        pass
+    import hou
 
+    interface_file = PROJECT_ROOT / "python_panels" / "MA_Automation.pypanel"
+    hou.pypanel.installFile(str(interface_file))
+    interface = hou.pypanel.interfaceByName(INTERFACE_NAME)
+    if interface is None:
+        raise ValueError(
+            f"Python Panel 接口注册失败: {INTERFACE_NAME} ({interface_file})"
+        )
 
-def show_automation_window():
-    """打开 MA Automation 主窗口（单例经 window_manager 登记，
-    热加载 Reload 前会被自动关闭并重建）。
-
-    窗口挂到 Houdini 主窗口下作为子窗口，确保 Z 序由 Houdini 内部管理。
-    """
-    from mahx.ui import window_manager
-
-    # 获取 Houdini 主窗口作为 parent —— 关键：建立父子关系后，
-    # WS_EX_APPWINDOW 才能配合 Houdini 内部 Z 序保持面板在前。
-    parent_window = None
-    try:
-        import hou  # noqa: WPS433 — Houdini-only, 函数内导入
-        parent_window = hou.qt.mainWindow()
-    except (ImportError, AttributeError):
-        pass
-
-    window = window_manager.open_window(
-        "ma_automation", lambda: AutomationWindow(parent_window)
+    return hou.ui.curDesktop().createFloatingPanel(
+        hou.paneTabType.PythonPanel,
+        size=(620, 540),
+        python_panel_interface=interface,
     )
-    # 将窗口初始位置往左移 200px
-    pos = window.pos()
-    window.move(pos.x() - 200, pos.y())
-    return window
 
 
 # ── 任务槽手柄 ────────────────────────────────────────────────
@@ -379,8 +363,8 @@ def _frame_node_in_editor(editor, node):
         logger.warning("frame node %s failed: %s", node, exc)
 
 
-class AutomationWindow(QDialog):
-    """MA Automation 主窗口。
+class AutomationWindow(QWidget):
+    """MA Automation 主界面（Python Panel 部件）。
 
     包含可动态增删的任务槽列表、工具栏（Start / Auto Fill / Clear / + / -）、
     数据持久化加载/保存以及 ExecutionEngine 后台执行集成。
@@ -390,8 +374,6 @@ class AutomationWindow(QDialog):
         super().__init__(parent)
         self.setWindowTitle("MA Automation")
         self.setMinimumSize(600, 450)
-        self.setWindowFlags(Qt.Window)
-        _apply_window_flags(self)
         self.setStyleSheet(STYLE_SHEET)
 
         # ── 状态 ──

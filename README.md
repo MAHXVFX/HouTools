@@ -28,10 +28,13 @@
 
 | 工具 | 菜单项 | 说明 |
 |------|--------|------|
-| MA Automation | `MAHX Tools → MA Automation` | 自动化批处理：节点按钮点击 / Flipbook 拍屏 / HomeAssistant Webhook；QThread 后台执行，配置 JSON 按 `$HIP` 存储 |
+| MA Automation | `MAHX Tools → MA Automation` | 自动化批处理：节点按钮点击 / Flipbook 拍屏 / HomeAssistant Webhook；QThread 后台执行，配置 JSON 按 `$HIP` 存储。以 Python Panel 在 Houdini 浮动面板中打开，节点可直接拖入参数路径框（原生投递、无视窗泄漏） |
 | 视频转序列图 | `MAHX Tools → Video to Sequence` | ffmpeg 提取视频为 JPG 序列（帧级进度、质量/起始帧/位数/前缀可调），可选自动设置相机 Background Image |
 
 > 菜单栏标签一律用英文：H22 菜单栏对中文字符渲染不可靠；工具窗口内部的中文 UI 不受影响。
+>
+> MA Automation 是 Python Panel：`Reload Modules (Dev)` 不会自动重建已打开的面板
+> （避免丢失未 Start 保存的编辑），需点面板工具条自带的刷新按钮重建界面。
 
 ffmpeg 说明：优先使用 Houdini 自带的 `$HFS/bin/hffmpeg`，**无需单独安装**；如需指定版本，
 把 `ffmpeg.exe` 放到项目根目录即可（已被 `.gitignore` 排除，不入库）。
@@ -76,6 +79,7 @@ MAHX_Tools/
 ├── MainMenuCommon.xml             # 顶部菜单（Houdini 规定文件名）
 ├── NetworkViewMenu.xml            # 网络编辑器面板菜单栏（MAHX 顶层菜单，注入机制同上）
 ├── MAHX_Tools.json                # 包清单副本（生效的一份在 packages/ 下）
+├── python_panels/MA_Automation.pypanel  # MA Automation 的 Python Panel 界面
 ├── python3.13libs/mahx/
 │   ├── dev/                       # 热加载框架（reloader / dispatcher，不参与重载）
 │   ├── core/                      # 路径常量 / 日志 / JSON 设置
