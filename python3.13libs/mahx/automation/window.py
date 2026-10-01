@@ -350,15 +350,31 @@ def _frame_node_in_editor(editor, node):
 
     H22 运行时没有 frameSelection/homeToSelection（文档列出但存根缺失），
     且 setCurrentNode 的 pick 机制会异步清空选择，因此不依赖选择状态：
-    直接按节点位置构造带富余边距的 BoundingRect 交给 setVisibleBounds。
+    用 itemRect 取节点在该编辑器中的精确布局矩形（自适应节点大小，
+    之前固定边距版对大节点会裁出视野导致居中时好时坏），四周外扩约
+    35% 后交给 setVisibleBounds。
+
+    set_center_when_scale_rejected 必须为 True：max_scale 默认上限 100，
+    当前视图缩放状态使目标缩放超限时，False（默认）会让整个调用被
+    拒绝、什么都不发生——这正是"视图移远后无法居中"的原因；True 则
+    在缩放被拒时仍把视图中心平移到节点上，保证每次点击都居中。
     """
     try:
         import hou
-        pos = node.position()
-        rect = hou.BoundingRect(
-            pos[0] - 2.0, pos[1] - 1.5, pos[0] + 2.0, pos[1] + 1.5
+        rect = editor.itemRect(node)
+        mn = rect.min()
+        sz = rect.size()
+        # 边距取节点尺寸的 1 倍（节点约占画面 1/3），视野留白更宽松；
+        # 矩形越大所需放大倍率越小，也更不容易触发 max_scale 缩放上限
+        pad_x = max(sz[0] * 1.0, 2.0)
+        pad_y = max(sz[1] * 1.0, 1.5)
+        editor.setVisibleBounds(
+            hou.BoundingRect(
+                mn[0] - pad_x, mn[1] - pad_y,
+                mn[0] + sz[0] + pad_x, mn[1] + sz[1] + pad_y,
+            ),
+            set_center_when_scale_rejected=True,
         )
-        editor.setVisibleBounds(rect)
     except Exception as exc:  # noqa: BLE001 - 取景失败不影响跳转与选中
         logger.warning("frame node %s failed: %s", node, exc)
 
