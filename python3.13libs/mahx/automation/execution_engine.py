@@ -148,11 +148,17 @@ class ExecutionEngine(QThread):
             if parm_template.type() != hou.parmTemplateType.Button:
                 raise ValueError(f"不是按钮参数: {params.parm_name}")
 
-            target_parm.pressButton()
-
-            # 特殊处理 dl_Submit：先保存场景
+            # dl_Submit（Deadline 提交）的回调要求点击前工程已保存到磁盘，
+            # 否则会弹"保存工程"对话框卡住自动化流程；保存失败则不点击
             if params.parm_name == "dl_Submit":
-                hou.hipFile.save()
+                try:
+                    hou.hipFile.save()
+                except hou.OperationFailed as e:
+                    raise ValueError(
+                        f"保存工程失败，已跳过 dl_Submit 点击：{e}"
+                    ) from e
+
+            target_parm.pressButton()
 
         self._run_deferred(impl)
 

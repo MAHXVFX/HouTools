@@ -37,7 +37,7 @@ root/
 | JSON 设置 | `mahx/core/settings.py` | `JsonStore(filename, defaults)`，defaults 合并语义，存项目 `settings/` |
 | 自动化任务模型 | `mahx/automation/task_types.py` | TaskType 枚举 + dataclass 参数 + TaskItem.to_dict/from_dict |
 | 自动化持久化 | `mahx/automation/data_manager.py` | 按 `$HIP/MA Automation/json/` 存取（跟场景走，是有意设计）；多配置文件 |
-| 自动化执行引擎 | `mahx/automation/execution_engine.py` | QThread；Houdini API 经 `hdefereval.executeDeferred` + Event 同步派发主线程 |
+| 自动化执行引擎 | `mahx/automation/execution_engine.py` | QThread；Houdini API 经 `hdefereval.executeDeferred` + Event 同步派发主线程；`dl_Submit` 特例：点击前强制 `hipFile.save()`，失败则跳过点击 |
 | ffmpeg 查找 | `mahx/videoseq/ffmpeg.py` | 优先级：项目根 `ffmpeg.exe` → `$HFS/bin/hffmpeg` → `$HFS/bin/ffmpeg` → PATH（hffmpeg 优先） |
 | 视频拖放/路径框 | `mahx/videoseq/window.py` | 整窗 + `_VideoSourceGroup` 双层接收拖放；`_load_video` 是浏览/拖放/手输共用入口 |
 
