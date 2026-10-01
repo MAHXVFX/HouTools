@@ -11,7 +11,7 @@
   规则 6    SOP → DOP   staticobject ``Object_XXX``（soppath）
   规则 7    LOP → LOP   fetch ``LOP_XXX``（loppath）
   规则 8    SOP → ROP   fetch ``SOP_XXX``（source）
-  规则 9    SOP → COP   sopimport ``SOP_XXX``（soppath；旧 COP2 与新 COP 均支持）
+  规则 9    SOP → COP   sopimport ``SOP_XXX``（soppath；仅新 COP，且需置 usesoppath=1）
   规则 10   OBJ → LOP   sopimport ``SOP_XXX``（soppath，可填 obj 路径）
 
 前置规则：粘贴出的节点颜色与源节点一致（规则 2 的 geo 容器同样着色）。
@@ -81,11 +81,12 @@ def _paste_as_merge(context, context_type, position):
 
 
 def _reference_rules() -> dict:
-    """目标网络类别 → {源节点类别: (引用节点类型, 路径参数, 名称前缀)}。
+    """目标网络类别 → {源节点类别: (节点类型, 路径参数, 名称前缀, 附加参数)}。
 
     覆盖命名规则 3/4/6/7/8/9/10；规则 1/2 在 _paste_into_sop /
     _paste_into_obj 里单独处理（SOP 网络有内部剪贴板兜底、OBJ 网络要建
-    geo 容器）。名称前缀为空串表示直接用源节点名。
+    geo 容器）。名称前缀为空串表示直接用源节点名；附加参数在路径参数
+    之前设置。
     """
     import hou
 
@@ -94,23 +95,24 @@ def _reference_rules() -> dict:
     rules = {
         # 规则 3 SOP→LOP / 规则 10 OBJ→LOP / 规则 7 LOP→LOP
         lop: {
-            sop: ("sopimport", "soppath", "SOP_"),
-            hou.objNodeTypeCategory(): ("sopimport", "soppath", "SOP_"),
-            lop: ("fetch", "loppath", "LOP_"),
+            sop: ("sopimport", "soppath", "SOP_", {}),
+            hou.objNodeTypeCategory(): ("sopimport", "soppath", "SOP_", {}),
+            lop: ("fetch", "loppath", "LOP_", {}),
         },
         # 规则 4 LOP→ROP / 规则 8 SOP→ROP
         hou.ropNodeTypeCategory(): {
-            lop: ("usdrender", "loppath", ""),  # /out 的 USD Render ROP 内部名（usdrender_rop 是 LOP 内版本）
-            sop: ("fetch", "source", "SOP_"),
+            lop: ("usdrender", "loppath", "", {}),  # /out 的 USD Render ROP 内部名（usdrender_rop 是 LOP 内版本）
+            sop: ("fetch", "source", "SOP_", {}),
         },
         # 规则 6 SOP→DOP
         hou.dopNodeTypeCategory(): {
-            sop: ("staticobject", "soppath", "Object_"),
+            sop: ("staticobject", "soppath", "Object_", {}),
+        },
+        # 规则 9 SOP→COP：仅新 COP（copnet）；sopimport 的 usesoppath 默认 0，须先置 1
+        hou.copNodeTypeCategory(): {
+            sop: ("sopimport", "soppath", "SOP_", {"usesoppath": 1}),
         },
     }
-    # 规则 9 SOP→COP：旧 COP2 与 H20.5+ 新 COP 两套上下文都支持
-    for cop_category in (hou.cop2NodeTypeCategory(), hou.copNodeTypeCategory()):
-        rules[cop_category] = {sop: ("sopimport", "soppath", "SOP_")}
     return rules
 
 
@@ -186,8 +188,10 @@ def _paste_reference_nodes(context, position, rules):
         rule = rules.get(src.type().category())
         if rule is None:
             continue  # 未定义的"目标 × 源"组合，跳过
-        node_type, parm_name, prefix = rule
+        node_type, parm_name, prefix, extra_parms = rule
         node = context.createNode(node_type, prefix + item.rsplit("/", 1)[-1])
+        for extra_name, extra_value in extra_parms.items():
+            node.parm(extra_name).set(extra_value)
         node.parm(parm_name).set(str(item))
         _place(node, position, n, src.color())
         node.setSelected(True, clear_all_selected=(n == 0))
