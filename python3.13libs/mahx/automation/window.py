@@ -63,6 +63,15 @@ _TOOLBAR_BTN_STYLE = (
     "QPushButton:pressed { background-color: #0d6399; }"
 )
 
+# 数量行的 + / - 按钮:同工具栏按钮底色但更紧凑(固定 32x26,内容居中)
+_SLOT_OP_BTN_STYLE = (
+    "QPushButton { background-color: #3a3a3e; color: #e0e0e0;"
+    " border: 1px solid #55555a; padding: 0;"
+    " border-radius: 4px; font-size: 15px; font-weight: bold; }"
+    "QPushButton:hover { background-color: #46464b; }"
+    "QPushButton:pressed { background-color: #0d6399; }"
+)
+
 
 # ── Windows 文件名保留名(用于 _get_save_target_name 拒绝) ─────────
 # 含 ``CON`` / ``PRN`` / ``AUX`` / ``NUL`` / ``COM1-9`` / ``LPT1-9``,
@@ -622,14 +631,18 @@ class AutomationWindow(QWidget):
         # 让内部编辑器只有点击时才激活，防止自动聚焦导致误输入
         self._task_count_input.setFocusPolicy(Qt.ClickFocus)
 
+        # pane 内 Houdini 全局样式表会压过窗口级 #addBtn/#removeBtn 规则,
+        # 同样用部件级内联样式保证底色可见
         add_btn = QPushButton("+")
         add_btn.setObjectName("addBtn")
-        add_btn.setFixedWidth(32)
+        add_btn.setFixedSize(32, 26)
+        add_btn.setStyleSheet(_SLOT_OP_BTN_STYLE)
         add_btn.clicked.connect(lambda: self._add_slot())
 
         remove_btn = QPushButton("-")
         remove_btn.setObjectName("removeBtn")
-        remove_btn.setFixedWidth(32)
+        remove_btn.setFixedSize(32, 26)
+        remove_btn.setStyleSheet(_SLOT_OP_BTN_STYLE)
         remove_btn.clicked.connect(lambda: self._remove_slot())
 
         # 顺序:数量标签 → 数量输入框 → + → -   <stretch>
