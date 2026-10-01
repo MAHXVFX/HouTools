@@ -131,6 +131,10 @@ def main():
     sf_le.setText("101")
     assert win._collect_data()[0]["params"]["start_frame"] == "101"
 
+    # 显示/隐藏生命周期:事件过滤器随可见性装卸(不抛异常即通过)
+    win.show()
+    win.hide()
+
     win._remove_slot(0)  # 槽管理冒烟
     print("AutomationWindow instantiation OK")
 

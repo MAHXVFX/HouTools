@@ -201,12 +201,87 @@ def create_panel_widget(parent=None):
     return AutomationWindow(parent)
 
 
+def _qt_floating_window(panel):
+    """把 FloatingPanel 的原生窗口指针包装成 QWidget；失败返回 None。
+
+    ``_qtParentWindow`` 是 HOM 未公开接口（返回 void*），仅用于把已存在
+    的浮动面板前置/激活 —— 全程 try/except，失败只影响"前置"不影响功能。
+    """
+    try:
+        import shiboken6
+        from PySide6.QtWidgets import QWidget
+
+        ptr = panel._qtParentWindow()
+        if not ptr:
+            return None
+        return shiboken6.wrapInstance(int(ptr), QWidget)
+    except Exception:
+        return None
+
+
+def _raise_floating_panel(panel):
+    """把已存在的浮动面板带到前台并激活（最小化则先还原）。"""
+    win = _qt_floating_window(panel)
+    if win is None:
+        return
+    try:
+        if win.isMinimized():
+            win.showNormal()
+        win.show()
+        win.raise_()
+        win.activateWindow()
+    except RuntimeError:
+        pass  # C++ 对象已被销毁，交给创建分支
+
+
+def _find_existing_panel(desktop):
+    """返回桌面上已存在的本工具浮动面板；顺带回收重复/隐藏的残留面板。
+
+    逐个检查浮动面板里 PythonPanel tab 的 activeInterface 名字来认领。
+    认领规则：第一个**可见**的本工具面板为复用对象；其余（可见的重复
+    面板 + 不可见的残留面板）一律 ``close()`` 回收 —— 关闭的浮动面板
+    仍挂在桌面上，残留的隐藏面板带着整棵部件树（含应用级事件过滤器）
+    持续吃事件，越积越卡。
+    """
+    import hou
+
+    found = None
+    stale = []
+    for fp in desktop.floatingPanels():
+        try:
+            tab = fp.paneTabOfType(hou.paneTabType.PythonPanel)
+            if tab is None:
+                continue
+            iface = tab.activeInterface()
+            if iface is None or iface.name() != INTERFACE_NAME:
+                continue
+            win = _qt_floating_window(fp)
+            if found is None and win is not None and win.isVisible():
+                found = fp
+            else:
+                stale.append(fp)
+        except RuntimeError:
+            continue  # 面板 C++ 对象已销毁的边界情况
+
+    for fp in stale:
+        try:
+            fp.close()
+        except Exception:
+            pass
+    return found
+
+
 def open_floating_panel():
     """在 Houdini 浮动面板中打开 MA Automation（Python Panel 界面）。
 
     用 Houdini 管理的浮动面板而非独立 QDialog：网络编辑器的节点拖放
     对 Houdini 面板体系走内部投递，不会像跨入独立原生窗口那样把待定
     的工具快捷方式泄漏到 3D 视窗。
+
+    **面板复用**：桌面已存在本工具面板时直接前置激活，不再创建新的
+    —— 否则每次开关都 panelN+1，隐藏面板越积越多、打开越来越卡。
+    新建的面板固定命名为 ``MA_Automation``（显示在窗口标题，替代
+    Houdini 递增的 panelN 编号）。
     """
     import hou
 
@@ -218,12 +293,27 @@ def open_floating_panel():
             f"Python Panel 接口注册失败: {INTERFACE_NAME} ({interface_file})"
         )
 
-    return hou.ui.curDesktop().createFloatingPanel(
+    desktop = hou.ui.curDesktop()
+    existing = _find_existing_panel(desktop)
+    _debug_log(
+        f"open_floating_panel: floatingPanels={len(desktop.floatingPanels())} "
+        f"action={'reuse' if existing is not None else 'create'}"
+    )
+    if existing is not None:
+        _raise_floating_panel(existing)
+        return existing
+
+    panel = desktop.createFloatingPanel(
         hou.paneTabType.PythonPanel,
         size=(620, 540),
         # SWIG 签名为 char const*：这里传接口名而非接口对象
         python_panel_interface=INTERFACE_NAME,
     )
+    try:
+        panel.setName(INTERFACE_NAME)
+    except hou.OperationFailed:
+        pass  # 命名失败仅影响标题显示,不阻塞打开
+    return panel
 
 
 # ── 任务槽手柄 ────────────────────────────────────────────────
@@ -502,6 +592,20 @@ class AutomationWindow(QWidget):
         app = QApplication.instance()
         if app is not None:
             app.installEventFilter(self)
+
+    def showEvent(self, event):
+        # 过滤器生命周期绑定到可见性:隐藏/残留面板(关闭后仍挂桌面的
+        # 浮动面板)绝不参与全应用事件过滤,避免逐次累积拖慢整个界面
+        super().showEvent(event)
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        app = QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
 
     def eventFilter(self, obj, event):
         # 过滤器挂在 QApplication 上会收到所有对象的事件；面板开关过程
