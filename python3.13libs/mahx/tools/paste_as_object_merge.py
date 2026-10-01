@@ -1,25 +1,25 @@
 """粘贴为 Object Merge（Ctrl+Shift+V）
 =================================
-在网络编辑器中 Ctrl+C 复制节点后，按 Ctrl+Shift+V 在鼠标位置创建
-引用节点。行为对齐 OD 工具集的 ``pasteNodesAsObjectMerge``（反汇编
-其 shelftools.pyc 还原），按目标网络的上下文分派：
+在网络编辑器中 Ctrl+C 复制节点后，按 Ctrl+Shift+V 在鼠标位置按
+"目标上下文 × 源节点类别"创建引用节点（XXX 表示源节点名）：
 
-  SOP 网络    VopNode → ``material``（shop_materialpath1）；
-              其它 → ``object_merge``（objpath1，同网络用相对路径）
-  VOP 网络    redshift_vopnet / rs_usd_material_builder → redshift::shaderMerge；
-              octane_vopnet → octane::ShaderMerge；其它 → 询问后 copyItems 通道引用
-  OBJ 网络    源全是 ObjNode → 单个 geo 容器内 N 个 object_merge + merge 汇总
-              （display/render flag + layoutChildren）；否则每个源一个 geo 容器
-  LOP 网络    sopimport（soppath）
-  TOP 网络    源 TOP → topfetch；源 SOP → geometryimport
-  COP2 网络   源 COP2 → fetch（oppath）；源 SOP → sopimport
-  DOP 网络    询问 Sop Geo / Static Object → sopgeo / staticobject（soppath）
+  规则 1    SOP → SOP   object_merge ``Merge_XXX``（objpath1，同网络相对路径）
+  规则 2    SOP → OBJ   geo ``XXX``，内含 object_merge ``Merge_XXX``
+  规则 3    SOP → LOP   sopimport ``SOP_XXX``（soppath）
+  规则 4    LOP → ROP   usdrender_rop ``XXX``（loppath）
+  规则 5    LOP → SOP   lopimport ``LOP_XXX``（loppath）
+  规则 6    SOP → DOP   staticobject ``Object_XXX``（soppath）
+  规则 7    LOP → LOP   fetch ``LOP_XXX``（loppath）
+  规则 8    SOP → ROP   fetch ``SOP_XXX``（source）
+  规则 9    SOP → COP   sopimport ``SOP_XXX``（soppath；旧 COP2 与新 COP 均支持）
+  规则 10   OBJ → LOP   sopimport ``SOP_XXX``（soppath，可填 obj 路径）
 
-每个源节点生成一个引用节点，横向偏移 n*3 排开，继承源节点颜色；首个
-新节点带 clear_all_selected 选中。整次操作包在 ``hou.undos.group`` 里，
-占用单个 undo 槽。未覆盖的上下文静默不动（OD 同款）。
+前置规则：粘贴出的节点颜色与源节点一致（规则 2 的 geo 容器同样着色）。
+未列出的"目标 × 源"组合一律跳过，未覆盖的上下文静默不动。每个引用节点
+横向偏移 n*3 排开；首个新节点带 clear_all_selected 选中。整次操作包在
+``hou.undos.group`` 里，占用单个 undo 槽。
 
-源节点解析分两层（我们自己的稳定性增强，OD 只读文本层）：
+源节点解析分两层（稳定性增强）：
   1. OS 剪贴板文本 —— Houdini Ctrl+C 时自写的节点路径（引用语义必须
      有"原件路径"，内部节点剪贴板无法反查原件）。
   2. Houdini 内部节点剪贴板兜底（仅 SOP 网络）—— 文本层失效时用
@@ -47,7 +47,7 @@ _HOU_NODE_RE = re.compile(
 
 
 def run(**kwargs):
-    """按目标网络上下文创建引用节点（OD pasteNodesAsObjectMerge 对齐）。"""
+    """按"目标上下文 × 源节点类别"创建引用节点（规则 1-10）。"""
     import hou
 
     editor = _target_editor(kwargs)
@@ -67,226 +67,150 @@ def run(**kwargs):
 
 
 def _paste_as_merge(context, context_type, position):
-    """上下文分派主流程，结构逐分支对齐 OD shelftools.pasteNodesAsObjectMerge。"""
+    """上下文分派主流程：规则 1-10 覆盖的上下文，其余一律静默不动。"""
     import hou
 
-    src_items = _source_items(context, context_type, position)
+    if context_type == hou.sopNodeTypeCategory():
+        _paste_into_sop(context, position)
+    elif context_type == hou.objNodeTypeCategory():
+        _paste_into_obj(context, position)
+    else:
+        rules = _reference_rules().get(context_type)
+        if rules is not None:
+            _paste_reference_nodes(context, position, rules)
+
+
+def _reference_rules() -> dict:
+    """目标网络类别 → {源节点类别: (引用节点类型, 路径参数, 名称前缀)}。
+
+    覆盖命名规则 3/4/6/7/8/9/10；规则 1/2 在 _paste_into_sop /
+    _paste_into_obj 里单独处理（SOP 网络有内部剪贴板兜底、OBJ 网络要建
+    geo 容器）。名称前缀为空串表示直接用源节点名。
+    """
+    import hou
+
+    sop = hou.sopNodeTypeCategory()
+    lop = hou.lopNodeTypeCategory()
+    rules = {
+        # 规则 3 SOP→LOP / 规则 10 OBJ→LOP / 规则 7 LOP→LOP
+        lop: {
+            sop: ("sopimport", "soppath", "SOP_"),
+            hou.objNodeTypeCategory(): ("sopimport", "soppath", "SOP_"),
+            lop: ("fetch", "loppath", "LOP_"),
+        },
+        # 规则 4 LOP→ROP / 规则 8 SOP→ROP
+        hou.ropNodeTypeCategory(): {
+            lop: ("usdrender_rop", "loppath", ""),
+            sop: ("fetch", "source", "SOP_"),
+        },
+        # 规则 6 SOP→DOP
+        hou.dopNodeTypeCategory(): {
+            sop: ("staticobject", "soppath", "Object_"),
+        },
+    }
+    # 规则 9 SOP→COP：旧 COP2 与 H20.5+ 新 COP 两套上下文都支持
+    for cop_category in (hou.cop2NodeTypeCategory(), hou.copNodeTypeCategory()):
+        rules[cop_category] = {sop: ("sopimport", "soppath", "SOP_")}
+    return rules
+
+
+def _paste_into_sop(context, position):
+    """SOP 网络：SOP 源 → object_merge（规则 1），LOP 源 → lopimport（规则 5）。"""
+    import hou
+
+    src_items = _source_items(context, position)
     if not src_items:
         _status("剪贴板中没有可粘贴的节点（先在网络编辑器 Ctrl+C 复制节点）")
         return
 
     n = 0
-    if context_type == hou.sopNodeTypeCategory():
-        for item in src_items:
-            src = hou.node(item)
-            if src is None:
-                continue
-            color = src.color()
-            basename = item.rsplit("/", 1)[-1]
-            if type(src) == hou.VopNode:
-                # 粘贴 shader 进 SOP 网络 → material 节点引用材质
-                merge = context.createNode("material", "merge_" + basename)
-                merge.parm("shop_materialpath1").set(str(item))
-            else:
-                merge = context.createNode("object_merge", "merge_" + basename)
-                merge.parm("objpath1").set(_objpath_for(merge, item))
-            _place(merge, position, n, color)
-            merge.setSelected(True, clear_all_selected=(n == 0))
-            n += 1
-
-    elif context_type == hou.vopNodeTypeCategory():
-        net_name = context.type().name()
-        if net_name in ("redshift_vopnet", "rs_usd_material_builder"):
-            for item in src_items:
-                src = hou.node(item)
-                if src is None or type(src) != hou.VopNode:
-                    continue
-                merge = context.createNode(
-                    "redshift::shaderMerge", "merge_" + item.rsplit("/", 1)[-1])
-                merge.parm("RS_vopPath").set(str(item))
-                _place(merge, position, n, src.color())
-                n += 1
-        elif net_name == "octane_vopnet":
-            for item in src_items:
-                src = hou.node(item)
-                if src is None or type(src) != hou.VopNode:
-                    continue
-                merge = context.createNode(
-                    "octane::ShaderMerge", "merge_" + item.rsplit("/", 1)[-1])
-                merge.parm("Octane_shaderPath").set(str(item))
-                _place(merge, position, n, src.color())
-                n += 1
+    for item in src_items:
+        src = hou.node(item)
+        if src is None:
+            continue
+        basename = item.rsplit("/", 1)[-1]
+        if src.type().category() == hou.lopNodeTypeCategory():
+            merge = context.createNode("lopimport", "LOP_" + basename)
+            merge.parm("loppath").set(str(item))
+        elif src.type().category() == hou.sopNodeTypeCategory():
+            merge = context.createNode("object_merge", "Merge_" + basename)
+            merge.parm("objpath1").set(_objpath_for(merge, item))
         else:
-            # 通用 VOP 网：询问绝对/相对，用 copyItems 建通道引用副本
-            res = hou.ui.displayMessage(
-                "Reference Type?",
-                buttons=("Absolute", "Relative", "Cancel"),
-                default_choice=1,
-            )
-            if res == 2:
-                return
-            for item in src_items:
-                src = hou.node(item)
-                if src is None or type(src) != hou.VopNode:
-                    continue
-                context.copyItems(
-                    [src],
-                    channel_reference_originals=True,
-                    relative_references=(res == 1),
-                )
-
-    elif context_type == hou.objNodeTypeCategory():
-        _paste_into_obj(context, src_items, position)
-
-    elif context_type == hou.lopNodeTypeCategory():
-        for item in src_items:
-            src = hou.node(item)
-            if src is None:
-                continue
-            merge = context.createNode(
-                "sopimport", "import_" + item.rsplit("/", 1)[-1])
-            merge.parm("soppath").set(str(item))
-            _place(merge, position, n, src.color())
-            n += 1
-
-    elif context_type == hou.topNodeTypeCategory():
-        for item in src_items:
-            src = hou.node(item)
-            if src is None:
-                continue
-            merge = None
-            if src.type().category() == hou.topNodeTypeCategory():
-                merge = context.createNode(
-                    "topfetch", "fetch_" + item.rsplit("/", 1)[-1])
-                merge.parm("toppath").set(str(item))
-            elif src.type().category() == hou.sopNodeTypeCategory():
-                merge = context.createNode(
-                    "geometryimport", "import_" + item.rsplit("/", 1)[-1])
-                merge.parm("geometrysource").set(0)
-                merge.parm("soppath").set(str(item))
-            if merge is not None:
-                _place(merge, position, n, src.color())
-                n += 1
-
-    elif context_type in (hou.cop2NodeTypeCategory(), hou.cop2NetNodeTypeCategory()):
-        for item in src_items:
-            src = hou.node(item)
-            if src is None:
-                continue
-            merge = None
-            if src.type().category() == hou.cop2NodeTypeCategory():
-                merge = context.createNode(
-                    "fetch", "fetch_" + item.rsplit("/", 1)[-1])
-                merge.parm("oppath").set(str(item))
-            elif src.type().category() == hou.sopNodeTypeCategory():
-                merge = context.createNode(
-                    "sopimport", "import_" + item.rsplit("/", 1)[-1])
-                merge.parm("soppath").set(str(item))
-            if merge is not None:
-                _place(merge, position, n, src.color())
-                n += 1
-
-    elif context_type == hou.dopNodeTypeCategory():
-        for item in src_items:
-            src = hou.node(item)
-            if src is None:
-                continue
-            color = src.color()
-            res = hou.ui.displayMessage(
-                "Type of Node.",
-                buttons=("Sop Geo", "Static Object", "Cancel"),
-                default_choice=1,
-            )
-            if res == 2:
-                return
-            merge = None
-            if res == 0:
-                merge = context.createNode(
-                    "sopgeo", "import_" + item.rsplit("/", 1)[-1])
-            elif res == 1:
-                merge = context.createNode(
-                    "staticobject", "import_" + item.rsplit("/", 1)[-1])
-            if merge is not None:
-                merge.parm("soppath").set(str(item))
-                _place(merge, position, n, color)
-                n += 1
-
-    else:
-        return  # 未覆盖的上下文：静默不动（OD 同款）
-
-    _status(f"已粘贴 → {context.path()}"
-            f"（{src_items[0].rsplit('/', 1)[-1]} 等 {len(src_items)} 项）")
+            continue  # 未定义的"目标 × 源"组合，跳过
+        _place(merge, position, n, src.color())
+        merge.setSelected(True, clear_all_selected=(n == 0))
+        n += 1
+    _report(context.path(), src_items, n)
 
 
-def _paste_into_obj(context, src_items, position):
-    """OBJ 网络分支：源全是 ObjNode 时收敛进单个 geo 容器，否则每源一容器。"""
-    new_nodes = []
+def _paste_into_obj(context, position):
+    """OBJ 网络（规则 2）：SOP 源 → 每源一个 geo ``XXX``，内含 ``Merge_XXX``。"""
+    import hou
 
-    if type(hou.node(src_items[0])) == hou.ObjNode:
-        geo = context.createNode(
-            "geo", "merge_" + src_items[0].rsplit("/", 1)[-1])
-        new_nodes.append(geo)
-        geo.setPosition(position)
-        merged = []
-        for item in src_items:
-            src = hou.node(item)
-            if src is None:
-                continue
-            color = src.color()
-            geo.setColor(color)
-            merge = geo.createNode(
-                "object_merge", "merge_" + item.rsplit("/", 1)[-1])
-            merge.parm("objpath1").set(_objpath_for(merge, item))
-            merge.setColor(color)
-            merged.append(merge)
-        sink = geo.createNode("merge")
-        for idx, merge in enumerate(merged):
-            sink.setInput(idx, merge)
-        sink.setDisplayFlag(True)
-        sink.setRenderFlag(True)
-        geo.layoutChildren()
-    else:
-        # 非 OBJ 源（如 SOP）粘到 /obj：每个源一个 geo 容器
-        for n, item in enumerate(src_items):
-            src = hou.node(item)
-            if src is None:
-                continue
-            color = src.color()
-            geo = context.createNode(
-                "geo", "merge_" + item.rsplit("/", 1)[-1])
-            new_nodes.append(geo)
-            geo.setColor(color)
-            _place(geo, position, n)
-            merge = geo.createNode(
-                "object_merge", "merge_" + item.rsplit("/", 1)[-1])
-            merge.parm("objpath1").set(_objpath_for(merge, item))
-            merge.setColor(color)
+    src_items = _clipboard_node_paths()
+    if not src_items:
+        _status("剪贴板中没有可粘贴的节点（先在网络编辑器 Ctrl+C 复制节点）")
+        return
 
-    if new_nodes:
-        new_nodes[0].setSelected(True, clear_all_selected=True)
-        for node in new_nodes[1:]:
-            node.setSelected(True, clear_all_selected=False)
+    n = 0
+    for item in src_items:
+        src = hou.node(item)
+        if src is None or src.type().category() != hou.sopNodeTypeCategory():
+            continue
+        basename = item.rsplit("/", 1)[-1]
+        color = src.color()
+        geo = context.createNode("geo", basename)
+        _place(geo, position, n, color)
+        merge = geo.createNode("object_merge", "Merge_" + basename)
+        merge.parm("objpath1").set(_objpath_for(merge, item))
+        merge.setColor(color)
+        geo.setSelected(True, clear_all_selected=(n == 0))
+        n += 1
+    _report(context.path(), src_items, n)
+
+
+def _paste_reference_nodes(context, position, rules):
+    """通用引用粘贴（命名规则 3/4/6/7/8/9/10）：按源类别查表创建引用节点。"""
+    import hou
+
+    src_items = _clipboard_node_paths()
+    if not src_items:
+        _status("剪贴板中没有可粘贴的节点（先在网络编辑器 Ctrl+C 复制节点）")
+        return
+
+    n = 0
+    for item in src_items:
+        src = hou.node(item)
+        if src is None:
+            continue
+        rule = rules.get(src.type().category())
+        if rule is None:
+            continue  # 未定义的"目标 × 源"组合，跳过
+        node_type, parm_name, prefix = rule
+        node = context.createNode(node_type, prefix + item.rsplit("/", 1)[-1])
+        node.parm(parm_name).set(str(item))
+        _place(node, position, n, src.color())
+        node.setSelected(True, clear_all_selected=(n == 0))
+        n += 1
+    _report(context.path(), src_items, n)
 
 
 # ── 源解析 ────────────────────────────────────────────────────
 
-def _source_items(context, context_type, position) -> list[str]:
+def _source_items(context, position) -> list[str]:
     """返回剪贴板源节点路径列表（已验证存在）。
 
-    文本层失效时，在 SOP 网络内用 Houdini 内部节点剪贴板真实粘贴兜底，
+    文本层失效时，在目标网络内用 Houdini 内部节点剪贴板真实粘贴兜底，
     引用粘贴出的副本。
     """
-    import hou
-
     paths = _clipboard_node_paths()
     if paths:
         return paths
 
-    if context_type == hou.sopNodeTypeCategory():
-        pasted = _paste_internal_clipboard(context, position)
-        if pasted:
-            _status("剪贴板文本失效，已从 Houdini 内部剪贴板粘贴副本")
-            return [node.path() for node in pasted]
+    pasted = _paste_internal_clipboard(context, position)
+    if pasted:
+        _status("剪贴板文本失效，已从 Houdini 内部剪贴板粘贴副本")
+        return [node.path() for node in pasted]
     return []
 
 
@@ -344,7 +268,7 @@ def _paste_internal_clipboard(parent, position) -> list:
 # ── 通用 helper ───────────────────────────────────────────────
 
 def _objpath_for(merge, src_path: str) -> str:
-    """merge 与源同网络时用相对路径（OD 对齐），否则保持绝对路径。"""
+    """merge 与源同网络时用相对路径，否则保持绝对路径。"""
     import hou
     src = hou.node(src_path)
     if src is not None and merge.parent() == src.parent():
@@ -358,6 +282,15 @@ def _place(node, position, n, color=None):
     node.move([n * 3.0, 0])
     if color is not None:
         node.setColor(color)
+
+
+def _report(target_path, src_items, n):
+    """统一的完成状态提示；n=0 表示没有任何源匹配当前上下文的规则。"""
+    if n:
+        _status(f"已粘贴 → {target_path}"
+                f"（{src_items[0].rsplit('/', 1)[-1]} 等 {n} 项）")
+    else:
+        _status("剪贴板节点类型在当前上下文没有对应的粘贴规则")
 
 
 def _target_editor(kwargs: dict):

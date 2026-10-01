@@ -18,7 +18,20 @@ sys.path.insert(0, str(ROOT / "python3.13libs"))
 # Houdini's PySide6 lives in the "forced" site-packages and links against
 # the Qt DLLs in $HFS/bin; a plain python.exe has neither on its search
 # path, so add both (inside Houdini neither line is needed).
-HOUDINI_ROOT = Path(r"C:\Program Files\Side Effects Software\Houdini 22.0.429")
+def _find_houdini_root() -> Path:
+    env = os.environ.get("HFS")
+    if env and (Path(env) / "python313").exists():
+        return Path(env)
+    for base in (Path(r"C:\Program Files\Side Effects Software"),
+                 Path(r"D:\Program Files\Side Effects Software")):
+        if base.is_dir():
+            for candidate in sorted(base.glob("Houdini 22.0*"), reverse=True):
+                if (candidate / "python313").exists():
+                    return candidate
+    return Path(r"C:\Program Files\Side Effects Software\Houdini 22.0.429")
+
+
+HOUDINI_ROOT = _find_houdini_root()
 _pyside_dir = HOUDINI_ROOT / "python313" / "lib" / "site-packages-forced"
 if _pyside_dir.exists():
     sys.path.append(str(_pyside_dir))
