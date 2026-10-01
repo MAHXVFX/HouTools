@@ -72,4 +72,13 @@ QWidget#taskSlot[selected="true"] QLabel#taskSlotHandle { color: #0d6399; }
 QWidget#taskSlot[dragging="true"] { border: 1px solid #0d6399; }
 QLabel#taskSlotHandle { background-color: transparent; padding: 2px 4px; }
 QLabel#taskSlotHandle:hover { background-color: #2d2d32; }
+/* 工具栏按钮：用 id 选择器确保压过 Houdini 全局样式表
+   （类型选择器 QPushButton 在 pane 内会被全局规则覆盖） */
+QPushButton#autoFillBtn, QPushButton#clearBtn, QPushButton#settingsBtn {
+    background-color: #2d2d2d; color: #e0e0e0; border: none;
+    padding: 6px 16px; border-radius: 4px; font-size: 13px; }
+QPushButton#autoFillBtn:hover, QPushButton#clearBtn:hover,
+QPushButton#settingsBtn:hover { background-color: #3d3d3d; }
+QPushButton#autoFillBtn:pressed, QPushButton#clearBtn:pressed,
+QPushButton#settingsBtn:pressed { background-color: #0d6399; }
 """

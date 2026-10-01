@@ -18,9 +18,9 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QComboBox,
     QLineEdit, QStackedWidget, QCheckBox, QWidget, QScrollArea, QSizePolicy,
-    QGraphicsDropShadowEffect, QApplication, QMessageBox,
+    QGraphicsDropShadowEffect, QApplication, QMessageBox, QMenu,
 )
-from PySide6.QtCore import Qt, Signal, QPoint, QSize
+from PySide6.QtCore import Qt, Signal, QPoint, QSize, QRect
 from PySide6.QtGui import QColor, QIcon
 
 from mahx.automation.data_manager import MA_Automation_DataManager
@@ -375,6 +375,7 @@ class AutomationWindow(QWidget):
         super().__init__(parent)
         self.setWindowTitle("MA Automation")
         self.setMinimumSize(600, 450)
+        self.setFocusPolicy(Qt.StrongFocus)
         self.setStyleSheet(STYLE_SHEET)
 
         # ── 状态 ──
@@ -464,9 +465,11 @@ class AutomationWindow(QWidget):
         self._start_btn.clicked.connect(lambda: self._on_start())
 
         auto_fill_btn = QPushButton("自动填充")
+        auto_fill_btn.setObjectName("autoFillBtn")
         auto_fill_btn.clicked.connect(lambda: self._on_auto_fill())
 
         clear_btn = QPushButton("清空")
+        clear_btn.setObjectName("clearBtn")
         clear_btn.clicked.connect(lambda: self._on_clear())
 
         settings_btn = QPushButton("设置")
@@ -861,6 +864,17 @@ class AutomationWindow(QWidget):
         if not getattr(self, '_skip_count_update', False):
             self._update_task_count_input()
 
+    def _insert_slot_at(self, index: int) -> None:
+        """在指定位置插入一个空任务槽（右键菜单"上方/下方插入"用）。"""
+        index = max(0, min(index, len(self._slot_widgets)))
+        slot = self._create_slot_widget(index)
+        self._slot_widgets.insert(index, slot)
+        self._slot_handles.insert(index, slot._handle)
+        self._slot_layout.insertWidget(index, slot)
+        self._renumber_slots()
+        self._select_slot(index)
+        self._update_task_count_input()
+
     def _renumber_slots(self):
         """更新所有槽的序号(序号手柄的文字)。
 
@@ -968,6 +982,9 @@ class AutomationWindow(QWidget):
         if index is None:
             return
         self._select_slot(index)
+        # 把键盘焦点移到窗口上：Delete 键删除选中槽，否则焦点若停留在
+        # 输入框里，Delete 会被当成删文本消费掉
+        self.setFocus()
         self._drag_source_index = index
         self._drag_press_pos = global_pos
         self._drag_active = False
@@ -1160,6 +1177,38 @@ class AutomationWindow(QWidget):
                 self._selected_index = None
                 self._update_selection_style()
         super().mousePressEvent(event)
+
+    # ── 右键菜单(任务槽操作) ───────────────────────────────
+
+    def contextMenuEvent(self, event) -> None:  # noqa: N802 — Qt 命名约定
+        """右键任务槽：删除选定任务 / 在上方插入任务 / 在下方插入任务。
+
+        右键时先选中所在槽再弹菜单，动作始终作用于该槽。输入框等子控件
+        有自己的标准右键菜单（复制/粘贴），不会传播到这里。
+        """
+        pos_global = event.globalPos()
+        target = None
+        for i, slot in enumerate(self._slot_widgets):
+            rect = QRect(slot.mapToGlobal(QPoint(0, 0)), slot.size())
+            if rect.contains(pos_global):
+                target = i
+                break
+        if target is None:
+            return  # 空白处右键不给菜单
+
+        self._select_slot(target)
+        menu = QMenu(self)
+        act_delete = menu.addAction("删除选定任务")
+        act_above = menu.addAction("在上方插入任务")
+        act_below = menu.addAction("在下方插入任务")
+        chosen = menu.exec(pos_global)
+
+        if chosen is act_delete:
+            self._remove_slot(target)
+        elif chosen is act_above:
+            self._insert_slot_at(target)
+        elif chosen is act_below:
+            self._insert_slot_at(target + 1)
 
     # ── 设置面板 ───────────────────────────────────────────
 
