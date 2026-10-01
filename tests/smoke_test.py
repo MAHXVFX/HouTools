@@ -135,6 +135,14 @@ def main():
     win.show()
     win.hide()
 
+    # 单实例注册表:create_panel_widget 登记弱引用,失效引用被清理
+    from mahx.automation import window as aw
+    w2 = aw.create_panel_widget()
+    assert any(r() is w2 for r in aw._PANEL_REFS)
+    assert w2 in aw._iter_live_panels()
+    w2.deleteLater()
+    aw._PANEL_REFS.clear()
+
     win._remove_slot(0)  # 槽管理冒烟
     print("AutomationWindow instantiation OK")
 
