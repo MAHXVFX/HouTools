@@ -55,9 +55,10 @@ QComboBox#configCombo::down-arrow {{
 """
 
 _TOOLBAR_BTN_STYLE = (
-    "QPushButton { background-color: #2d2d2d; color: #e0e0e0; border: none;"
-    " padding: 6px 16px; border-radius: 4px; font-size: 13px; }"
-    "QPushButton:hover { background-color: #3d3d3d; }"
+    "QPushButton { background-color: #3a3a3e; color: #e0e0e0;"
+    " border: 1px solid #55555a; padding: 6px 16px;"
+    " border-radius: 4px; font-size: 13px; }"
+    "QPushButton:hover { background-color: #46464b; }"
     "QPushButton:pressed { background-color: #0d6399; }"
 )
 
@@ -490,6 +491,21 @@ class AutomationWindow(QWidget):
 
     def eventFilter(self, obj, event):
         etype = event.type()
+        if getattr(event, "key", lambda: None)() == Qt.Key_Delete \
+                and self._selected_index is not None:
+            # Houdini 浮动面板会在鼠标释放后清空部件焦点（focus=None），
+            # 此时 Delete 直接投递给原生 QWindow，任何部件处理器都收不到。
+            # 若该原生窗口正是本面板，视为"删除选定任务"并在源头消费。
+            if obj is self.window().windowHandle():
+                if etype == QEvent.KeyPress:
+                    _debug_log(
+                        "spy: Delete on our QWindow -> delete slot "
+                        f"idx={self._selected_index}"
+                    )
+                    self._remove_slot(self._selected_index)
+                    return True
+                if etype == QEvent.ShortcutOverride:
+                    return True  # 阻止 Houdini 全局快捷键先吃掉 Delete
         if etype in (QEvent.KeyPress, QEvent.ShortcutOverride) \
                 and getattr(event, "key", lambda: None)() == Qt.Key_Delete:
             fw = QApplication.focusWidget()
@@ -571,6 +587,13 @@ class AutomationWindow(QWidget):
         # 用部件级内联样式（Qt 中优先级最高）保证底色可见
         for btn in (auto_fill_btn, clear_btn, settings_btn):
             btn.setStyleSheet(_TOOLBAR_BTN_STYLE)
+        # 临时探针：亮红色——若截图中可见则内联渲染通路正常（此前 #2d2d2d
+        # 只是对比度过低）；不可见则渲染层有问题（转自绘方案）
+        auto_fill_btn.setStyleSheet(
+            "QPushButton { background-color: #ff5555; color: white;"
+            " border: 2px solid #ff0000; padding: 6px 16px;"
+            " border-radius: 4px; font-size: 13px; }"
+        )
 
         # 顺序:配置 → start → auto fill → clear   <stretch>   设置
         toolbar1.addWidget(self._config_label)
