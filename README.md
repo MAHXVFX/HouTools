@@ -29,7 +29,7 @@
 | 工具 | 菜单项 | 说明 |
 |------|--------|------|
 | MA Automation | `MAHX Tools → MA Automation` | 自动化批处理：节点按钮点击 / Flipbook 拍屏 / HomeAssistant Webhook / 打开DW；QThread 后台执行，配置 JSON 按 `$HIP` 存储，DW 软件路径在项目根目录 `MA_Automation_Config.json` 中配置（随项目发布，可直接编辑）。以 Python Panel 在 Houdini 浮动面板中打开，节点可直接拖入参数路径框（原生投递、无视窗泄漏） |
-| 粘贴为 Object Merge | `MAHX` 网络编辑器菜单 / `Ctrl+Shift+V` | 网络编辑器 Ctrl+C 复制节点后，在鼠标位置创建 object_merge 并自动填入 objpath；默认键位经 uiready.py 会话启动时分配，可在 Hotkey Manager 修改 |
+| 粘贴为 Object Merge | `MAHX` 网络编辑器菜单 / `Ctrl+Shift+V` | 网络编辑器 Ctrl+C 复制节点后，在鼠标位置创建 object_merge 并自动填入 objpath（按目标网络上下文分派 SOP/VOP/OBJ/LOP/TOP/COP2/DOP，行为对齐 OD 工具；文本失效时内部剪贴板粘贴副本兜底，单 undo 槽）；默认键位经 uiready.py 会话启动时分配，可在 Hotkey Manager 修改 |
 | 视频转序列图 | `MAHX Tools → Video to Sequence` | ffmpeg 提取视频为 JPG 序列（帧级进度、质量/起始帧/位数/前缀可调），可选自动设置相机 Background Image |
 
 > 菜单栏标签一律用英文：H22 菜单栏对中文字符渲染不可靠；工具窗口内部的中文 UI 不受影响。

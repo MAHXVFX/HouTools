@@ -34,6 +34,7 @@ root/
 | 菜单定义 | `MainMenuCommon.xml` / `NetworkViewMenu.xml` | 顶层子菜单 id：`mahx_tools_menu` / `mahx_network_view_menu`；均插在 help_menu 前 |
 | 新增工具 | `mahx/tools/<tool_id>.py` + 两份菜单 XML | 模块暴露 `run()`；菜单 scriptCode 只写两行分发器 |
 | 默认热键 | `mahx/core/hotkeys.py`（清单）+ `python3.13libs/uiready.py`（执行） | 菜单 item id 须为 `pane.wsheet.<name>` 前缀，热键符号才是 `h.pane.wsheet.<name>`；会话内 `hou.hotkeys.addAssignment`，用户自定义优先 |
+| 粘贴为 Object Merge | `mahx/tools/paste_as_object_merge.py` | 行为对齐 OD `pasteNodesAsObjectMerge`（反汇编 shelftools.pyc 还原）：按 `pwd.type().childTypeCategory()` 分派 SOP/VOP/OBJ/LOP/TOP/COP2/DOP；每源一个引用节点，偏移 n*3，继承源颜色，同网络相对路径；单 undo 槽。源路径靠 OS 剪贴板文本（内部剪贴板无法反查原件），SOP 网络文本失效时 `pasteItemsFromClipboard` 粘贴副本兜底 |
 | 窗口单例 | `mahx/ui/window_manager.py` | `open_window(tool_id, factory)`；close_all 供 Reload 前调用 |
 | 项目路径 | `mahx/core/constants.py` | `PROJECT_ROOT = Path(__file__).parents[3]`，不依赖 cwd |
 | 日志 | `mahx/core/log.py` | `get_logger("tools.xxx")`；handler 全局只配置一次，重载安全 |
