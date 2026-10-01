@@ -639,6 +639,22 @@ class AutomationWindow(QDialog):
         p1_main_layout.addLayout(out_row)
         flipbook_widget.hide()  # 默认隐藏
 
+        # ── 跳转按钮（仅按钮点击任务显示）──
+        def _on_jump():
+            node_path = _split_parm_path(parm_path_le.text())[0]
+            self._jump_to_node(node_path)
+
+        jump_btn = QPushButton("→")
+        jump_btn.setObjectName("slotJumpBtn")
+        jump_btn.setFixedSize(22, 22)
+        jump_btn.setToolTip("在网络编辑器中跳转到该任务的目标节点")
+        jump_btn.setStyleSheet(
+            "QPushButton { border: none; padding: 0px; background: transparent;"
+            " color: #0d6399; font-weight: bold; font-size: 15px; }"
+            "QPushButton:hover { background: rgba(255,255,255,0.15); border-radius: 3px; }"
+        )
+        jump_btn.clicked.connect(lambda: _on_jump())
+
         # ── 启用勾选框 ──
         enabled_cb = QCheckBox("启用")
         enabled_cb.setObjectName("slotEnabled")
@@ -649,10 +665,12 @@ class AutomationWindow(QDialog):
         hbox.addWidget(combo)
         hbox.addWidget(stacked)
         hbox.addWidget(flipbook_widget)
+        hbox.addWidget(jump_btn)
         hbox.addWidget(enabled_cb)
 
         # ── 信号：切换类型时 show/hide ──
         def _on_type_changed(idx):
+            jump_btn.setVisible(idx == 0)  # 仅按钮点击任务可跳转
             if idx == 1:  # Flipbook
                 stacked.hide()
                 flipbook_widget.show()
@@ -834,6 +852,49 @@ class AutomationWindow(QDialog):
         """
         for i, handle in enumerate(self._slot_handles):
             handle.setText(str(i + 1))
+
+    # ── 节点跳转 ───────────────────────────────────────────
+
+    def _jump_to_node(self, node_path: str) -> None:
+        """在网络编辑器中跳转到节点（与 Houdini 自带跳转行为一致）。
+
+        目标编辑器优先取最近聚焦的 Houdini 面板（hou.ui.currentPaneTabs），
+        聚焦面板不是 NetworkEditor 时退回全局第一个；随后切 pwd 并把节点置为
+        当前节点，等价于在网络路径栏点击节点路径。
+        """
+        try:
+            import hou
+        except ImportError:
+            return
+        node_path = (node_path or "").strip()
+        if not node_path:
+            hou.ui.setStatusMessage(
+                "MA Automation: 该任务未填写参数路径",
+                severity=hou.severityType.Warning,
+            )
+            return
+        node = hou.node(node_path)
+        if node is None:
+            hou.ui.setStatusMessage(
+                f"MA Automation: 节点不存在 {node_path}",
+                severity=hou.severityType.Warning,
+            )
+            return
+        editor = next(
+            (p for p in hou.ui.currentPaneTabs() if isinstance(p, hou.NetworkEditor)),
+            None,
+        )
+        if editor is None:
+            editor = hou.ui.paneTabOfType(hou.paneTabType.NetworkEditor)
+        if editor is None:
+            hou.ui.setStatusMessage(
+                "MA Automation: 未找到网络编辑器",
+                severity=hou.severityType.Warning,
+            )
+            return
+        if node.parent() != editor.pwd():
+            editor.setPwd(node.parent())
+        editor.setCurrentNode(node)
 
     # ── 选中(单击手柄) ─────────────────────────────────────
 
