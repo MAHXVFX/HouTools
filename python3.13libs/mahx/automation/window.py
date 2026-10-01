@@ -31,6 +31,7 @@ from mahx.automation.task_types import (
     ButtonClickParams,
     FlipbookParams,
     HomeAssistantParams,
+    OpenDWParams,
 )
 from mahx.automation.execution_engine import ExecutionEngine
 from mahx.automation.styles import STYLE_SHEET
@@ -467,6 +468,10 @@ class AutomationWindow(QWidget):
         self._load_settings()
         self._install_key_spy()
 
+        # 打开DW 的应用级配置(项目根 MA_Automation_Config.json)——
+        # 文件随项目发布,意外缺失时在此按默认值兜底补建
+        MA_Automation_DataManager.ensure_dw_config()
+
         # ── 诊断：在 _build_ui 之后执行，按钮此时才存在 ──
         _debug_log(
             f"create BUILD={BUILD} module={type(self).__module__} "
@@ -690,7 +695,9 @@ class AutomationWindow(QWidget):
         # 用 _NoWheelComboBox 替 QComboBox,屏蔽 hover 滚轮循环选项
         combo = _NoWheelComboBox()
         combo.setObjectName("taskType")
-        combo.addItems(["按钮点击", "Flipbook", "Webhook"])
+        # 顺序即任务类型索引: 0按钮点击 1Flipbook 2Webhook 3打开DW,
+        # 与 stacked 页序号一一对应(Flipbook 除外,见下方占位页)
+        combo.addItems(["按钮点击", "Flipbook", "Webhook", "打开DW"])
         combo.setFixedWidth(120)
 
         # ── 参数区域（QStackedWidget） ──
@@ -708,6 +715,11 @@ class AutomationWindow(QWidget):
         p0_layout.addWidget(parm_path_le)
         stacked.addWidget(page0)
 
+        # Page 1: 占位页 —— Flipbook 的参数控件在 stacked 之外
+        # (flipbook_widget),占位保证 stacked 页序号与任务类型 combo
+        # 索引对齐,_on_type_changed 才能直接 setCurrentIndex(idx)
+        stacked.addWidget(QWidget())
+
         # Page 2: HomeAssistant Webhook（放入 stacked，与按钮点击宽度相近）
         page2 = QWidget()
         p2_layout = QHBoxLayout(page2)
@@ -718,6 +730,21 @@ class AutomationWindow(QWidget):
         webhook_url_le.setPlaceholderText("Webhook URL")
         p2_layout.addWidget(webhook_url_le)
         stacked.addWidget(page2)
+
+        # Page 3: 打开DW —— 无任务参数,软件路径在应用级配置文件中设置
+        page3 = QWidget()
+        p3_layout = QHBoxLayout(page3)
+        p3_layout.setContentsMargins(0, 0, 0, 0)
+        p3_layout.setSpacing(4)
+        dw_hint = QLabel("启动 Deadline Worker")
+        dw_hint.setObjectName("openDWHint")
+        dw_hint.setStyleSheet("color: #999999; background: transparent;")
+        dw_hint.setToolTip(
+            "软件路径在配置文件中设置:\n"
+            + MA_Automation_DataManager.get_app_config_path()
+        )
+        p3_layout.addWidget(dw_hint)
+        stacked.addWidget(page3)
 
         # Flipbook — 独立 widget，不放入 stacked（避免宽度被拉大）
         flipbook_widget = QWidget()
@@ -812,7 +839,7 @@ class AutomationWindow(QWidget):
             if idx == 1:  # Flipbook
                 stacked.hide()
                 flipbook_widget.show()
-            else:  # 按钮点击 / HomeAssistant
+            else:  # 按钮点击 / Webhook / 打开DW
                 flipbook_widget.hide()
                 stacked.show()
                 stacked.setCurrentIndex(idx)
@@ -887,6 +914,8 @@ class AutomationWindow(QWidget):
         elif type_str == "HOME_ASSISTANT":
             combo.setCurrentIndex(2)
             webhook_url_le.setText(params.get("webhook_url", ""))
+        elif type_str == "OPEN_DW":
+            combo.setCurrentIndex(3)  # 无参数页,占位提示见 page3
 
         enabled_cb.setChecked(enabled)
 
@@ -1486,6 +1515,8 @@ class AutomationWindow(QWidget):
                 elif task_type == "HOME_ASSISTANT":
                     webhook_url = params.get("webhook_url", "")
                     lines.append(f"  Webhook: {webhook_url}")
+                elif task_type == "OPEN_DW":
+                    lines.append(f"  DW 软件路径: {MA_Automation_DataManager.load_dw_exe_path()}")
                 lines.append("")
         else:
             lines.append("任务列表: (空)")
@@ -1609,7 +1640,12 @@ class AutomationWindow(QWidget):
         return text
 
     def _collect_data(self) -> list[dict]:
-        """读取 UI 槽，构建 list[dict]（与 TaskItem.to_dict() 格式一致）。"""
+        """读取 UI 槽，构建 list[dict]（与 TaskItem.to_dict() 格式一致）。
+
+        参数控件一律在槽层级 ``slot.findChild`` 查找（objectName 唯一），
+        不依赖 stacked 当前页 —— Flipbook 的控件在 stacked 之外，且
+        stacked 页序号会随类型切换而变化。
+        """
         tasks: list[dict] = []
         for slot in self._slot_widgets:
             combo = slot.findChild(QComboBox, "taskType")
@@ -1620,16 +1656,12 @@ class AutomationWindow(QWidget):
             enabled_cb = slot.findChild(QCheckBox, "slotEnabled")
             enabled = enabled_cb.isChecked() if enabled_cb else True
 
-            stacked = slot.findChild(QStackedWidget, "paramsStacked")
-            current_page = stacked.currentWidget() if stacked else None
-
             if type_idx == 0:  # 按钮点击
                 node_path = ""
                 parm_name = ""
-                if current_page:
-                    pp_le = current_page.findChild(QLineEdit, "parmPath")
-                    if pp_le is not None:
-                        node_path, parm_name = _split_parm_path(pp_le.text())
+                pp_le = slot.findChild(QLineEdit, "parmPath")
+                if pp_le is not None:
+                    node_path, parm_name = _split_parm_path(pp_le.text())
                 params = ButtonClickParams(node_path=node_path, parm_name=parm_name)
                 item = TaskItem(
                     task_type=TaskType.BUTTON_CLICK,
@@ -1642,19 +1674,18 @@ class AutomationWindow(QWidget):
                 end_frame = "$RFEND"
                 output_path = "$HIP/FlipBook/$HIPNAME/$HIPNAME.$F4.jpg"
                 save_to_disk = True
-                if current_page:
-                    sf_le = current_page.findChild(QLineEdit, "flipbookStartFrame")
-                    ef_le = current_page.findChild(QLineEdit, "flipbookEndFrame")
-                    op_le = current_page.findChild(QLineEdit, "flipbookOutputPath")
-                    sd_cb = current_page.findChild(QCheckBox, "flipbookSaveToDisk")
-                    if sf_le is not None:
-                        start_frame = sf_le.text()
-                    if ef_le is not None:
-                        end_frame = ef_le.text()
-                    if op_le is not None:
-                        output_path = op_le.text()
-                    if sd_cb is not None:
-                        save_to_disk = sd_cb.isChecked()
+                sf_le = slot.findChild(QLineEdit, "flipbookStartFrame")
+                ef_le = slot.findChild(QLineEdit, "flipbookEndFrame")
+                op_le = slot.findChild(QLineEdit, "flipbookOutputPath")
+                sd_cb = slot.findChild(QCheckBox, "flipbookSaveToDisk")
+                if sf_le is not None:
+                    start_frame = sf_le.text()
+                if ef_le is not None:
+                    end_frame = ef_le.text()
+                if op_le is not None:
+                    output_path = op_le.text()
+                if sd_cb is not None:
+                    save_to_disk = sd_cb.isChecked()
                 params = FlipbookParams(
                     start_frame=start_frame,
                     end_frame=end_frame,
@@ -1667,17 +1698,28 @@ class AutomationWindow(QWidget):
                     enabled=enabled,
                 )
 
-            else:  # HomeAssistant Webhook
+            elif type_idx == 2:  # HomeAssistant Webhook
                 webhook_url = ""
-                if current_page:
-                    wh_le = current_page.findChild(QLineEdit, "webhookUrl")
-                    webhook_url = wh_le.text() if wh_le else ""
+                wh_le = slot.findChild(QLineEdit, "webhookUrl")
+                if wh_le is not None:
+                    webhook_url = wh_le.text()
                 params = HomeAssistantParams(webhook_url=webhook_url)
                 item = TaskItem(
                     task_type=TaskType.HOME_ASSISTANT,
                     params=params,
                     enabled=enabled,
                 )
+
+            elif type_idx == 3:  # 打开DW —— 软件路径在应用级配置文件中
+                item = TaskItem(
+                    task_type=TaskType.OPEN_DW,
+                    params=OpenDWParams(),
+                    enabled=enabled,
+                )
+
+            else:  # 未知类型(理论不可达),跳过避免写坏配置
+                logger.warning("未知任务类型索引: %s", type_idx)
+                continue
 
             tasks.append(item.to_dict())
 

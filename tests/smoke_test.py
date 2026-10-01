@@ -5,8 +5,10 @@ Run with Houdini's Python (no GUI, no Houdini session needed):
     "C:\\Program Files\\Side Effects Software\\Houdini 22.0.429\\python313\\python.exe" tests\\smoke_test.py
 """
 
+import json
 import os
 import sys
+import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -58,11 +60,49 @@ def main():
     assert restored.params.parm_name == "execute"
     print("task_types round-trip OK")
 
+    # 打开DW：任务序列化 + 应用级配置文件读写
+    dw_item = task_types.TaskItem.from_dict(
+        {"type": "OPEN_DW", "params": {}, "enabled": True})
+    assert dw_item.task_type is task_types.TaskType.OPEN_DW
+    assert dw_item.to_dict() == {"type": "OPEN_DW", "params": {}, "enabled": True}
+
+    from unittest.mock import patch
+    from mahx.automation import data_manager as dm
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = Path(tmp) / "MA_Automation_Config.json"
+        with patch.object(dm.MA_Automation_DataManager, "get_app_config_path",
+                          return_value=str(cfg)):
+            assert dm.MA_Automation_DataManager.load_dw_exe_path() \
+                == dm.DW_EXE_PATH_DEFAULT
+            dm.MA_Automation_DataManager.ensure_dw_config()
+            assert cfg.exists(), "ensure_dw_config did not create the file"
+            assert dm.MA_Automation_DataManager.load_dw_exe_path() \
+                == dm.DW_EXE_PATH_DEFAULT
+            cfg.write_text(json.dumps({"dw_exe_path": "D:/tools/dw.exe"}),
+                           encoding="utf-8")
+            assert dm.MA_Automation_DataManager.load_dw_exe_path() \
+                == "D:/tools/dw.exe"
+            # 缺字段时 ensure 只补齐,不覆盖用户已有键
+            cfg.write_text(json.dumps({"other": 1}), encoding="utf-8")
+            dm.MA_Automation_DataManager.ensure_dw_config()
+            data = json.loads(cfg.read_text(encoding="utf-8"))
+            assert data["other"] == 1
+            assert data["dw_exe_path"] == dm.DW_EXE_PATH_DEFAULT
+
+    # 随项目发布的配置文件存在且含有效 dw_exe_path 字段
+    shipped = json.loads(
+        (ROOT / "MA_Automation_Config.json").read_text(encoding="utf-8"))
+    assert isinstance(shipped.get("dw_exe_path"), str)
+    assert shipped["dw_exe_path"].strip()
+    print("OPEN_DW task + app config OK")
+
     # ffmpeg 查找函数可执行（无头环境找不到也不算失败）
     print("find_ffmpeg ->", mahx.videoseq.ffmpeg.find_ffmpeg())
 
     # 真实实例化 MA Automation 界面（捕获 __init__ 结构损伤）
-    from PySide6.QtWidgets import QApplication, QPushButton
+    from PySide6.QtWidgets import (
+        QApplication, QComboBox, QLineEdit, QPushButton, QStackedWidget)
 
     app = QApplication.instance() or QApplication([])
     from mahx.automation.window import AutomationWindow
@@ -72,6 +112,25 @@ def main():
         assert win.findChild(QPushButton, name) is not None, f"missing {name}"
     assert win._slot_widgets, "slot state not initialized"
     assert win._selected_index is None
+
+    # 任务类型下拉与 stacked 页对齐 + 打开DW 收集
+    slot0 = win._slot_widgets[0]
+    combo = slot0.findChild(QComboBox, "taskType")
+    assert combo is not None and combo.count() == 4, combo
+    stacked = slot0.findChild(QStackedWidget, "paramsStacked")
+    assert stacked is not None and stacked.count() == 4, stacked
+    combo.setCurrentIndex(3)  # 打开DW
+    collected = win._collect_data()
+    assert collected[0]["type"] == "OPEN_DW"
+    assert collected[0]["params"] == {}
+
+    # 回归：Flipbook 参数在 stacked 之外,收集必须仍取到编辑值
+    combo.setCurrentIndex(1)
+    sf_le = slot0.findChild(QLineEdit, "flipbookStartFrame")
+    assert sf_le is not None
+    sf_le.setText("101")
+    assert win._collect_data()[0]["params"]["start_frame"] == "101"
+
     win._remove_slot(0)  # 槽管理冒烟
     print("AutomationWindow instantiation OK")
 

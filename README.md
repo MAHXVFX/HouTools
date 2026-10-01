@@ -28,7 +28,7 @@
 
 | 工具 | 菜单项 | 说明 |
 |------|--------|------|
-| MA Automation | `MAHX Tools → MA Automation` | 自动化批处理：节点按钮点击 / Flipbook 拍屏 / HomeAssistant Webhook；QThread 后台执行，配置 JSON 按 `$HIP` 存储。以 Python Panel 在 Houdini 浮动面板中打开，节点可直接拖入参数路径框（原生投递、无视窗泄漏） |
+| MA Automation | `MAHX Tools → MA Automation` | 自动化批处理：节点按钮点击 / Flipbook 拍屏 / HomeAssistant Webhook / 打开DW；QThread 后台执行，配置 JSON 按 `$HIP` 存储，DW 软件路径在项目根目录 `MA_Automation_Config.json` 中配置（随项目发布，可直接编辑）。以 Python Panel 在 Houdini 浮动面板中打开，节点可直接拖入参数路径框（原生投递、无视窗泄漏） |
 | 视频转序列图 | `MAHX Tools → Video to Sequence` | ffmpeg 提取视频为 JPG 序列（帧级进度、质量/起始帧/位数/前缀可调），可选自动设置相机 Background Image |
 
 > 菜单栏标签一律用英文：H22 菜单栏对中文字符渲染不可靠；工具窗口内部的中文 UI 不受影响。

@@ -14,6 +14,7 @@ class TaskType(Enum):
     BUTTON_CLICK = "BUTTON_CLICK"
     FLIPBOOK = "FLIPBOOK"
     HOME_ASSISTANT = "HOME_ASSISTANT"
+    OPEN_DW = "OPEN_DW"
 
 
 @dataclass
@@ -38,7 +39,12 @@ class HomeAssistantParams:
     webhook_url: str
 
 
-TaskParams = Union[ButtonClickParams, FlipbookParams, HomeAssistantParams]
+@dataclass
+class OpenDWParams:
+    """打开DW 参数：软件路径来自应用级配置文件，任务本身无参数。"""
+
+
+TaskParams = Union[ButtonClickParams, FlipbookParams, HomeAssistantParams, OpenDWParams]
 
 
 @dataclass
@@ -74,6 +80,9 @@ class TaskItem:
             base["params"] = {
                 "webhook_url": self.params.webhook_url,
             }
+        elif self.task_type == TaskType.OPEN_DW:
+            assert isinstance(self.params, OpenDWParams)
+            base["params"] = {}
         else:
             raise ValueError(f"Unknown task type: {self.task_type}")
 
@@ -104,6 +113,9 @@ class TaskItem:
             params = HomeAssistantParams(
                 webhook_url=data["params"]["webhook_url"],
             )
+        elif type_str == "OPEN_DW":
+            task_type = TaskType.OPEN_DW
+            params: TaskParams = OpenDWParams()
         else:
             raise ValueError(f"Unknown task type string: {type_str}")
 

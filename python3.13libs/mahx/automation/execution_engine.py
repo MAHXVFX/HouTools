@@ -2,24 +2,28 @@
 MA Automation — 执行引擎
 =========================
 QThread 子类，在后台线程中逐个执行任务列表。
-支持 3 种任务类型：BUTTON_CLICK / FLIPBOOK / HOME_ASSISTANT。
+支持 4 种任务类型：BUTTON_CLICK / FLIPBOOK / HOME_ASSISTANT / OPEN_DW。
 
 执行器通过 ``hdefereval.executeDeferred`` 将 Houdini API 调用
 派发到主线程执行，确保线程安全。
 """
 
 import logging
+import os
+import subprocess
 import threading
 from datetime import datetime
 
 from PySide6.QtCore import QThread, Signal
 
+from .data_manager import MA_Automation_DataManager
 from .task_types import (
     TaskItem,
     TaskType,
     ButtonClickParams,
     FlipbookParams,
     HomeAssistantParams,
+    OpenDWParams,
 )
 
 # 尝试导入 hdefereval — Houdini 环境外不可用，此时为 None
@@ -74,6 +78,8 @@ class ExecutionEngine(QThread):
                     self._execute_flipbook(task.params)
                 elif task.task_type == TaskType.HOME_ASSISTANT:
                     self._execute_home_assistant(task.params)
+                elif task.task_type == TaskType.OPEN_DW:
+                    self._execute_open_dw(task.params)
                 else:
                     raise ValueError(f"未知任务类型: {task.task_type}")
 
@@ -228,3 +234,26 @@ class ExecutionEngine(QThread):
             raise TimeoutError(f"请求超时: {params.webhook_url}")
         except requests.ConnectionError:
             raise ConnectionError(f"连接失败: {params.webhook_url}")
+
+    def _execute_open_dw(self, params: OpenDWParams):
+        """执行打开DW：启动 Deadline Worker。
+
+        软件路径从应用配置文件 ``{HIP}/MA Automation/MA_Automation_Config.json``
+        的 ``dw_exe_path`` 字段读取（用户可手动编辑），任务参数为空。
+        ``subprocess.Popen`` 非阻塞启动，无需派发主线程。
+
+        Raises:
+            ValueError: 路径为空 / 文件不存在 / 启动失败
+        """
+        exe_path = MA_Automation_DataManager.load_dw_exe_path()
+        if not exe_path:
+            raise ValueError(
+                "DW 软件路径为空，请在 MA_Automation_Config.json 中配置 dw_exe_path"
+            )
+        if not os.path.isfile(exe_path):
+            raise ValueError(f"DW 软件路径不存在: {exe_path}")
+
+        try:
+            subprocess.Popen([exe_path])
+        except OSError as e:
+            raise ValueError(f"启动 DW 失败: {exe_path} ({e})") from e

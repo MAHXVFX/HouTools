@@ -27,10 +27,15 @@ from .task_types import (
     ButtonClickParams,
     FlipbookParams,
     HomeAssistantParams,
+    OpenDWParams,
 )
 
+from mahx.core.constants import PROJECT_ROOT
 from mahx.core.log import get_logger
 logger = get_logger("automation.data")
+
+# 打开DW 任务的默认可执行文件路径（写入 MA_Automation_Config.json 的初始值）
+DW_EXE_PATH_DEFAULT = "C:/Program Files/Thinkbox/Deadline10/bin/deadlineworker.exe"
 
 
 class MA_Automation_DataManager:
@@ -42,6 +47,18 @@ class MA_Automation_DataManager:
     """
 
     # ── 路径管理 ─────────────────────────────────────────
+
+    @classmethod
+    def _hip_base(cls) -> str:
+        """返回配置根目录：Houdini 内为 $HIP，否则 fallback 系统临时目录。"""
+        try:
+            import hou  # noqa: N812 — only available inside Houdini
+            hip = hou.getenv("HIP")
+            if hip:
+                return hip
+        except ImportError:
+            pass
+        return tempfile.gettempdir()
 
     @classmethod
     def get_data_path(cls, filename: Optional[str] = None) -> str:
@@ -58,21 +75,71 @@ class MA_Automation_DataManager:
         ``hou`` 只在函数内部 try/except 导入,避免 Houdini 外 ImportError。
 
         **无副作用**:不创建任何文件/目录。配置目录只在 ``save()`` 真正
-        写入时才创建(由调用方负责)。这保证"打开面板不会产生任何文件"
-        的契约。
+        写入时才创建(由调用方负责)。
         """
-        try:
-            import hou  # noqa: N812 — only available inside Houdini
-            hip = hou.getenv("HIP")
-            if hip:
-                base = hip
-            else:
-                base = tempfile.gettempdir()
-        except ImportError:
-            base = tempfile.gettempdir()
+        base = cls._hip_base()
 
         name = filename if filename else "MA_Automation"
         return os.path.join(base, "MA Automation", "json", f"{name}.json")
+
+    # ── 应用级配置(MA_Automation_Config.json) ─────────────
+
+    @classmethod
+    def get_app_config_path(cls) -> str:
+        """返回应用级配置文件路径: ``{项目根}/MA_Automation_Config.json``。
+
+        随插件项目一起发布、版本化管理,不随 $HIP 走 —— DW 软件路径
+        虽是机器相关的,但插件安装目录本来就是每台机器一份,直接改
+        安装目录里的这个文件即可。
+        """
+        return str(PROJECT_ROOT / "MA_Automation_Config.json")
+
+    @classmethod
+    def ensure_dw_config(cls) -> dict:
+        """确保应用级配置文件可用,返回其内容 dict。
+
+        配置文件随项目发布;意外缺失(被删除等)或缺 ``dw_exe_path``
+        字段时,以默认路径补建。面板打开时调用,兜底保证文件始终可编辑。
+        """
+        path = cls.get_app_config_path()
+        data: dict = {}
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    data = loaded
+            except Exception:
+                data = {}
+
+        if "dw_exe_path" not in data:
+            data["dw_exe_path"] = DW_EXE_PATH_DEFAULT
+            try:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+            except Exception:
+                logger.warning("无法写入应用配置文件: %s", path)
+
+        return data
+
+    @classmethod
+    def load_dw_exe_path(cls) -> str:
+        """返回打开DW 任务使用的软件路径(只读,不修改文件)。
+
+        文件不存在 / 字段缺失 / 值为空时返回 ``DW_EXE_PATH_DEFAULT``。
+        """
+        path = cls.get_app_config_path()
+        try:
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                value = data.get("dw_exe_path")
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        except Exception:
+            pass
+        return DW_EXE_PATH_DEFAULT
 
     # ── 核心 IO ──────────────────────────────────────────
 
@@ -263,6 +330,8 @@ class MA_Automation_DataManager:
             return FlipbookParams()
         elif task_type == TaskType.HOME_ASSISTANT:
             return HomeAssistantParams(**params_dict)
+        elif task_type == TaskType.OPEN_DW:
+            return OpenDWParams()
         else:
             raise ValueError(f"未知参数类型: {type_str}")
 
