@@ -2,6 +2,9 @@
 __pycache__/
 *.py[cod]
 
+# 外部可执行文件（如手动放置的 ffmpeg.exe，见 videoseq/ffmpeg.py）
+*.exe
+
 # 运行时生成的用户数据（窗口状态、工具设置）
 settings/
 

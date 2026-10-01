@@ -38,7 +38,7 @@ root/
 | 自动化任务模型 | `mahx/automation/task_types.py` | TaskType 枚举 + dataclass 参数 + TaskItem.to_dict/from_dict |
 | 自动化持久化 | `mahx/automation/data_manager.py` | 按 `$HIP/MA Automation/json/` 存取（跟场景走，是有意设计）；多配置文件 |
 | 自动化执行引擎 | `mahx/automation/execution_engine.py` | QThread；Houdini API 经 `hdefereval.executeDeferred` + Event 同步派发主线程 |
-| ffmpeg 查找 | `mahx/videoseq/ffmpeg.py` | 优先级：项目根 exe（可覆盖，gitignored）→ `$HFS/bin/hffmpeg` → PATH |
+| ffmpeg 查找 | `mahx/videoseq/ffmpeg.py` | 优先级：项目根 `ffmpeg.exe` → `$HFS/bin/hffmpeg` → `$HFS/bin/ffmpeg` → PATH（hffmpeg 优先） |
 | 视频拖放/路径框 | `mahx/videoseq/window.py` | 整窗 + `_VideoSourceGroup` 双层接收拖放；`_load_video` 是浏览/拖放/手输共用入口 |
 
 ## Conventions
@@ -50,21 +50,21 @@ root/
 - **线程**：QThread + Signal；任何回改 Houdini 的调用经 `hdefereval.executeDeferred` 派发主线程（参考 `execution_engine._run_deferred`）。
 - **菜单结构改动**（增删菜单项）需重启 Houdini——H22 硬约束，`menurefresh` 只覆盖 OPmenu/PARMmenu 等右键菜单。
 - **reload 语义**：`mahx/dev` 自身永不重载（改 dev 框架需重启）；重载前自动 close 所有登记窗口；状态反馈走 `hou.ui.setStatusMessage`（`mahx.dev.status`）。
-- **二进制不入库**：ffmpeg.exe 等放项目根可被找到但已被 .gitignore 排除。
+- **二进制不入库**：`*.exe` 已被 .gitignore 排除。
 - **提交**：git 仓库在 gitcode（`mahx-vfx/MAHX_Tools`，SSH 远程），main 分支；无构建步骤，纯 Python 即发布。
 
 ## Anti-Patterns (This Project)
 
-- **模块级 `_window` 单例**：旧 H21 代码的反面教材——必须用 `window_manager`（它处理已删除 C++ 对象的 RuntimeError 重建）。
+- **模块级 `_window` 单例**：必须用 `window_manager`（它处理已删除 C++ 对象的 RuntimeError 重建）。
 - **`mahx/dev` 内 import `mahx.core/ui/tools`**：dev 框架必须独立于被重载代码，否则持旧引用。
 - **import 期副作用**：包 `__init__` 保持薄，重活交给 dispatcher 懒加载——否则热加载会重放副作用。
-- **`except: pass` 不留日志**：迁移代码里遗留少量（ffmpeg 调用、data_manager 容错），新代码禁止；至少 `log.warning`。
+- **静默异常**：禁止无日志的 `except: pass`；捕获后至少 `log.warning`。
 - **把业务逻辑写进菜单 scriptCode**：只允许两行分发器；逻辑一律进 `mahx/tools/` 与模块。
 - **在 reload 顺序上做假设**：新增模块间依赖时保持"先被 import 的是依赖"，插入序重载才成立；避免模块级循环依赖。
 
 ## Unique Styles
 
-- **暗色主题**：主色 `#18181b`/`#1D1D20`/`#2d2d2d`，强调 `#0d6399`(蓝)/`#8a5cf5`(紫)，错误 `#d1283e`——各模块 styles 常量沿用旧项目配色。
+- **暗色主题**：主色 `#18181b`/`#1D1D20`/`#2d2d2d`，强调 `#0d6399`(蓝)/`#8a5cf5`(紫)，错误 `#d1283e`；各模块 styles 常量共享这套配色。
 - **配置语义**（Automation）：JSON 只在点 Start 时落盘 = "用户决定执行的任务"，关窗不保存是有意为之。
 - **长驻窗口进 Houdini 任务栏**：Win32 `WS_EX_APPWINDOW` + `SetCurrentProcessExplicitAppUserModelID`（见 `automation/window._apply_window_flags`），失败静默。
 
@@ -79,8 +79,3 @@ git add -A && git commit -m "..." && git push
 ```
 
 （无构建/打包步骤；热加载验证 = 改代码 → 菜单 Reload Modules (Dev) → 重开工具窗口）
-
-## Submodule Documentation
-
-各子模块深入文档按旧项目惯例放子目录 `AGENTS.md`，目前未建；需要时优先补
-`automation/`（逻辑最重）与 `videoseq/`。
