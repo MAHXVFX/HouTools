@@ -6,7 +6,7 @@
   规则 1    SOP → SOP   object_merge ``Merge_XXX``（objpath1，同网络相对路径）
   规则 2    SOP → OBJ   geo ``XXX``，内含 object_merge ``Merge_XXX``
   规则 3    SOP → LOP   sopimport ``SOP_XXX``（soppath）
-  规则 4    LOP → ROP   usdrender_rop ``XXX``（loppath）
+  规则 4    LOP → ROP   usdrender ``XXX``（loppath）
   规则 5    LOP → SOP   lopimport ``LOP_XXX``（loppath）
   规则 6    SOP → DOP   staticobject ``Object_XXX``（soppath）
   规则 7    LOP → LOP   fetch ``LOP_XXX``（loppath）
@@ -100,7 +100,7 @@ def _reference_rules() -> dict:
         },
         # 规则 4 LOP→ROP / 规则 8 SOP→ROP
         hou.ropNodeTypeCategory(): {
-            lop: ("usdrender_rop", "loppath", ""),
+            lop: ("usdrender", "loppath", ""),  # /out 的 USD Render ROP 内部名（usdrender_rop 是 LOP 内版本）
             sop: ("fetch", "source", "SOP_"),
         },
         # 规则 6 SOP→DOP
