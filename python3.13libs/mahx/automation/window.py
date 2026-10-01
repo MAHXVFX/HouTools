@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QStackedWidget, QCheckBox, QWidget, QScrollArea, QSizePolicy,
     QGraphicsDropShadowEffect, QApplication, QMessageBox, QMenu,
 )
-from PySide6.QtCore import Qt, Signal, QPoint, QSize, QRect
+from PySide6.QtCore import Qt, Signal, QPoint, QSize, QRect, QEvent
 from PySide6.QtGui import QColor, QIcon, QKeySequence, QShortcut
 from PySide6.QtGui import QColor, QIcon
 
@@ -232,6 +232,25 @@ class _SlotHandle(QLabel):
         self.setObjectName("taskSlotHandle")
         self.setCursor(Qt.OpenHandCursor)
         self.setMouseTracking(True)
+        # 手柄可聚焦：点击选中后 Delete 直达本部件的 keyPressEvent
+        self.setFocusPolicy(Qt.ClickFocus)
+
+    def event(self, e) -> bool:  # noqa: N802
+        # 焦点部件接受 ShortcutOverride 后，按键会绕过所有全局快捷键
+        # （包括 Houdini 的 Delete 拦截）直达 keyPressEvent
+        if e.type() == QEvent.ShortcutOverride and e.key() == Qt.Key_Delete:
+            e.accept()
+            return True
+        return super().event(e)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 — Qt 命名约定
+        window = getattr(self, "_owner_window", None)
+        if event.key() == Qt.Key_Delete and window is not None \
+                and window._selected_index is not None:
+            window._remove_slot(window._selected_index)
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton:
@@ -576,6 +595,7 @@ class AutomationWindow(QWidget):
         # 之前误传 str(index+1) 导致 handlePressed 发出的 slot 是字符串,
         # handler 里 list.index(str) 抛 ValueError 提前返回,选中/拖动全失效。
         idx_label = _SlotHandle(slot)
+        idx_label._owner_window = self
         idx_label.setText(str(index + 1))
         idx_label.setFixedWidth(32)
         idx_label.setStyleSheet("font-weight: bold; font-size: 14px;")
@@ -1001,9 +1021,6 @@ class AutomationWindow(QWidget):
         if index is None:
             return
         self._select_slot(index)
-        # 把键盘焦点移到窗口上：Delete 键删除选中槽，否则焦点若停留在
-        # 输入框里，Delete 会被当成删文本消费掉
-        self.setFocus()
         self._drag_source_index = index
         self._drag_press_pos = global_pos
         self._drag_active = False
