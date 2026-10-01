@@ -21,7 +21,6 @@ root/
 │   ├── icons/                     # UI 图标（SVG，文件名不含空格）
 │   └── tools/                     # 工具入口：<tool_id>.py 暴露 run()
 ├── tests/smoke_test.py            # 无头回归：菜单 XML / 全包导入 / reload_all / TaskItem 往返
-├── PLAN.md                        # 项目规划与环境核实结论
 └── settings/                      # 运行时生成的用户设置（gitignored）
 ```
 

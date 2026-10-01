@@ -1,7 +1,6 @@
 # MAHX_Tools (Houdini 22 / Python 3.13)
 
 从零构建的 Houdini 22 插件工具集，开发期支持**手动热加载**：改完代码无需重启 Houdini。
-完整规划与环境核实结论见 [PLAN.md](PLAN.md)。
 
 > 仅支持 Windows：MA Automation 的窗口置顶用 Win32 API，部分工具的"打开所在文件夹"依赖 explorer。
 
@@ -131,6 +130,5 @@ MAHX_Tools/
 │       ├── icons/                 # UI 图标（SVG）
 │       └── tools/                 # 工具入口（<tool_id>.py 暴露 run()）
 ├── tests/smoke_test.py
-├── PLAN.md                        # 完整规划
 └── settings/                      # 运行时生成
 ```
