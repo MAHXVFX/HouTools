@@ -32,13 +32,22 @@ def main():
         ET.parse(ROOT / menu_file)
     print("menu XMLs: well-formed")
 
+    # 粘贴为 Object Merge：XML 里的 item id 与热键符号约定必须一一对应
+    nv_xml = (ROOT / "NetworkViewMenu.xml").read_text(encoding="utf-8")
+    assert 'id="pane.wsheet.mahx_paste_as_object_merge"' in nv_xml
+    compile((ROOT / "python3.13libs" / "uiready.py").read_text(encoding="utf-8"),
+            "uiready.py", "exec")
+    print("paste_as_object_merge wiring: consistent")
+
     ET.parse(ROOT / "python_panels" / "MA_Automation.pypanel")
     print("MA_Automation.pypanel: well-formed")
 
     import mahx
     import mahx.core.constants
     import mahx.core.settings
+    import mahx.core.hotkeys
     import mahx.dev.dispatcher  # noqa: F401
+    import mahx.tools.paste_as_object_merge
     import mahx.automation.window  # noqa: F401
     import mahx.videoseq.window  # noqa: F401
     import mahx.videoseq.ffmpeg
@@ -59,6 +68,13 @@ def main():
     assert restored.params.node_path == "/obj/grid1"
     assert restored.params.parm_name == "execute"
     print("task_types round-trip OK")
+
+    # 粘贴为 Object Merge：路径/表达式解析
+    from mahx.tools import paste_as_object_merge as pam
+    assert pam._HOU_NODE_RE.match('hou.node("/obj/grid1")').group(1) \
+        == "/obj/grid1"
+    assert pam._HOU_NODE_RE.match("hou.parm('/obj/x')") is None
+    print("paste_as_object_merge parsing OK")
 
     # 打开DW：任务序列化 + 应用级配置文件读写
     dw_item = task_types.TaskItem.from_dict(

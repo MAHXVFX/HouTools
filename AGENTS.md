@@ -11,6 +11,7 @@ root/
 ├── NetworkViewMenu.xml            # 网络编辑器面板菜单栏（MAHX 顶层菜单，注入机制同主菜单）
 ├── MAHX_Tools.json                # 包清单副本（生效的一份在 Documents/houdini22.0/packages/）
 ├── python_panels/MA_Automation.pypanel  # MA Automation 的 Python Panel 界面定义
+├── python3.13libs/uiready.py      # UI 启动钩子：装默认键位；会链式执行路径上后续 uiready.py
 ├── python3.13libs/mahx/           # 核心 Python 包（python3.13libs 由 Houdini 自动加入 sys.path）
 │   ├── dev/                       # ★ 热加载框架：reloader / dispatcher（永不参与重载）
 │   ├── core/                      # constants（路径自算）/ log / settings(JsonStore)
@@ -32,6 +33,7 @@ root/
 | 菜单点击入口 | `mahx/dev/dispatcher.py` | `run(tool_id)` → `importlib.import_module("mahx.tools." + tool_id)` → 调其 `run()` |
 | 菜单定义 | `MainMenuCommon.xml` / `NetworkViewMenu.xml` | 顶层子菜单 id：`mahx_tools_menu` / `mahx_network_view_menu`；均插在 help_menu 前 |
 | 新增工具 | `mahx/tools/<tool_id>.py` + 两份菜单 XML | 模块暴露 `run()`；菜单 scriptCode 只写两行分发器 |
+| 默认热键 | `mahx/core/hotkeys.py`（清单）+ `python3.13libs/uiready.py`（执行） | 菜单 item id 须为 `pane.wsheet.<name>` 前缀，热键符号才是 `h.pane.wsheet.<name>`；会话内 `hou.hotkeys.addAssignment`，用户自定义优先 |
 | 窗口单例 | `mahx/ui/window_manager.py` | `open_window(tool_id, factory)`；close_all 供 Reload 前调用 |
 | 项目路径 | `mahx/core/constants.py` | `PROJECT_ROOT = Path(__file__).parents[3]`，不依赖 cwd |
 | 日志 | `mahx/core/log.py` | `get_logger("tools.xxx")`；handler 全局只配置一次，重载安全 |

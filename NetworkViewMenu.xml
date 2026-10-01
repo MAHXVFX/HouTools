@@ -26,6 +26,17 @@ import mahx.dev.dispatcher as _mahx_dispatcher
 _mahx_dispatcher.run("video_to_sequence")
         ]]></scriptCode>
       </scriptItem>
+
+      <!-- 粘贴为 Object Merge：id 必须是 pane.wsheet.* 前缀，
+           热键符号才是 h.pane.wsheet.mahx_paste_as_object_merge（网络编辑器上下文），
+           默认键位 Ctrl+Shift+V 由 scripts/123.py 在会话启动时分配 -->
+      <scriptItem id="pane.wsheet.mahx_paste_as_object_merge">
+        <label>Paste as Object Merge</label>
+        <scriptCode><![CDATA[
+import mahx.dev.dispatcher as _mahx_dispatcher
+_mahx_dispatcher.run("paste_as_object_merge", **kwargs)
+        ]]></scriptCode>
+      </scriptItem>
     </subMenu>
   </menuBar>
 </mainMenu>
