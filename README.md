@@ -3,13 +3,15 @@
 从零构建的 Houdini 22 插件工具集，开发期支持**手动热加载**：改完代码无需重启 Houdini。
 完整规划与环境核实结论见 [PLAN.md](PLAN.md)。
 
+> 仅支持 Windows：MA Automation 的窗口置顶用 Win32 API，部分工具的"打开所在文件夹"依赖 explorer。
+
 ## 安装
 
-本机已配置完毕：`Documents/houdini22.0/packages/MAHX_Tools.json` 已就位，项目根目录已通过
-`HOUDINI_PATH` 挂载。启动 Houdini 即可在顶部菜单看到 **MAHX Tools**。
+分发到新机器：拷贝本文件夹，把项目根目录下的 `MAHX_Tools.json` 放入目标环境
+`Documents/houdiniXX.X/packages/`（纯 Python 插件无需编译），启动 Houdini 即可在顶部菜单看到 **MAHX Tools**。
 
-分发到其他机器时：拷贝本文件夹，再把项目根目录下的 `MAHX_Tools.json` 放入目标环境
-`Documents/houdiniXX.X/packages/`（纯 Python 插件无需编译）。
+> 本机已配置完毕：`Documents/houdini22.0/packages/MAHX_Tools.json` 已就位，项目根目录已通过
+> `HOUDINI_PATH` 挂载。
 
 ## 开发工作流
 
@@ -26,16 +28,44 @@
 
 ## 工具列表
 
-| 工具 | 菜单项 | 说明 |
+| 工具 | 菜单项 / 键位 | 说明 |
 |------|--------|------|
-| MA Automation | `MAHX Tools → MA Automation` | 自动化批处理：节点按钮点击 / Flipbook 拍屏 / HomeAssistant Webhook / 打开DW；QThread 后台执行，配置 JSON 按 `$HIP` 存储，DW 软件路径在项目根目录 `MA_Automation_Config.json` 中配置（随项目发布，可直接编辑）。以 Python Panel 在 Houdini 浮动面板中打开，节点可直接拖入参数路径框（原生投递、无视窗泄漏） |
-| 粘贴为 Object Merge | `MAHX` 网络编辑器菜单 / `Ctrl+Shift+V` | 网络编辑器 Ctrl+C 复制节点后，按"目标上下文 × 源类别"在鼠标位置创建引用（颜色随源节点）：SOP→SOP 建 object_merge；SOP→OBJ 建 geo 内含 object_merge；SOP→LOP/COP/DOP 与 OBJ→LOP 建 sopimport；LOP→SOP 建 lopimport；LOP→LOP 建 fetch；LOP→ROP 建 usdrender；SOP→ROP 建 fetch——节点命名与路径参数规则见模块 docstring。未列出的组合跳过；文本失效时内部剪贴板粘贴副本兜底（仅 SOP 网络），单 undo 槽；默认键位经 uiready.py 会话启动时分配，可在 Hotkey Manager 修改 |
-| 视频转序列图 | `MAHX Tools → Video to Sequence` | ffmpeg 提取视频为 JPG 序列（帧级进度、质量/起始帧/位数/前缀可调），可选自动设置相机 Background Image |
+| MA Automation | `MAHX Tools → MA Automation`（Python Panel） | 自动化批处理：节点按钮点击 / Flipbook 拍屏 / HomeAssistant Webhook / 打开DW |
+| 粘贴为 Object Merge | 网络编辑器 `MAHX` 菜单 / `Ctrl+Shift+V` | 复制节点后，按"目标上下文 × 源类别"在鼠标位置粘贴引用节点 |
+| 视频转序列图 | `MAHX Tools → Video to Sequence` | ffmpeg 提取视频为 JPG 序列（帧级进度，质量/起始帧/位数/前缀可调），可选自动设置相机 Background Image |
 
-> 菜单栏标签一律用英文：H22 菜单栏对中文字符渲染不可靠；工具窗口内部的中文 UI 不受影响。
->
-> MA Automation 是 Python Panel：`Reload Modules (Dev)` 不会自动重建已打开的面板
-> （避免丢失未 Start 保存的编辑），需点面板工具条自带的刷新按钮重建界面。
+### MA Automation
+
+以 Python Panel 在 Houdini 浮动面板中打开。
+
+- QThread 后台执行，配置 JSON 按 `$HIP` 存储
+- DW 软件路径在项目根目录 `MA_Automation_Config.json` 中配置（随项目发布，可直接编辑）
+- 节点可直接拖入参数路径框（原生投递、无视窗泄漏）
+- `Reload Modules (Dev)` 不会自动重建已打开的面板（避免丢弃未 Start 保存的编辑），
+  需点面板工具条自带的刷新按钮重建界面
+
+### 粘贴为 Object Merge
+
+网络编辑器里 Ctrl+C 复制节点后，切到目标网络按 `Ctrl+Shift+V`（或点 `MAHX` 菜单），
+在鼠标位置创建引用节点，颜色随源节点。默认键位经 `python3.13libs/uiready.py`
+会话启动时分配，可在 Hotkey Manager 修改。
+
+| 复制的源 → 粘贴目标 | 创建的节点（XXX = 源节点名） |
+|------|------|
+| SOP → SOP | object_merge `Merge_XXX` |
+| SOP → OBJ | geo `XXX`，内含 object_merge `Merge_XXX` |
+| SOP → LOP | sopimport `SOP_XXX` |
+| SOP → COP | sopimport `SOP_XXX`（仅新 COP，需置 usesoppath=1） |
+| SOP → DOP | staticobject `Object_XXX` |
+| SOP → ROP | fetch `SOP_XXX` |
+| OBJ → LOP | sopimport `SOP_XXX` |
+| LOP → SOP | lopimport `LOP_XXX` |
+| LOP → LOP | fetch `LOP_XXX` |
+| LOP → ROP | usdrender `XXX` |
+
+未列出的组合一律跳过；路径参数细则见 `mahx/tools/paste_as_object_merge.py` 模块 docstring。
+源路径取 OS 剪贴板文本（引用语义必须有"原件路径"），文本失效时退回内部剪贴板粘贴副本兜底
+（仅 SOP 网络）。整次操作占用单个 undo 槽。
 
 ffmpeg 说明：优先使用 Houdini 自带的 `$HFS/bin/hffmpeg`，**无需单独安装**；如需指定版本，
 把 `ffmpeg.exe` 放到项目根目录即可（已被 `.gitignore` 排除，不入库）。
@@ -43,7 +73,9 @@ ffmpeg 说明：优先使用 Houdini 自带的 `$HFS/bin/hffmpeg`，**无需单�
 ## 新增一个工具
 
 1. 新建 `python3.13libs/mahx/tools/<tool_id>.py`，暴露 `run()` 入口；
-2. 在 `MainMenuCommon.xml` 里加一个 `scriptItem`，`scriptCode` 只写两行薄分发器：
+2. 在两份菜单 XML 里各加一个 `scriptItem`（`MainMenuCommon.xml` 顶部菜单 /
+   `NetworkViewMenu.xml` 网络编辑器菜单，按需取舍，惯例两份都加），
+   `scriptCode` 只写两行薄分发器：
 
 ```xml
 <scriptItem id="mahx.<tool_id>">
@@ -55,7 +87,8 @@ _mahx_dispatcher.run("<tool_id>")
 </scriptItem>
 ```
 
-3. 重启 Houdini 让菜单项出现（仅此一次），之后该工具的代码迭代全部走热加载。
+3. 重启 Houdini 让菜单项出现（仅此一次），之后该工具的代码迭代全部走热加载；
+4. 同步文档：更新本 README 的「工具列表」与「结构」，并在 `AGENTS.md` 的 Where to Look 表补一行。
 
 ## 约定
 
@@ -64,13 +97,18 @@ _mahx_dispatcher.run("<tool_id>")
 - **日志**：`from mahx.core.log import get_logger`，`get_logger("tools.xxx")`。
 - **设置**：`mahx.core.settings.JsonStore("xxx.json", defaults={...})`，存到项目 `settings/` 目录。
 - **线程**：QThread + Signal；回改 Houdini 的调用经 `hdefereval.executeDeferred` 派发主线程。
+- **`import hou` 只放函数内**（或 try/except 包裹）：保证模块在 Houdini 外可导入，
+  无头冒烟测试依赖这一点。
+- **菜单栏标签一律英文/ASCII**：H22 菜单栏对中文字符渲染不可靠；工具窗口内部的中文 UI 不受影响。
+- **二进制不入库**：`*.exe` 已被 `.gitignore` 排除。
 
 ## 测试
 
 ```
-"C:\Program Files\Side Effects Software\Houdini 22.0.429\python313\python.exe" tests\smoke_test.py
+"D:\Program Files\Side Effects Software\Houdini 22.0.429\python313\python.exe" tests\smoke_test.py
 ```
 
+（按本机 Houdini 安装位置调整路径，须用 Houdini 自带的 Python 3.13。）
 无头验证菜单 XML、全包导入与 `reload_all()`。
 
 ## 结构
@@ -80,15 +118,18 @@ MAHX_Tools/
 ├── MainMenuCommon.xml             # 顶部菜单（Houdini 规定文件名）
 ├── NetworkViewMenu.xml            # 网络编辑器面板菜单栏（MAHX 顶层菜单，注入机制同上）
 ├── MAHX_Tools.json                # 包清单副本（生效的一份在 packages/ 下）
+├── MA_Automation_Config.json      # MA Automation 的 DW 软件路径等配置（随项目发布）
 ├── python_panels/MA_Automation.pypanel  # MA Automation 的 Python Panel 界面
-├── python3.13libs/mahx/
-│   ├── dev/                       # 热加载框架（reloader / dispatcher，不参与重载）
-│   ├── core/                      # 路径常量 / 日志 / JSON 设置
-│   ├── ui/                        # window_manager 窗口登记
-│   ├── automation/                # MA Automation（任务类型/持久化/执行引擎/窗口）
-│   ├── videoseq/                  # 视频转序列图（ffmpeg 查找 + 窗口）
-│   ├── icons/                     # UI 图标（SVG）
-│   └── tools/                     # 工具入口（<tool_id>.py 暴露 run()）
+├── python3.13libs/
+│   ├── uiready.py                 # UI 启动钩子：装默认键位（会话启动时执行）
+│   └── mahx/
+│       ├── dev/                   # 热加载框架（reloader / dispatcher，不参与重载）
+│       ├── core/                  # 路径常量 / 日志 / JSON 设置
+│       ├── ui/                    # window_manager 窗口登记
+│       ├── automation/            # MA Automation（任务类型/持久化/执行引擎/窗口）
+│       ├── videoseq/              # 视频转序列图（ffmpeg 查找 + 窗口）
+│       ├── icons/                 # UI 图标（SVG）
+│       └── tools/                 # 工具入口（<tool_id>.py 暴露 run()）
 ├── tests/smoke_test.py
 ├── PLAN.md                        # 完整规划
 └── settings/                      # 运行时生成
