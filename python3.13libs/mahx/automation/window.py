@@ -163,8 +163,26 @@ def _extract_parm_path(text: str) -> str:
 
 # ── Python Panel 接入 ────────────────────────────────────────
 
+BUILD = "b6"
+"""界面构建标记：显示在工具栏末尾，用于确认面板运行的是当前代码。"""
+
 INTERFACE_NAME = "MA_Automation"
 """MA_Automation.pypanel 中 <interface name> 的名字。"""
+
+_DEBUG_LOG = PROJECT_ROOT / "settings" / "panel_debug.log"
+
+
+def _debug_log(message):
+    """把运行时诊断信息追加到 settings/panel_debug.log（排查用）。"""
+    try:
+        from datetime import datetime
+
+        _DEBUG_LOG.parent.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        with open(_DEBUG_LOG, "a", encoding="utf-8") as f:
+            f.write(f"[{stamp}] {message}\n")
+    except Exception:
+        pass
 
 
 def create_panel_widget(parent=None):
@@ -244,6 +262,11 @@ class _SlotHandle(QLabel):
         return super().event(e)
 
     def keyPressEvent(self, event) -> None:  # noqa: N802 — Qt 命名约定
+        if event.key() == Qt.Key_Delete:
+            _debug_log(
+                f"handle keyPress Delete "
+                f"selected={getattr(self._owner_window, '_selected_index', None)}"
+            )
         window = getattr(self, "_owner_window", None)
         if event.key() == Qt.Key_Delete and window is not None \
                 and window._selected_index is not None:
@@ -412,6 +435,22 @@ class AutomationWindow(QWidget):
         delete_sc.setContext(Qt.WidgetWithChildrenShortcut)
         delete_sc.activated.connect(self._on_delete_shortcut)
 
+        # ── 诊断：确认运行代码版本与样式/快捷键的实际状态 ──
+        _debug_log(
+            f"create BUILD={BUILD} module={type(self).__module__} "
+            f"file={__file__}"
+        )
+        for name in ("startBtn", "autoFillBtn", "clearBtn", "settingsBtn"):
+            btn = self.findChild(QPushButton, name)
+            if btn is None:
+                _debug_log(f"btn {name}: NOT FOUND")
+            else:
+                _debug_log(
+                    f"btn {name}: sheetLen={len(btn.styleSheet())} "
+                    f"inline={bool(btn.styleSheet())}"
+                )
+        _debug_log(f"shortcuts in tree={len(self.findChildren(QShortcut))}")
+
         # ── 状态 ──
         self._slot_widgets: list[QWidget] = []
         # 平行于 _slot_widgets 的 handle 引用列表,在 _create_slot_widget 时
@@ -560,6 +599,12 @@ class AutomationWindow(QWidget):
         toolbar2.addWidget(add_btn)
         toolbar2.addWidget(remove_btn)
         toolbar2.addStretch()
+
+        build_label = QLabel(BUILD)
+        build_label.setStyleSheet(
+            "color: #555555; font-size: 10px; background: transparent;"
+        )
+        toolbar2.addWidget(build_label)
 
         layout.addLayout(toolbar2)
 
@@ -1021,6 +1066,12 @@ class AutomationWindow(QWidget):
         if index is None:
             return
         self._select_slot(index)
+        fw = QApplication.focusWidget()
+        _debug_log(
+            f"handle press idx={index} "
+            f"focus={type(fw).__name__ if fw else None} "
+            f"handleHasFocus={self._slot_handles[index].hasFocus()}"
+        )
         self._drag_source_index = index
         self._drag_press_pos = global_pos
         self._drag_active = False
@@ -1153,6 +1204,10 @@ class AutomationWindow(QWidget):
 
     def keyPressEvent(self, event) -> None:
         """Delete 键:删除当前选中槽。无选中则交给父类处理。"""
+        if event.key() == Qt.Key_Delete:
+            _debug_log(
+                f"window keyPress Delete selected={self._selected_index}"
+            )
         if event.key() == Qt.Key_Delete and self._selected_index is not None:
             self._remove_slot(self._selected_index)
             event.accept()
@@ -1165,6 +1220,7 @@ class AutomationWindow(QWidget):
         焦点在输入框内时 QLineEdit 会接受 ShortcutOverride，本快捷键
         不触发，Delete 保持正常的文本编辑行为。
         """
+        _debug_log(f"delete shortcut fired selected={self._selected_index}")
         if self._selected_index is not None:
             self._remove_slot(self._selected_index)
 
