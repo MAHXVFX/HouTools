@@ -310,11 +310,11 @@ class _ParmPathLineEdit(QLineEdit):
         path = _extract_parm_path(text) if text else ""
         if path:
             self.setText(path)
-            event.acceptProposedAction()
-        else:
-            # dragEnter 已 accept,这里 ignore 不会回滚光标状态(用户看到
-            # "放下"动作完成,但文本未变 —— 不报错)
-            event.ignore()
+        # 无论是否命中路径，都向拖放源上报"取消"而非"成功落地"：实测
+        # Houdini 收到"节点拖放成功落入外部窗口"时，会把视窗待定的工具
+        # 快捷方式泄漏到 3D 视窗（Houdini 内部面板、拒绝拖放的外部程序
+        # 如记事本均无此问题）。数据已读取完毕，上报取消不影响填值。
+        event.ignore()
 
 
 def _extract_drag_text(mime) -> str:
@@ -343,6 +343,24 @@ def _extract_drag_text(mime) -> str:
         except Exception:  # noqa: BLE001
             continue
     return ""
+
+
+def _frame_node_in_editor(editor, node):
+    """在 network editor 中取景单个节点（等价按 F 的效果）。
+
+    H22 运行时没有 frameSelection/homeToSelection（文档列出但存根缺失），
+    且 setCurrentNode 的 pick 机制会异步清空选择，因此不依赖选择状态：
+    直接按节点位置构造带富余边距的 BoundingRect 交给 setVisibleBounds。
+    """
+    try:
+        import hou
+        pos = node.position()
+        rect = hou.BoundingRect(
+            pos[0] - 2.0, pos[1] - 1.5, pos[0] + 2.0, pos[1] + 1.5
+        )
+        editor.setVisibleBounds(rect)
+    except Exception as exc:  # noqa: BLE001 - 取景失败不影响跳转与选中
+        logger.warning("frame node %s failed: %s", node, exc)
 
 
 class AutomationWindow(QDialog):
@@ -859,8 +877,8 @@ class AutomationWindow(QDialog):
         """在网络编辑器中跳转到节点（与 Houdini 自带跳转行为一致）。
 
         目标编辑器优先取最近聚焦的 Houdini 面板（hou.ui.currentPaneTabs），
-        聚焦面板不是 NetworkEditor 时退回全局第一个；随后切 pwd 并选中
-        目标节点，等价于官方跳转按钮——需要居中时按 F 即可。
+        聚焦面板不是 NetworkEditor 时退回全局第一个；随后切 pwd、选中
+        目标节点并取景居中（同官方路径栏点击行为）。
         """
         try:
             import hou
@@ -894,9 +912,8 @@ class AutomationWindow(QDialog):
             return
         if node.parent() != editor.pwd():
             editor.setPwd(node.parent())
-        editor.setCurrentNode(node)
-        # 与官方跳转一致：选中目标节点（clear 原选择），居中交给用户按 F
         node.setSelected(True, clear_all_selected=True)
+        _frame_node_in_editor(editor, node)
 
     # ── 选中(单击手柄) ─────────────────────────────────────
 
