@@ -61,6 +61,20 @@ def main():
     # ffmpeg 查找函数可执行（无头环境找不到也不算失败）
     print("find_ffmpeg ->", mahx.videoseq.ffmpeg.find_ffmpeg())
 
+    # 真实实例化 MA Automation 界面（捕获 __init__ 结构损伤）
+    from PySide6.QtWidgets import QApplication, QPushButton
+
+    app = QApplication.instance() or QApplication([])
+    from mahx.automation.window import AutomationWindow
+
+    win = AutomationWindow()
+    for name in ("startBtn", "autoFillBtn", "clearBtn", "settingsBtn"):
+        assert win.findChild(QPushButton, name) is not None, f"missing {name}"
+    assert win._slot_widgets, "slot state not initialized"
+    assert win._selected_index is None
+    win._remove_slot(0)  # 槽管理冒烟
+    print("AutomationWindow instantiation OK")
+
     summary = reloader.reload_all()
     print("reload_all ->", summary)
     assert "FAILED" not in summary, summary

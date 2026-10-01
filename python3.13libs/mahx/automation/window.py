@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QStackedWidget, QCheckBox, QWidget, QScrollArea, QSizePolicy,
     QGraphicsDropShadowEffect, QApplication, QMessageBox, QMenu,
 )
-from PySide6.QtCore import Qt, Signal, QPoint, QSize, QRect, QEvent
+from PySide6.QtCore import Qt, Signal, QPoint, QSize, QRect, QEvent, QTimer
 from PySide6.QtGui import QColor, QIcon, QKeySequence, QShortcut
 from PySide6.QtGui import QColor, QIcon
 
@@ -435,22 +435,6 @@ class AutomationWindow(QWidget):
         delete_sc.setContext(Qt.WidgetWithChildrenShortcut)
         delete_sc.activated.connect(self._on_delete_shortcut)
 
-        # ── 诊断：确认运行代码版本与样式/快捷键的实际状态 ──
-        _debug_log(
-            f"create BUILD={BUILD} module={type(self).__module__} "
-            f"file={__file__}"
-        )
-        for name in ("startBtn", "autoFillBtn", "clearBtn", "settingsBtn"):
-            btn = self.findChild(QPushButton, name)
-            if btn is None:
-                _debug_log(f"btn {name}: NOT FOUND")
-            else:
-                _debug_log(
-                    f"btn {name}: sheetLen={len(btn.styleSheet())} "
-                    f"inline={bool(btn.styleSheet())}"
-                )
-        _debug_log(f"shortcuts in tree={len(self.findChildren(QShortcut))}")
-
         # ── 状态 ──
         self._slot_widgets: list[QWidget] = []
         # 平行于 _slot_widgets 的 handle 引用列表,在 _create_slot_widget 时
@@ -480,6 +464,41 @@ class AutomationWindow(QWidget):
         self._build_ui()
         self._load_data()
         self._load_settings()
+        self._install_key_spy()
+
+        # ── 诊断：在 _build_ui 之后执行，按钮此时才存在 ──
+        _debug_log(
+            f"create BUILD={BUILD} module={type(self).__module__} "
+            f"file={__file__}"
+        )
+        for name in ("startBtn", "autoFillBtn", "clearBtn", "settingsBtn"):
+            btn = self.findChild(QPushButton, name)
+            if btn is None:
+                _debug_log(f"btn {name}: NOT FOUND")
+            else:
+                _debug_log(
+                    f"btn {name}: sheetLen={len(btn.styleSheet())} "
+                    f"inline={bool(btn.styleSheet())}"
+                )
+        _debug_log(f"shortcuts in tree={len(self.findChildren(QShortcut))}")
+
+    def _install_key_spy(self):
+        """临时诊断：应用级事件过滤器，记录 Delete 键事件的去向。"""
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        etype = event.type()
+        if etype in (QEvent.KeyPress, QEvent.ShortcutOverride) \
+                and getattr(event, "key", lambda: None)() == Qt.Key_Delete:
+            fw = QApplication.focusWidget()
+            _debug_log(
+                f"spy type={'KeyPress' if etype == QEvent.KeyPress else 'ShortcutOverride'} "
+                f"obj={type(obj).__name__} "
+                f"focus={type(fw).__name__ if fw else None}"
+            )
+        return super().eventFilter(obj, event)
 
     # ── UI 构建 ────────────────────────────────────────────
 
