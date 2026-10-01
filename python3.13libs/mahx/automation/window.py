@@ -184,7 +184,8 @@ def open_floating_panel():
     return hou.ui.curDesktop().createFloatingPanel(
         hou.paneTabType.PythonPanel,
         size=(620, 540),
-        python_panel_interface=interface,
+        # SWIG 签名为 char const*：这里传接口名而非接口对象
+        python_panel_interface=INTERFACE_NAME,
     )
 
 
