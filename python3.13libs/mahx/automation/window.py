@@ -310,6 +310,7 @@ class _ParmPathLineEdit(QLineEdit):
         path = _extract_parm_path(text) if text else ""
         if path:
             self.setText(path)
+            _reset_viewer_state()
             event.acceptProposedAction()
         else:
             # dragEnter 已 accept,这里 ignore 不会回滚光标状态(用户看到
@@ -343,6 +344,32 @@ def _extract_drag_text(mime) -> str:
         except Exception:  # noqa: BLE001
             continue
     return ""
+
+
+def _reset_viewer_state():
+    """把 3D 场景视窗的工具状态复位到选择状态（尽力而为）。
+
+    从网络编辑器拖节点进本面板时，光标路过 3D 视窗会使其进入
+    "放置节点"的待定状态；拖放在外部窗口落地后 Houdini 不会自动
+    复位（视窗卡在按 Enter 前的状态），且 Houdini 未提供 drag-leave
+    钩子，故在拖放落地后主动复位。
+    """
+    try:
+        import hou
+    except ImportError:
+        return
+    viewers = []
+    for pane in hou.ui.currentPaneTabs():
+        if isinstance(pane, hou.SceneViewer) and pane not in viewers:
+            viewers.append(pane)
+    first = hou.ui.paneTabOfType(hou.paneTabType.SceneViewer)
+    if first is not None and first not in viewers:
+        viewers.append(first)
+    for viewer in viewers:
+        try:
+            viewer.setCurrentState("selectstate")
+        except Exception:  # noqa: BLE001 - 复位失败不影响拖放结果
+            log.debug("viewer state reset failed for %s", viewer)
 
 
 class AutomationWindow(QDialog):
@@ -650,7 +677,7 @@ class AutomationWindow(QDialog):
         jump_btn.setToolTip("在网络编辑器中跳转到该任务的目标节点")
         jump_btn.setStyleSheet(
             "QPushButton { border: none; padding: 0px; background: transparent;"
-            " color: #0d6399; font-weight: bold; font-size: 15px; }"
+            " color: #0d6399; font-weight: bold; font-size: 18px; }"
             "QPushButton:hover { background: rgba(255,255,255,0.15); border-radius: 3px; }"
         )
         jump_btn.clicked.connect(lambda: _on_jump())
@@ -894,7 +921,20 @@ class AutomationWindow(QDialog):
             return
         if node.parent() != editor.pwd():
             editor.setPwd(node.parent())
-        editor.setCurrentNode(node)
+        # setCurrentNode 只切层级不取景。frameSelection 取景"当前选择"，
+        # 故临时选中目标节点完成居中（等价按 F 键），随后恢复用户原选择。
+        # frameSelection 在 H22 已标记弃用但仍是文档化接口（内部即
+        # setVisibleBounds），弃用警告可接受。
+        previous = list(hou.selectedNodes())
+        node.setSelected(True, clear_all_selected=True)
+        try:
+            editor.frameSelection()
+        finally:
+            if previous:
+                for i, n in enumerate(reversed(previous)):
+                    n.setSelected(True, clear_all_selected=(i == 0))
+            else:
+                node.setSelected(False)
 
     # ── 选中(单击手柄) ─────────────────────────────────────
 
