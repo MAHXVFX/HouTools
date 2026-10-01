@@ -7,11 +7,11 @@
 
 ## 安装
 
-分发到新机器：拷贝本文件夹，把项目根目录下的 `MAHX_Tools.json` 放入目标环境
-`Documents/houdiniXX.X/packages/`（纯 Python 插件无需编译），启动 Houdini 即可在顶部菜单看到 **MAHX Tools**。
-
-> 本机已配置完毕：`Documents/houdini22.0/packages/MAHX_Tools.json` 已就位，项目根目录已通过
-> `HOUDINI_PATH` 挂载。
+把本文件夹整个拷贝到 `Documents/houdiniXX.X/MAHX_Tools`（**与 `packages/` 同级**，
+包清单写死了这个相对位置），再把项目根目录下的 `MAHX_Tools.json` 放入
+`Documents/houdiniXX.X/packages/`。包清单会把项目根目录注入 `HOUDINI_PATH`，
+Houdini 启动时据此加载菜单 XML 与 `python3.13libs`（纯 Python 插件无需编译）。
+启动后顶部菜单即出现 **MAHX Tools**。
 
 ## 开发工作流
 
