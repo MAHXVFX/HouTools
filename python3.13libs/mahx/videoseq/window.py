@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QPushButton, QSpinBox, QSlider, QGroupBox, QFormLayout,
     QFileDialog, QMessageBox, QProgressBar, QInputDialog,
 )
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, Signal, QTimer
 
 from mahx.videoseq.ffmpeg import find_ffprobe as _get_ffprobe_path
 from mahx.videoseq.ffmpeg import get_startup_kwargs as _get_startup_kwargs
@@ -651,6 +651,8 @@ class _VideoToSequenceWindow(QDialog):
 
         self._probe_worker = None
         self._extract_worker = None
+        self._pending_close = False
+        self._close_poll = None
         self._video_info = None
         self._current_video_path = ""
 
@@ -1264,9 +1266,35 @@ class _VideoToSequenceWindow(QDialog):
             self._probe_worker.cancel()
             self._probe_worker.wait(2000)
         if self._extract_worker and self._extract_worker.isRunning():
+            ret = QMessageBox.question(
+                self, "转换进行中",
+                "视频转换仍在进行，取消并关闭窗口？",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if ret != QMessageBox.Yes:
+                event.ignore()
+                return
+            # 非阻塞关闭:取消后先隐藏窗口,QTimer 轮询线程退出再真正关 ——
+            # 直接 wait() 会卡 UI,线程对象也不能先于运行中的线程销毁
             self._extract_worker.cancel()
-            self._extract_worker.wait(5000)
+            self._pending_close = True
+            self.hide()
+            event.ignore()
+            if getattr(self, "_close_poll", None) is None:
+                self._close_poll = QTimer(self)
+                self._close_poll.timeout.connect(self._poll_worker_done)
+            self._close_poll.start(200)
+            return
         super().closeEvent(event)
+
+    def _poll_worker_done(self):
+        """转换线程退出后完成延迟关闭。"""
+        if self._extract_worker is not None and self._extract_worker.isRunning():
+            return
+        if getattr(self, "_pending_close", False):
+            self._pending_close = False
+            if self._close_poll is not None:
+                self._close_poll.stop()
+            self.close()
 
 
 # ─── Entry Point ─────────────────────────────────────────────────────

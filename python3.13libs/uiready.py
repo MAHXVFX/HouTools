@@ -20,7 +20,11 @@ except Exception as e:
 
 
 def _run_downstream_uiready():
-    """执行路径上下一个 python3.13libs/uiready.py（通常是 $HH 官方那份）。"""
+    """执行路径上下一个 python3.13libs/uiready.py（通常是 $HH 官方那份）。
+
+    sys.path 上放的是各个 python3.13libs 目录本身（mahx 能被导入即证），
+    官方文件即 ``<entry>/uiready.py``；同时兼容 entry 为包根的挂载方式。
+    """
     try:
         ours = Path(__file__).resolve()
     except NameError:
@@ -28,16 +32,18 @@ def _run_downstream_uiready():
     for entry in sys.path:
         if not entry:
             continue
-        candidate = Path(entry) / "python3.13libs" / "uiready.py"
-        try:
-            if candidate.is_file() and candidate.resolve() != ours:
-                code = compile(candidate.read_text(encoding="utf-8"),
-                               str(candidate), "exec")
-                exec(code, {"__name__": "_mahx_downstream_uiready",
-                            "__file__": str(candidate)})
-                return
-        except OSError:
-            continue
+        root = Path(entry)
+        for candidate in (root / "uiready.py",
+                          root / "python3.13libs" / "uiready.py"):
+            try:
+                if candidate.is_file() and candidate.resolve() != ours:
+                    code = compile(candidate.read_text(encoding="utf-8"),
+                                   str(candidate), "exec")
+                    exec(code, {"__name__": "_mahx_downstream_uiready",
+                                "__file__": str(candidate)})
+                    return
+            except OSError:
+                continue
 
 
 _run_downstream_uiready()

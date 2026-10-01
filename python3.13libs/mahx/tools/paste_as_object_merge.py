@@ -70,8 +70,9 @@ def _paste_as_merge(context, context_type, position):
     """上下文分派主流程，结构逐分支对齐 OD shelftools.pasteNodesAsObjectMerge。"""
     import hou
 
-    src_items = _source_items(context, position)
+    src_items = _source_items(context, context_type, position)
     if not src_items:
+        _status("剪贴板中没有可粘贴的节点（先在网络编辑器 Ctrl+C 复制节点）")
         return
 
     n = 0
@@ -269,7 +270,7 @@ def _paste_into_obj(context, src_items, position):
 
 # ── 源解析 ────────────────────────────────────────────────────
 
-def _source_items(context, position) -> list[str]:
+def _source_items(context, context_type, position) -> list[str]:
     """返回剪贴板源节点路径列表（已验证存在）。
 
     文本层失效时，在 SOP 网络内用 Houdini 内部节点剪贴板真实粘贴兜底，
@@ -281,7 +282,7 @@ def _source_items(context, position) -> list[str]:
     if paths:
         return paths
 
-    if context.type().childTypeCategory() == hou.sopNodeTypeCategory():
+    if context_type == hou.sopNodeTypeCategory():
         pasted = _paste_internal_clipboard(context, position)
         if pasted:
             _status("剪贴板文本失效，已从 Houdini 内部剪贴板粘贴副本")

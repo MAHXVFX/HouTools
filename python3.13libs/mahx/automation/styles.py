@@ -6,8 +6,9 @@
 设计意图:
 - 颜色用字面量写死（不抽常量），因为这套配色只服务本面板，跨模块共享的
   颜色统一在 `MA/common/styles.py` 维护（待未来真需要时再抽）
-- 关键 objectName (`startBtn` / `addBtn` / `removeBtn` / `taskSlot`)
-  在样式表中通过 ``#name`` 选择器特化样式
+- 关键 objectName (`startBtn` / `taskSlot`) 在样式表中通过 ``#name`` 选择器特化样式;
+  `addBtn` / `removeBtn` 的样式在 window.py 里用部件级内联样式实现
+  （pane 内窗口级规则会被 Houdini 全局样式表压过）
 """
 
 # 暗色主题基色
@@ -19,9 +20,6 @@ QPushButton:hover { background-color: #3d3d3d; }
 QPushButton:pressed { background-color: #0d6399; }
 QPushButton#startBtn { background-color: #0d6399; color: white; font-weight: bold; }
 QPushButton#startBtn:hover { background-color: #0e7bc9; }
-QPushButton#addBtn, QPushButton#removeBtn {
-    padding: 6px 8px; font-size: 16px; font-weight: bold; min-width: 28px;
-}
 QComboBox { background-color: #2d2d2d; color: #e0e0e0; border: 1px solid #3d3d3d;
             padding: 4px 8px; border-radius: 4px; }
 QComboBox::drop-down { border: none; }

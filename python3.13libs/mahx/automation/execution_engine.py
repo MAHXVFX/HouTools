@@ -16,7 +16,6 @@ from datetime import datetime
 
 from PySide6.QtCore import QThread, Signal
 
-from .data_manager import MA_Automation_DataManager
 from .task_types import (
     TaskItem,
     TaskType,
@@ -51,6 +50,9 @@ class ExecutionEngine(QThread):
         super().__init__(parent)
         self._tasks = tasks
         self._cancelled = False
+        # 主线程预读 DW 软件路径:hou.getenv 严格说不该在 QThread 里调,
+        # 每次运行读一次(而非每任务读)也足够
+        self._dw_exe_path = MA_Automation_DataManager.load_dw_exe_path()
 
     # ── 主循环 ────────────────────────────────────────────
 
@@ -245,7 +247,8 @@ class ExecutionEngine(QThread):
         Raises:
             ValueError: 路径为空 / 文件不存在 / 启动失败
         """
-        exe_path = MA_Automation_DataManager.load_dw_exe_path()
+        # 路径已在引擎构造时(主线程)预读,避免后台线程触碰 hou.getenv
+        exe_path = self._dw_exe_path
         if not exe_path:
             raise ValueError(
                 "DW 软件路径为空，请在 MA_Automation_Config.json 中配置 dw_exe_path"
