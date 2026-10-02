@@ -594,19 +594,22 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self.size_label = QtWidgets.QLabel("{}px".format(self.size_slider.value()))
 
         top = QtWidgets.QHBoxLayout()
-        top.addWidget(self.target_label, 1)
-        # 路径显示与"更换目录"按钮相邻成组；各组之间等宽弹性间隔，
-        # 整行均匀分布
+        # 全部控件从左往右依次排列（面板拉宽不重排）：功能组之间用固定
+        # 间隔留白（路径与"更换目录"、大小滑条与数值保持组内紧凑），
+        # 行尾弹性间隔吸收多余宽度
+        top.addWidget(self.target_label)
+        top.addSpacing(16)
         top.addWidget(self.dir_label)
         top.addWidget(self.dir_btn)
-        top.addStretch(1)
+        top.addSpacing(16)
         top.addWidget(self.refresh_btn)
-        top.addStretch(1)
+        top.addSpacing(16)
         top.addWidget(self.pin_chk)
-        top.addStretch(1)
+        top.addSpacing(16)
         top.addWidget(QtWidgets.QLabel("大小:"))
         top.addWidget(self.size_slider)
         top.addWidget(self.size_label)
+        top.addStretch(1)
 
         # ---- 分类侧栏 ----
         self.sidebar = QtWidgets.QListWidget()
