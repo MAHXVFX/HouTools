@@ -18,7 +18,7 @@ import os
 import json
 import tempfile
 import logging
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from typing import Optional
 
 from .task_types import (
@@ -319,15 +319,18 @@ class MA_Automation_DataManager:
         """dict → Params dataclass。
 
         根据 ``type_str``（匹配 ``TaskType`` 的 value）决定返回的参数类型。
-        ``FlipbookParams`` 为空 dataclass，忽略 ``params_dict`` 中的所有字段
-        （向后兼容旧 JSON 文件中的 frame_range 等字段）。
+        ``FlipbookParams`` 只恢复当前 dataclass 定义的字段：旧 JSON 文件里
+        的遗留字段（如 frame_range）被忽略，缺失字段走 dataclass 默认值。
         """
         task_type = TaskType(type_str)
 
         if task_type == TaskType.BUTTON_CLICK:
             return ButtonClickParams(**params_dict)
         elif task_type == TaskType.FLIPBOOK:
-            return FlipbookParams()
+            known = {f.name for f in fields(FlipbookParams)}
+            return FlipbookParams(**{
+                k: v for k, v in params_dict.items() if k in known
+            })
         elif task_type == TaskType.HOME_ASSISTANT:
             return HomeAssistantParams(**params_dict)
         elif task_type == TaskType.OPEN_DW:

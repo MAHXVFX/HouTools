@@ -119,6 +119,23 @@ def main():
             assert data["other"] == 1
             assert data["dw_exe_path"] == dm.DW_EXE_PATH_DEFAULT
 
+    # deserialize_params：Flipbook 字段恢复 + 旧 JSON 遗留字段过滤
+    flipbook = dm.MA_Automation_DataManager.deserialize_params(
+        "FLIPBOOK",
+        {
+            "start_frame": "101",
+            "end_frame": "200",
+            "output_path": "$HIP/FlipBook/$HIPNAME/$HIPNAME.$F4.jpg",
+            "save_to_disk": False,
+            "frame_range": (1, 240),  # 旧版遗留字段，应被忽略
+        },
+    )
+    assert flipbook.start_frame == "101"
+    assert flipbook.end_frame == "200"
+    assert flipbook.output_path == "$HIP/FlipBook/$HIPNAME/$HIPNAME.$F4.jpg"
+    assert flipbook.save_to_disk is False
+    print("deserialize_params Flipbook OK")
+
     # 随项目发布的配置文件存在且含有效 dw_exe_path 字段
     shipped = json.loads(
         (ROOT / "MA_Automation_Config.json").read_text(encoding="utf-8"))
