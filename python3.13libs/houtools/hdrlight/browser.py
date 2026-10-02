@@ -565,6 +565,17 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         QPushButton:hover { background-color: #3d3d3d; border-color: #0d6399; }
         QPushButton:pressed { background-color: #0d6399; }
         QPushButton:disabled { color: #666666; background-color: #232326; }
+        /* QMenu 同理须在 QWidget 通用规则之后，否则右键菜单读不出
+           悬停高亮，整块死黑没有交互感 */
+        QMenu {
+            background-color: #1D1D20; border: 1px solid #3d3d3d; padding: 4px;
+        }
+        QMenu::item {
+            color: #bbbbbb; padding: 5px 28px 5px 14px; border-radius: 4px;
+        }
+        QMenu::item:selected { background-color: #0d6399; color: #ffffff; }
+        QMenu::item:disabled { color: #666666; }
+        QMenu::separator { height: 1px; background: #3d3d3d; margin: 4px 6px; }
         QLabel#statusLabel { color: #888888; padding: 4px 8px; }
         QListWidget {
             background-color: #1D1D20; border: 1px solid #3d3d3d;
