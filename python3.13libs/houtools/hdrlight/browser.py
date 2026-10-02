@@ -1,7 +1,8 @@
 """Hdr Library - HDR 环境贴图浏览器。
 
-浏览 HDR 库（缩略图网格），选中场景里的灯光节点（envlight 等）后
-双击缩略图，把 HDR 路径写入该灯光的环境贴图参数（env_map）。
+浏览 HDR 库（缩略图网格），选中场景里的灯光节点（envlight 等，可多选）后
+双击缩略图，把 HDR 路径写入这些灯光的环境贴图参数；左上角目标显示
+单个灯光路径或选中灯光数量。
 
 设计要点：
 - 库按"总目录 / 一级分类子文件夹"组织（如 hdr白天、hdr黑夜、室内、户外），
@@ -378,17 +379,49 @@ def is_light_node(node):
         return False
 
 
+def get_target_nodes():
+    """当前选中的全部灯光目标（保持选择顺序），没有则返回空列表。"""
+    import hou
+    return [node for node in hou.selectedNodes() if is_light_node(node)]
+
+
 def get_target_node():
     """从当前选中节点里找第一个灯光目标，没有则返回 None。"""
-    import hou
-    for node in hou.selectedNodes():
-        if is_light_node(node):
-            return node
-    return None
+    nodes = get_target_nodes()
+    return nodes[0] if nodes else None
 
 
 def assign_hdr(hdr_path, node=None):
-    """把 HDR 路径赋给灯光节点的环境贴图参数，返回 (节点路径, 参数显示名)。
+    """把 HDR 路径赋给一个灯光节点，返回 (节点路径, 参数显示名)。
+
+    node 缺省时取当前选中的第一个灯光；多选批量赋值用 assign_hdr_to_nodes。
+    支持的灯型与参数结构见 _assign_hdr_to_node。
+    """
+    node = node or get_target_node()
+    if node is None:
+        raise RuntimeError(
+            "请先在场景中选中一个灯光节点（如 OBJ envlight / LOP domelight）")
+    return _assign_hdr_to_node(hdr_path, node)
+
+
+def assign_hdr_to_nodes(hdr_path, nodes):
+    """把 HDR 路径批量赋给多个灯光节点，返回 (成功, 失败) 两个列表。
+
+    成功项为 (节点路径, 参数显示名)，失败项为 (节点路径, 错误说明)；
+    单个节点失败（如非 dome 灯没有环境贴图参数）不中断其余节点。
+    """
+    ok, failed = [], []
+    for node in nodes:
+        try:
+            ok.append(_assign_hdr_to_node(hdr_path, node))
+        except Exception as exc:
+            log.warning("assign to %s failed: %s", node.path(), exc)
+            failed.append((node.path(), str(exc)))
+    return ok, failed
+
+
+def _assign_hdr_to_node(hdr_path, node):
+    """单灯光赋值核心，返回 (节点路径, 参数显示名)。
 
     支持（已用 hython 实测参数结构）：
     - OBJ envlight（Karma）：env_map；skymap_enable != 0（程序化天空）
@@ -401,11 +434,6 @@ def assign_hdr(hdr_path, node=None):
       值不会写入 USD stage
     其余灯型（distant/point/rect 等非 dome 灯）本无环境贴图参数，抛错说明。
     """
-    import hou
-    node = node or get_target_node()
-    if node is None:
-        raise RuntimeError(
-            "请先在场景中选中一个灯光节点（如 OBJ envlight / LOP domelight）")
     path = os.path.abspath(hdr_path).replace("\\", "/")
 
     parm_name = find_map_parm(node)
@@ -557,7 +585,7 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         super().__init__(parent, flags)
         self.lib_dir = lib_dir
         self._thread = None
-        self._last_target = None
+        self._last_targets = None
         self._category_key = KEY_ALL
         self._favs = get_favorites()
         self._hdrs = []   # 最近一次 scan_hdrs 的结果，供侧栏计数复用
@@ -575,7 +603,7 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
             QtWidgets.QStyle.PM_ScrollBarExtent) + 6
 
         # ---- 顶部栏 ----
-        self.target_label = QtWidgets.QLabel("目标灯光: (未选中)")
+        self.target_label = QtWidgets.QLabel("灯光: (未选中)")
         self.target_label.setStyleSheet("padding: 4px 8px;")
         self.dir_label = QtWidgets.QLabel()
         self.dir_btn = QtWidgets.QPushButton("更换目录...")
@@ -895,32 +923,52 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
     # ---------------- 目标灯光跟踪 ----------------
 
     def _poll_selection(self):
-        node = None
+        targets = []
         try:
-            node = get_target_node()
+            targets = get_target_nodes()
         except Exception as exc:  # 窗口在无场景/非 GUI 环境下打开时静默
             log.debug("selection poll failed: %s", exc)
-        cur_path = node.path() if node is not None else None
-        if cur_path == self._last_target:
+        key = tuple(node.path() for node in targets) or None
+        if key == self._last_targets:
             return  # 选择没变就不动 label，避免每 400ms 无谓重绘
-        self._last_target = cur_path
-        if node is not None:
-            self.target_label.setText("目标灯光: {}".format(node.path()))
+        self._last_targets = key
+        if not targets:
+            self.target_label.setText("灯光: (未选中灯光节点)")
+            self.target_label.setStyleSheet("padding: 4px 8px; color: #f96;")
+        elif len(targets) == 1:
+            self.target_label.setText("灯光: {}".format(targets[0].path()))
             self.target_label.setStyleSheet("padding: 4px 8px; color: #6f6;")
         else:
-            self.target_label.setText("目标灯光: (未选中灯光节点)")
-            self.target_label.setStyleSheet("padding: 4px 8px; color: #f96;")
+            self.target_label.setText("灯光: {} 个灯光".format(len(targets)))
+            self.target_label.setStyleSheet("padding: 4px 8px; color: #6f6;")
 
     # ---------------- 交互 ----------------
 
     def _on_double_click(self, item):
         hdr_path = item.data(QtCore.Qt.UserRole)
         try:
-            node_path, parm = assign_hdr(hdr_path)
-            self.status.setText("已把贴图赋给 {} 的 {} 参数".format(node_path, parm))
-        except Exception as exc:
-            log.warning("assign failed: %s", exc, exc_info=True)
-            self.status.setText("赋值失败: {}: {}".format(type(exc).__name__, exc))
+            targets = get_target_nodes()
+        except Exception as exc:  # 无场景/非 GUI 环境兜底
+            log.debug("target lookup failed: %s", exc)
+            targets = []
+        if not targets:
+            self.status.setText("请先在场景中选中灯光节点（可多选），再双击缩略图")
+            return
+        if len(targets) == 1:
+            try:
+                node_path, parm = assign_hdr(hdr_path, targets[0])
+                self.status.setText(
+                    "已把贴图赋给 {} 的 {} 参数".format(node_path, parm))
+            except Exception as exc:
+                log.warning("assign failed: %s", exc, exc_info=True)
+                self.status.setText(
+                    "赋值失败: {}: {}".format(type(exc).__name__, exc))
+            return
+        ok, failed = assign_hdr_to_nodes(hdr_path, targets)
+        msg = "已把贴图赋给 {}/{} 个灯光".format(len(ok), len(targets))
+        if failed:
+            msg += "；失败 {} 个（{}）".format(len(failed), failed[0][1])
+        self.status.setText(msg)
 
     def _on_context_menu(self, pos):
         item = self.list.itemAt(pos)
