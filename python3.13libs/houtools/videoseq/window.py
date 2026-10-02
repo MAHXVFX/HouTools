@@ -1,4 +1,4 @@
-"""MA Video to Sequence - 视频转序列图工具
+"""Video to Sequence - 视频转序列图工具
 
 将 mov/mp4/avi 等视频格式转换为 JPG 序列图。
 使用 ffmpeg 进行视频解码和 JPEG 编码。
@@ -645,7 +645,7 @@ class _VideoToSequenceWindow(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent, Qt.Window)
-        self.setWindowTitle("MA 视频转序列图")
+        self.setWindowTitle("视频转序列图")
         self.setMinimumSize(500, 560)
         self.resize(540, 600)
 
