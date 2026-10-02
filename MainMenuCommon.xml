@@ -35,6 +35,14 @@ _houtools_dispatcher.run("video_to_sequence")
         ]]></scriptCode>
       </scriptItem>
 
+      <scriptItem id="houtools.hdr_library">
+        <label>Hdr Library</label>
+        <scriptCode><![CDATA[
+import houtools.dev.dispatcher as _houtools_dispatcher
+_houtools_dispatcher.run("hdr_library")
+        ]]></scriptCode>
+      </scriptItem>
+
       <separatorItem/>
 
       <!-- 快捷键设置:捕获式改键,写 settings/hotkeys.json,

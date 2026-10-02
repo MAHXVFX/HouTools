@@ -56,6 +56,11 @@ def main():
             "uiready.py", "exec")
     print("paste_as_object_merge wiring: consistent")
 
+    # Hdr Library:两份菜单均注册薄分发器入口
+    assert 'id="houtools.hdr_library"' in main_xml
+    assert 'id="houtools.networkview.hdr_library"' in nv_xml
+    print("hdr_library menu wiring: consistent")
+
     ET.parse(ROOT / "python_panels" / "Automation.pypanel")
     print("Automation.pypanel: well-formed")
 
@@ -70,6 +75,8 @@ def main():
     import houtools.automation.window  # noqa: F401
     import houtools.videoseq.window  # noqa: F401
     import houtools.videoseq.ffmpeg
+    import houtools.hdrlight.browser  # noqa: F401
+    import houtools.tools.hdr_library  # noqa: F401
     from houtools.automation import task_types
     from houtools.dev import reloader
 
@@ -230,6 +237,14 @@ def main():
     engine = ExecutionEngine([])
     assert engine._dw_exe_path
     print("ExecutionEngine instantiation OK")
+
+    # Hdr Library 窗口实例化（库目录指向空临时目录，不触发缩略图生成）
+    from houtools.hdrlight import browser as hdr_browser
+    with tempfile.TemporaryDirectory() as tmp:
+        hdr_win = hdr_browser._HdrLibraryWindow(tmp)
+        assert hdr_win.list.count() == 0
+        hdr_win.deleteLater()
+    print("HdrLibrary window instantiation OK")
 
     summary = reloader.reload_all()
     print("reload_all ->", summary)
