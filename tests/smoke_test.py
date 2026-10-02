@@ -155,8 +155,10 @@ def main():
     from houtools.automation.window import AutomationWindow
 
     win = AutomationWindow()
-    for name in ("startBtn", "autoFillBtn", "clearBtn", "settingsBtn"):
+    for name in ("startBtn", "autoFillBtn", "clearBtn", "settingsBtn",
+                 "configNewBtn"):
         assert win.findChild(QPushButton, name) is not None, f"missing {name}"
+    assert not win._config_combo.isEditable(), "config combo 应为只读"
     assert win._slot_widgets, "slot state not initialized"
     assert win._selected_index is None
 

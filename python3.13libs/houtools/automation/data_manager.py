@@ -8,10 +8,10 @@ Automation — Data Manager 数据持久化模块
 但数据路径依赖 $HIP（动态计算），不使用 BaseJsonManager。
 
 **多文件支持**:三方法 ``get_data_path`` / ``load`` / ``save`` 均接受
-可选的 ``filename`` 参数(无 ``.json`` 后缀),用于支持 UI 中"可编辑
-配置下拉菜单"——用户可选择配置目录下任一现存配置,或键入新名
-让 ``save()`` 在 Start 时创建新文件。``filename=None`` 走默认
-``Automation.json``,保持向后兼容。
+可选的 ``filename`` 参数(无 ``.json`` 后缀),用于支持 UI 的多配置
+下拉——用户可选择配置目录下任一现存配置,或经"新建配置"对话框
+输入新名,让 ``save()`` 在 Start 时创建新文件。``filename=None``
+走默认 ``Automation.json``,保持向后兼容。
 """
 
 import os

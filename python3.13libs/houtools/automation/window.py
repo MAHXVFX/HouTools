@@ -83,6 +83,40 @@ _WINDOWS_RESERVED = frozenset({
 })
 
 
+def _sanitize_config_name(text) -> str | None:
+    """净化配置文件名 basename;非法返回 ``None``。
+
+    规则(供"新建配置"对话框与 ``_get_save_target_name`` 共用):
+      - 空 / 全空白 → ``None``
+      - 末尾 ``.json`` → 剥后缀(容错用户带后缀输入)
+      - 含 ``/`` 或 ``\\`` → ``None``(拒绝路径分隔符,避免破坏目录结构)
+      - Windows 保留名(``CON``/``PRN``/``AUX``/``NUL``/``COM1-9``/``LPT1-9``,
+        大小写不敏感)→ ``None``
+      - NUL 字节 ``\x00`` → ``None``
+      - 纯点号(全部由 ``.`` 组成)→ ``None``
+    """
+    text = (text or "").strip()
+    if not text:
+        return None
+    if text.endswith(".json"):
+        text = text[:-5].strip()
+    if not text:
+        return None
+    # 安全检查:拒绝路径分隔符(防 ``../`` 或 ``C:\evil`` 等)
+    if "/" in text or "\\" in text:
+        return None
+    # 拒绝 Windows 保留名(大小写不敏感)
+    if text.upper() in _WINDOWS_RESERVED:
+        return None
+    # 拒绝 NUL 字节
+    if "\x00" in text:
+        return None
+    # 拒绝纯点号(全部由 ``.`` 组成)
+    if text.replace(".", "") == "":
+        return None
+    return text
+
+
 # ── 日志 Tee 流 ─────────────────────────────────────────────
 
 class _LogTee:
@@ -348,6 +382,21 @@ def open_floating_panel():
         panel.setName(INTERFACE_NAME)
     except hou.OperationFailed:
         pass  # 命名失败仅影响标题显示,不阻塞打开
+
+    # 打开位置对齐 Video to Sequence(QDialog 默认相对主窗口居中):
+    # createFloatingPanel 默认落在屏幕左下角,这里手动移到主窗口中央
+    win = _qt_floating_window(panel)
+    if win is not None:
+        try:
+            main = hou.qt.mainWindow()
+            if main is not None:
+                geo = main.geometry()
+                win.move(
+                    geo.x() + max(0, (geo.width() - win.width()) // 2),
+                    geo.y() + max(0, (geo.height() - win.height()) // 2),
+                )
+        except Exception:
+            pass  # 定位失败仅回落 Houdini 默认位置
     return panel
 
 
@@ -664,10 +713,11 @@ class AutomationWindow(QWidget):
         toolbar1 = QHBoxLayout()
         toolbar1.setSpacing(4)
 
-        # 配置下拉(可编辑):放在 start 按钮**前方**,对齐用户"先选配置
-        # 再点 Start"的工作流。下拉列出配置目录下所有现存 .json
-        # basename(无后缀);键入新名不立即加载,而在 Start 时让
-        # ``_save_data`` 写到该名 .json(不存在则创建)。
+        # 配置下拉:放在 start 按钮**前方**,对齐用户"先选配置
+        # 再点 Start"的工作流。下拉**只读**列出配置目录下所有现存
+        # .json basename(无后缀) —— 不支持在框内键入:Houdini 浮动面板
+        # 会在鼠标释放后清空部件焦点,内联编辑不可靠;新建配置统一走
+        # 旁边"新建"按钮的输入对话框(独立模态,键盘行为可靠)。
         #
         # 前缀标签 "配置:" 显式标识控件用途(暗色主题下避免与裸 QComboBox
         # 混淆),标签和 combo 配套使用,不可拆分。
@@ -679,30 +729,29 @@ class AutomationWindow(QWidget):
 
         self._config_combo = QComboBox()
         self._config_combo.setObjectName("configCombo")
-        self._config_combo.setEditable(True)  # 允许键入新名
         self._config_combo.setMinimumWidth(160)
-        # 占位提示文本:空状态显式引导用户"选择 / 键入",避免看着像禁用
-        self._config_combo.setPlaceholderText("选择 / 键入配置名")
-        # 键入不自动入库:键入 "MAtest2" 不在 list 里 + 不被当作"已存在的项"
-        self._config_combo.setInsertPolicy(QComboBox.NoInsert)
         self._config_combo.setToolTip(
-            "选择已有配置 / 输入新名称后点 Start 保存\n"
-            "键入不存在的名 → 创建新文件"
+            "选择配置;新建配置用旁边的\"新建\"按钮"
         )
         self._config_combo.currentIndexChanged.connect(self._on_config_changed)
-        # 让内部编辑器只有点击时才激活，防止自动聚焦导致误输入
-        line_edit = self._config_combo.lineEdit()
-        if line_edit:
-            line_edit.setFocusPolicy(Qt.ClickFocus)
         # 注入 SVG 下拉图标(combo-level stylesheet 覆盖全局,
         # 路径用绝对 URL 避开 Houdini CWD 不可靠)
         self._config_combo.setStyleSheet(_CONFIG_COMBO_ICON_STYLE)
 
+        # "新建"配置:输入名字即切换为当前配置,点"执行"时落盘创建
+        new_config_btn = QPushButton("新建")
+        new_config_btn.setObjectName("configNewBtn")
+        new_config_btn.setToolTip(
+            "新建配置:输入名称并确认后,当前配置切换为新名,\n"
+            "点\"执行\"时任务保存到该新配置(文件不存在则创建)"
+        )
+        new_config_btn.setStyleSheet(_TOOLBAR_BTN_STYLE)
+        new_config_btn.clicked.connect(lambda: self._on_new_config())
+
         self._start_btn = QPushButton("执行")
         self._start_btn.setObjectName("startBtn")
-        # 关闭 autoDefault / default:在 QDialog 里按 Enter 会触发 default
-        # 按钮,用户在可编辑 _config_combo 里键入新名按 Enter 提交文字时
-        # 会被错误地转成 Start 触发。要求 Start 只能**手动鼠标点击**
+        # 关闭 autoDefault / default:避免按 Enter 被转成 Start 触发,
+        # 要求 Start 只能**手动鼠标点击**
         self._start_btn.setAutoDefault(False)
         self._start_btn.setDefault(False)
         # 用 lambda 包装避免 Qt clicked(bool) 信号把 False 当作 data 参数传入
@@ -724,9 +773,10 @@ class AutomationWindow(QWidget):
         for btn in (auto_fill_btn, clear_btn, settings_btn):
             btn.setStyleSheet(_TOOLBAR_BTN_STYLE)
 
-        # 顺序:配置 → start → auto fill → clear   <stretch>   设置
+        # 顺序:配置 → 新建 → start → auto fill → clear   <stretch>   设置
         toolbar1.addWidget(self._config_label)
         toolbar1.addWidget(self._config_combo)
+        toolbar1.addWidget(new_config_btn)
         toolbar1.addWidget(self._start_btn)
         toolbar1.addWidget(auto_fill_btn)
         toolbar1.addWidget(clear_btn)
@@ -1678,7 +1728,7 @@ class AutomationWindow(QWidget):
         if not raw_list:
             self._add_slot()
 
-    # ── 配置下拉(可编辑)helper ─────────────────────────────
+    # ── 配置下拉 helper ────────────────────────────────────
 
     def _refresh_config_dropdown(self):
         """刷新配置下拉,列出配置目录下所有 .json 文件 basename(无后缀)。
@@ -1687,21 +1737,21 @@ class AutomationWindow(QWidget):
         ``setCurrentIndex()`` 触发 ``currentIndexChanged`` →
         ``_on_config_changed`` → ``_load_data`` 死循环。
 
-        首次打开时显示默认配置名 ``Automation``,即使该文件尚不存在。
+        当前配置名不在列表时(首次打开 / 刚新建尚未落盘)直接插入为列表项,
+        保证下拉始终显示用户正在使用的配置名。
         """
         configs = AutomationDataManager.list_configs()
         self._config_combo.blockSignals(True)
         try:
             self._config_combo.clear()
             self._config_combo.addItems(configs)
-            # 恢复当前选中(仅在列表中存在时)
             if self._current_config_name:
                 idx = self._config_combo.findText(self._current_config_name)
-                if idx >= 0:
-                    self._config_combo.setCurrentIndex(idx)
-                else:
-                    # 不在列表中(如首次打开),直接设置文本显示默认配置名
-                    self._config_combo.setEditText(self._current_config_name)
+                if idx < 0:
+                    # 不在列表中(首次打开 / 新建未落盘):插入为列表项
+                    self._config_combo.addItem(self._current_config_name)
+                    idx = self._config_combo.findText(self._current_config_name)
+                self._config_combo.setCurrentIndex(idx)
         finally:
             self._config_combo.blockSignals(False)
 
@@ -1722,41 +1772,42 @@ class AutomationWindow(QWidget):
         self._load_data()  # 重新加载,内部会再 refresh 一次(无副作用)
         self._load_settings()  # 同步加载新配置的设置项
 
-    def _get_save_target_name(self) -> str | None:
-        """从下拉当前文本提取保存文件名(已 sanitize)。
+    def _on_new_config(self):
+        """新建配置:弹输入对话框取名并切换为当前保存目标。
 
-        行为:
-          - 空 / 全空白 → ``None``(fall back 到默认 ``Automation.json``)
-          - 末尾 ``.json`` → 剥后缀(容错用户键入带后缀)
-          - 含 ``/`` 或 ``\\`` → ``None``(拒绝路径分隔符,避免破坏目录结构)
-          - Windows 保留名 (``CON`` / ``PRN`` / ``AUX`` / ``NUL`` / ``COM1-9`` /
-            ``LPT1-9``,大小写不敏感)→ ``None``
-          - NUL 字节 ``\\x00`` → ``None``(POSIX 拒绝)
-          - 纯点号 ``..`` / ``...`` → ``None``(避免 ``....json`` 怪文件)
-
-        Returns:
-            净化后的 basename,或 ``None``(走默认)。
+        只切换名字、**不加载** —— 新配置尚无文件,任务槽保持当前编辑
+        内容;点"执行"时 ``_save_data`` 才把任务写入该名(文件不存在
+        则创建)。独立 QInputDialog 而非在 combo 里键入:Houdini 浮动
+        面板会清空部件焦点,内联编辑不可靠。
         """
-        text = self._config_combo.currentText().strip()
-        if not text:
-            return None
-        if text.endswith(".json"):
-            text = text[:-5].strip()
-        if not text:
-            return None
-        # 安全检查:拒绝路径分隔符(防 ``../`` 或 ``C:\\evil`` 等)
-        if "/" in text or "\\" in text:
-            return None
-        # 拒绝 Windows 保留名(大小写不敏感)
-        if text.upper() in _WINDOWS_RESERVED:
-            return None
-        # 拒绝 NUL 字节
-        if "\x00" in text:
-            return None
-        # 拒绝纯点号(全部由 ``.`` 组成)
-        if text.replace(".", "") == "":
-            return None
-        return text
+        from PySide6.QtWidgets import QInputDialog
+
+        name, ok = QInputDialog.getText(
+            self, "新建配置",
+            "配置名称(点\"执行\"后保存到 HouTools_cfg/Automation_json/ 下):",
+        )
+        if not ok:
+            return
+        sanitized = _sanitize_config_name(name)
+        if not sanitized:
+            QMessageBox.warning(
+                self, "无效名称",
+                "配置名不能为空,不能包含路径分隔符,\n"
+                "也不能使用 Windows 保留名(CON/PRN/AUX/NUL/COM1-9/LPT1-9)。",
+            )
+            return
+        self._current_config_name = sanitized
+        # _refresh_config_dropdown 内部 blockSignals,不会触发
+        # _on_config_changed 而清空当前编辑内容
+        self._refresh_config_dropdown()
+
+    def _get_save_target_name(self) -> str | None:
+        """从下拉当前文本提取保存文件名(经 ``_sanitize_config_name`` 净化)。
+
+        下拉文本的来源(列表项 / "新建"对话框)在上游已净化,此处再跑一遍
+        纯属防御;非法名返回 ``None``(fall back 到默认 ``Automation.json``)。
+        """
+        return _sanitize_config_name(self._config_combo.currentText())
 
     def _collect_data(self) -> list[dict]:
         """读取 UI 槽，构建 list[dict]（与 TaskItem.to_dict() 格式一致）。
@@ -1849,7 +1900,7 @@ class AutomationWindow(QWidget):
 
         保存目标由 ``_get_save_target_name()`` 决定(从下拉当前文本提取):
           - 空 / 全空白 / 含路径分隔符 → fall back 到默认 ``Automation.json``
-          - 其它 → 写到该名 .json(**不存在则创建**,这是"键入新名 + Start"的核心)
+          - 其它 → 写到该名 .json(**不存在则创建**,这是"新建配置 + Start"的核心)
 
         **失败处理**:``AutomationDataManager.save()`` 返回 ``False``(写盘
         异常:磁盘满 / 权限 / 只读 / OS 拒绝保留名)时,``logger.warning``
