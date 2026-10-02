@@ -10,10 +10,16 @@
 - 缩略图按需生成：打开面板/刷新时比对缓存目录，仅缺失的由后台
   QThread 调用 Houdini 自带 hoiiotool 生成（linear→sRGB + 缩放），
   生成完线程即退出，无常驻开销；无主缓存（HDR 已删）在刷新时清理。
-- 缓存固定 256px 宽（清晰度），以相对路径命名（目录用 __ 连接），
-  子文件夹同名文件不冲突；根目录文件命名与旧版一致，旧缓存直接复用。
+  线程不 parent 到窗口：Reload 关窗销毁窗口时，运行中的线程改为
+  自行跑完自删（每张图生成前后及子进程等待中均响应中断请求），
+  避免 Qt "QThread: Destroyed while thread is still running" 崩溃。
+- 缓存固定 256px 宽（清晰度），以相对路径+原扩展名命名（目录用
+  __ 连接），子文件夹同名、同名字不同扩展（a.hdr 与 a.exr）不冲突；
+  HDR 文件比缩略图新（内容更新过）时缓存自动失效重生成。
 - 显示大小：滑条值决定列数，网格列宽自动拉伸铺满面板宽度（防抖重算），
   窗口缩放不留大片空白；图标上限 400px（缓存 256px，过度放大会模糊）。
+  网格计算是幂等的（滚动条宽度恒定预留 + 结果未变即跳过）——否则
+  滚动条显隐会翻转列数形成重排死循环，表现为缩略图一直闪。
 - 收藏：右键收藏/取消收藏，侧栏"★ 收藏"一键过滤；收藏以 normcase
   后的绝对路径存 settings（Windows 不区分大小写）。
 - 用户设置（库目录/显示大小/置顶/收藏）经 houtools.core.settings.JsonStore
@@ -29,12 +35,14 @@ import glob
 import os
 import re
 import subprocess
+import time
 from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from houtools.core.log import get_logger
 from houtools.core.settings import JsonStore
+from houtools.ui.taskbar import apply_appwindow_flags
 
 log = get_logger("hdrlight.browser")
 
@@ -152,37 +160,63 @@ def thumb_cache_dir(lib_dir):
 
 
 def thumb_path(lib_dir, hdr_path):
-    """缓存缩略图路径：按相对路径命名（目录用 __ 连接），子文件夹同名
-    文件不冲突；根目录文件的命名与旧版一致（<文件名>.jpg），旧缓存复用。"""
-    rel = os.path.splitext(os.path.relpath(hdr_path, lib_dir))[0]
+    """缓存缩略图路径：按相对路径+原扩展名命名（目录用 __ 连接），
+    子文件夹同名、同名字不同扩展（a.hdr 与 a.exr）不冲突。"""
+    rel = os.path.relpath(hdr_path, lib_dir)
     safe = rel.replace(os.sep, "__").replace("/", "__")
     return os.path.join(thumb_cache_dir(lib_dir), safe + ".jpg")
 
 
-def _image_size(oiiotool, image_path, env):
+def _run_oiiotool(cmd, env, timeout, interrupt=None):
+    """运行 hoiiotool 子进程，1 秒粒度轮询等待，返回 (stdout, rc)。
+
+    interrupt() 返回 True（Reload/关窗）或超时都立即 kill 子进程，
+    不让生成线程卡在最长 120s 的外部调用上。
+    """
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            out, _err = proc.communicate(timeout=1)
+            return out, proc.returncode
+        except subprocess.TimeoutExpired:
+            if (interrupt is not None and interrupt()) \
+                    or time.monotonic() >= deadline:
+                proc.kill()
+                try:
+                    proc.communicate(timeout=5)
+                except Exception:
+                    proc.wait()
+                return b"", -1
+
+
+def _image_size(oiiotool, image_path, env, interrupt=None):
     """用 hoiiotool --info 读取分辨率，返回 (w, h)，失败返回 None。"""
-    try:
-        out = subprocess.check_output(
-            [oiiotool, "--info", image_path],
-            stderr=subprocess.STDOUT, env=env, timeout=30,
-        ).decode("utf-8", "ignore")
-    except Exception as exc:
-        log.warning("oiiotool --info failed for %s: %s", image_path, exc)
+    out, rc = _run_oiiotool(
+        [oiiotool, "--info", image_path], env, 30, interrupt)
+    if rc != 0:
+        log.warning("oiiotool --info failed for %s (rc=%s)", image_path, rc)
         return None
-    m = re.search(r"(\d+)\s*x\s*(\d+)", out)
+    m = re.search(r"(\d+)\s*x\s*(\d+)", out.decode("utf-8", "ignore"))
     return (int(m.group(1)), int(m.group(2))) if m else None
 
 
-def make_thumbnail(lib_dir, hdr_path):
-    """生成单张缩略图，返回缩略图路径；失败返回 None。"""
+def make_thumbnail(lib_dir, hdr_path, interrupt=None):
+    """生成单张缩略图，返回缩略图路径；失败或被中断返回 None。
+
+    先写 .part 临时文件再原子改名，避免被中断/失败时留下半张
+    比 HDR 新的坏缩略图（mtime 失效机制会被它骗过）。
+    """
     oiiotool = _oiiotool_path()
     if not oiiotool:
         log.warning("hoiiotool not found, cannot generate thumbnails")
         return None
     out = thumb_path(lib_dir, hdr_path)
     os.makedirs(os.path.dirname(out), exist_ok=True)
+    tmp_out = out + ".part"
     env = _ocio_env()
-    size = _image_size(oiiotool, hdr_path, env)
+    size = _image_size(oiiotool, hdr_path, env, interrupt)
     if not size or size[0] <= 0:
         return None
     th = max(1, int(round(size[1] * float(THUMB_WIDTH) / size[0])))
@@ -191,15 +225,20 @@ def make_thumbnail(lib_dir, hdr_path):
         "--colorconvert", "linear", "sRGB",
         "--resize", "{}x{}".format(THUMB_WIDTH, th),
         "-d", "uint8",
-        "-o", out,
+        "-o", tmp_out,
     ]
-    try:
-        subprocess.check_output(
-            cmd, stderr=subprocess.STDOUT, env=env, timeout=120,
-        )
-    except Exception as exc:
-        log.warning("thumbnail generation failed for %s: %s", hdr_path, exc)
+    _out, rc = _run_oiiotool(cmd, env, 120, interrupt)
+    if rc != 0:
+        if os.path.exists(tmp_out):
+            try:
+                os.remove(tmp_out)
+            except OSError as exc:
+                log.warning("cannot remove partial thumb %s: %s", tmp_out, exc)
+        if interrupt is None or not interrupt():
+            log.warning("thumbnail generation failed for %s (rc=%s)",
+                        hdr_path, rc)
         return None
+    os.replace(tmp_out, out)
     return out if os.path.exists(out) else None
 
 
@@ -234,24 +273,34 @@ def list_categories(lib_dir):
         key=str.lower)
 
 
+def _thumb_valid(thumb, hdr):
+    """缩略图存在且不旧于 HDR 文件（HDR 内容更新后缓存自动失效）。"""
+    try:
+        return os.path.getmtime(thumb) >= os.path.getmtime(hdr)
+    except OSError:
+        return False
+
+
 def scan_hdrs(lib_dir):
     """递归扫描 HDR 库目录，返回 [(hdr_path, category, thumb_path_or_None), ...]。"""
     results = []
     for p, category in _iter_hdrs(lib_dir):
         tp = thumb_path(lib_dir, p)
-        results.append((p, category, tp if os.path.exists(tp) else None))
+        results.append((p, category, tp if _thumb_valid(tp, p) else None))
     return results
 
 
 def clean_stale_thumbs(lib_dir):
-    """删除已无对应 HDR 的残留缩略图，返回删除数量。"""
+    """删除已无对应 HDR 的残留缩略图（含 .part 残片），返回删除数量。"""
     cache = thumb_cache_dir(lib_dir)
     if not os.path.isdir(cache):
         return 0
     expected = {os.path.basename(thumb_path(lib_dir, p))
                 for p, _category in _iter_hdrs(lib_dir)}
     removed = 0
-    for f in glob.glob(os.path.join(cache, "*.jpg")):
+    candidates = glob.glob(os.path.join(cache, "*.jpg")) \
+        + glob.glob(os.path.join(cache, "*.part"))
+    for f in candidates:
         if os.path.basename(f) not in expected:
             try:
                 os.remove(f)
@@ -319,22 +368,29 @@ def assign_hdr(hdr_path, node=None):
 # --------------------------------------------------------------------------
 
 class ThumbnailThread(QtCore.QThread):
-    """后台逐个生成缺失的缩略图；run() 里响应中断请求，关窗不卡死。"""
+    """后台逐个生成缺失的缩略图。
+
+    不 parent 到窗口：Reload/关窗时窗口可能被 deleteLater，QObject 带
+    运行中的 QThread 一起销毁会报 "QThread: Destroyed while thread is
+    still running"（Windows 上有崩溃风险）。改为窗口持 Python 引用，
+    线程结束自删；中断请求在每张图生成前后及子进程等待中响应。
+    """
 
     thumbReady = QtCore.Signal(str, str)   # hdr_path, thumb_path
     finishedCount = QtCore.Signal(int)     # 成功数量
 
-    def __init__(self, lib_dir, hdr_paths, parent=None):
-        super().__init__(parent)
+    def __init__(self, lib_dir, hdr_paths):
+        super().__init__()
         self.lib_dir = lib_dir
         self.hdr_paths = hdr_paths
 
     def run(self):
         ok = 0
+        interrupt = self.isInterruptionRequested
         for hdr_path in self.hdr_paths:
-            if self.isInterruptionRequested():
+            if interrupt():
                 break
-            out = make_thumbnail(self.lib_dir, hdr_path)
+            out = make_thumbnail(self.lib_dir, hdr_path, interrupt=interrupt)
             if out:
                 ok += 1
                 self.thumbReady.emit(hdr_path, out)
@@ -352,6 +408,7 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
     FIT_DELAY_MS = 150     # 面板尺寸变化后重排网格的防抖
     SIDEBAR_MIN = 140
     SIDEBAR_MAX = 300
+    SB_RESERVE = 20        # 恒定预留的纵向滚动条宽度（含边距）
 
     STYLE_SHEET = """
         QWidget { background-color: #18181b; color: #dddddd; }
@@ -383,6 +440,7 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self.setWindowTitle("Hdr Library")
         self.resize(1080, 620)
         self.setStyleSheet(self.STYLE_SHEET)
+        apply_appwindow_flags(self)  # 任务栏常驻（失败静默）
 
         # ---- 顶部栏 ----
         self.target_label = QtWidgets.QLabel("目标灯光: (未选中)")
@@ -405,13 +463,14 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
 
         top = QtWidgets.QHBoxLayout()
         top.addWidget(self.target_label, 1)
-        top.addWidget(self.dir_label, 1)
+        # 路径显示与"更换目录/刷新"按钮相邻成组，靠右侧对齐
+        top.addWidget(self.dir_label)
+        top.addWidget(self.dir_btn)
+        top.addWidget(self.refresh_btn)
         top.addWidget(self.pin_chk)
         top.addWidget(QtWidgets.QLabel("大小:"))
         top.addWidget(self.size_slider)
         top.addWidget(self.size_label)
-        top.addWidget(self.dir_btn)
-        top.addWidget(self.refresh_btn)
 
         # ---- 分类侧栏 ----
         self.sidebar = QtWidgets.QListWidget()
@@ -634,25 +693,30 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self._fit_grid()
 
     def _fit_grid(self):
-        """网格列宽拉伸到正好铺满面板宽度。
+        """网格列宽拉伸到正好铺满面板宽度（必须保持幂等）。
 
         滑条值只决定列数（列数 = 可视宽 / 基准单元宽），单元格宽 =
         可视宽 / 列数，缩略图随之拉伸——窗口拉大不再留大片空白。
-        纵向滚动条出现时预留其宽度，避免重排引发滚动条闪烁。
+        幂等两点缺一不可，否则滚动条出现→视口变窄→列数翻转→内容
+        高度变化→滚动条消失→…… 网格无限重排，表现为缩略图一直闪：
+        1) 滚动条宽度恒定预留（不随其显隐改变计算输入）；
+        2) 算出的尺寸与当前一致时直接跳过，不触发无谓重排。
         """
         base = self.size_slider.value()
-        vw = self.list.viewport().width()
-        sb = self.list.verticalScrollBar()
-        if sb.isVisible():
-            vw -= sb.width() + 2
+        vw = self.list.viewport().width() - self.SB_RESERVE
         if vw < 120:
             return
         cols = max(1, int(vw // (base + GRID_PADDING_X)))
         cell_w = int(vw / cols)
         icon_w = max(64, min(cell_w - GRID_PADDING_X, ICON_MAX_WIDTH))
-        icon_h = icon_w // 2  # 环境贴图都是 2:1
-        self.list.setIconSize(QtCore.QSize(icon_w, icon_h))
-        self.list.setGridSize(QtCore.QSize(cell_w, icon_h + GRID_PADDING_Y))
+        icon_h = icon_w // 2
+        icon_size = QtCore.QSize(icon_w, icon_h)
+        grid_size = QtCore.QSize(cell_w, icon_h + GRID_PADDING_Y)
+        if self.list.iconSize() == icon_size \
+                and self.list.gridSize() == grid_size:
+            return
+        self.list.setIconSize(icon_size)
+        self.list.setGridSize(grid_size)
 
     def _on_size_changed(self, val):
         self.size_label.setText("{}px".format(val))
@@ -667,8 +731,9 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         except Exception as exc:  # 窗口在无场景/非 GUI 环境下打开时静默
             log.debug("selection poll failed: %s", exc)
         cur_path = node.path() if node is not None else None
-        if cur_path != self._last_target:
-            self._last_target = cur_path
+        if cur_path == self._last_target:
+            return  # 选择没变就不动 label，避免每 400ms 无谓重绘
+        self._last_target = cur_path
         if node is not None:
             self.target_label.setText("目标灯光: {}".format(node.path()))
             self.target_label.setStyleSheet("padding: 4px 8px; color: #6f6;")
@@ -762,13 +827,24 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         return QtGui.QIcon(pm)
 
     def _start_worker(self, hdr_paths):
-        if self._thread is not None and self._thread.isRunning():
-            self._thread.requestInterruption()
-            self._thread.wait(1000)
-        self._thread = ThumbnailThread(self.lib_dir, hdr_paths, self)
+        thread = self._thread
+        if thread is not None:
+            try:
+                if thread.isRunning():
+                    thread.requestInterruption()
+                    thread.wait(1000)
+            except RuntimeError:
+                pass  # 已被 deleteLater，C++ 对象不在了
+        self._thread = ThumbnailThread(self.lib_dir, hdr_paths)
         self._thread.thumbReady.connect(self._on_thumb_ready)
         self._thread.finishedCount.connect(self._on_thumbs_done)
+        self._thread.finished.connect(self._on_worker_finished)
+        self._thread.finished.connect(self._thread.deleteLater)
         self._thread.start()
+
+    def _on_worker_finished(self):
+        if self._thread is self.sender():
+            self._thread = None
 
     def _on_thumb_ready(self, hdr_path, thumb_path):
         for i in range(self.list.count()):
@@ -791,9 +867,16 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         _SETTINGS.set("thumb_size", int(self.size_slider.value()))
         self._fit_timer.stop()
         self._size_timer.stop()
-        if self._thread is not None and self._thread.isRunning():
-            self._thread.requestInterruption()
-            self._thread.wait(2000)  # 最多等 2 秒，避免界面卡死
+        thread = self._thread
+        if thread is not None:
+            try:
+                if thread.isRunning():
+                    thread.requestInterruption()
+                    thread.wait(2000)
+            except RuntimeError:
+                pass
+            # 2 秒内没停完就随它去：线程无 parent，窗口销毁不影响它，
+            # 信号连到已销毁的窗口会被 Qt 自动断开，跑完自删。
         super().closeEvent(event)
 
 

@@ -15,7 +15,7 @@ root/
 ├── python3.13libs/houtools/           # 核心 Python 包（python3.13libs 由 Houdini 自动加入 sys.path）
 │   ├── dev/                       # ★ 热加载框架：reloader / dispatcher（永不参与重载）
 │   ├── core/                      # constants（路径自算）/ log / settings(JsonStore)
-│   ├── ui/                        # window_manager：工具窗口单例登记，Reload 前统一关闭
+│   ├── ui/                        # window_manager（工具窗口单例登记，Reload 前统一关闭）/ taskbar（Win32 任务栏常驻）
 │   ├── automation/                # Automation：task_types / data_manager / execution_engine / styles / window
 │   ├── videoseq/                  # 视频转序列图：ffmpeg 查找 + 窗口（拖放 + 可编辑路径框）
 │   ├── hdrlight/                  # Hdr Library：HDR 库浏览 + 缩略图 + 双击赋给灯光
@@ -37,6 +37,7 @@ root/
 | 粘贴为 Object Merge | `houtools/tools/paste_as_object_merge.py` | 网络编辑器菜单入口 / `Ctrl+Shift+V`（`Paste Hotkey Settings` 可改）；按"目标上下文×源类别"建引用（XXX=源名，颜色随源）：SOP→SOP object_merge(Merge_XXX)；SOP→OBJ geo(XXX) 内 object_merge(Merge_XXX)；SOP→LOP / OBJ→LOP sopimport(SOP_XXX)；LOP→SOP lopimport(LOP_XXX)；LOP→LOP fetch(LOP_XXX)；LOP→ROP usdrender(XXX)；SOP→ROP fetch(SOP_XXX, source)；SOP→DOP staticobject(Object_XXX)；SOP→COP(新COP) sopimport(SOP_XXX, usesoppath=1)；未列组合跳过；单 undo 槽。源路径靠 OS 剪贴板文本（内部剪贴板无法反查原件），SOP 网络文本失效时 `pasteItemsFromClipboard` 粘贴副本兜底 |
 | 快捷键设置 | `houtools/tools/paste_hotkey_settings.py` | 捕获式改键 → `hou.hotkeys.addAssignment` 会话即时生效 + `settings/hotkeys.json` 持久化；经 `window_manager` 单例 |
 | 窗口单例 | `houtools/ui/window_manager.py` | `open_window(tool_id, factory)`；close_all 供 Reload 前调用 |
+| 任务栏常驻 | `houtools/ui/taskbar.py` | `apply_appwindow_flags(window)`：Win32 `WS_EX_APPWINDOW`（Get+OR，保留原扩展样式位），失败走 debug 日志；独立工具窗口（videoseq / Hdr Library）构造时调用 |
 | 项目路径 | `houtools/core/constants.py` | `PROJECT_ROOT = Path(__file__).parents[3]`，不依赖 cwd |
 | 日志 | `houtools/core/log.py` | `get_logger("tools.xxx")`；handler 全局只配置一次，重载安全 |
 | JSON 设置 | `houtools/core/settings.py` | `JsonStore(filename, defaults)`，defaults 合并语义，存项目 `settings/` |
@@ -46,7 +47,7 @@ root/
 | 界面接入（Python Panel） | `houtools/automation/window.py` | `create_panel_widget` / `open_floating_panel`（`hou.pypanel.installFile` + `createFloatingPanel`）；节点拖放为 Houdini 原生投递（MIME text 是逗号分隔的节点路径） |
 | ffmpeg 查找 | `houtools/videoseq/ffmpeg.py` | 优先级：项目根 `ffmpeg.exe` → `$HFS/bin/hffmpeg` → `$HFS/bin/ffmpeg` → PATH（hffmpeg 优先） |
 | 视频拖放/路径框 | `houtools/videoseq/window.py` | 整窗 + `_VideoSourceGroup` 双层接收拖放；`_load_video` 是浏览/拖放/手输共用入口 |
-| HDR 库浏览器 | `houtools/hdrlight/browser.py` + `tools/hdr_library.py` | 菜单 Hdr Library；递归扫描 `.hdr/.hdri/.exr`，第一级子文件夹即分类（左侧侧栏切换 全部/收藏/各分类，侧栏右键可新建/打开分类文件夹，空分类也列出）；右键收藏 HDR（存 `settings/hdr_library.json` 的 `favorites`，normcase 路径），侧栏"★ 收藏"过滤；双击缩略图把路径赋给选中灯光（`env_map` 等参数按序匹配，自动关 `skymap_enable`）；网格列宽自适应铺满面板宽度（滑条只定列数，视口 resize 防抖重算，图标上限 400px）；缩略图后台 QThread 调 `$HFS/bin/hoiiotool` 生成（缓存 256px 存库目录 `.thumb_cache/`，按相对路径命名、目录用 `__` 连接避免子文件夹同名冲突；坑：`--resize` 必须写全 WxH，`--colorconvert` 需 OCIO 配置、缺失时自动注入 `$HFS/packages/ocio/`）；库目录存 `settings/hdr_library.json`（默认 `~/HouTools/hdri`，可用环境变量 `HDR_TOOL_LIB` 覆盖） |
+| HDR 库浏览器 | `houtools/hdrlight/browser.py` + `tools/hdr_library.py` | 菜单 Hdr Library；递归扫描 `.hdr/.hdri/.exr`，第一级子文件夹即分类（左侧侧栏切换 全部/收藏/各分类，侧栏右键可新建/打开分类文件夹，空分类也列出）；右键收藏 HDR（存 `settings/hdr_library.json` 的 `favorites`，normcase 路径），侧栏"★ 收藏"过滤；双击缩略图把路径赋给选中灯光（`env_map` 等参数按序匹配，自动关 `skymap_enable`）；网格列宽自适应铺满面板宽度（滑条只定列数，视口 resize 防抖重算，图标上限 400px；计算幂等——滚动条宽度恒定预留 + 结果未变跳过，防滚动条显隐引发重排死循环闪烁）；缩略图后台 QThread（**无 parent**，Reload 销毁窗口不会连带销毁运行中的线程，子进程等待 1s 粒度可中断）调 `$HFS/bin/hoiiotool` 生成（缓存 256px 存库目录 `.thumb_cache/`，按相对路径+扩展名命名避免同名/同名不同扩展冲突，mtime 旧于 HDR 自动失效，先写 `.part` 再原子改名；坑：`--resize` 必须写全 WxH，`--colorconvert` 需 OCIO 配置、缺失时自动注入 `$HFS/packages/ocio/`）；库目录存 `settings/hdr_library.json`（默认 `~/HouTools/hdri`，可用环境变量 `HDR_TOOL_LIB` 覆盖） |
 
 ## Conventions
 
@@ -74,7 +75,7 @@ root/
 
 - **暗色主题**：主色 `#18181b`/`#1D1D20`/`#2d2d2d`，强调 `#0d6399`(蓝)/`#8a5cf5`(紫)，错误 `#d1283e`；各模块 styles 常量共享这套配色。
 - **配置语义**（Automation）：JSON 只在点 Start 时落盘 = "用户决定执行的任务"，关窗不保存是有意为之。
-- **长驻窗口进 Houdini 任务栏**：Win32 `WS_EX_APPWINDOW` + `SetCurrentProcessExplicitAppUserModelID`（见 `automation/window._apply_window_flags`），失败静默。
+- **长驻窗口进 Houdini 任务栏**：Win32 `WS_EX_APPWINDOW`，统一走 `houtools/ui/taskbar.py`（Get+OR 保留原样式位；不做进程级 AppUserModelID——那会连 Houdini 主窗的任务栏分组一起改），失败静默。
 
 ## Commands
 
