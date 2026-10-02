@@ -9,6 +9,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -245,6 +246,7 @@ def main():
         day = Path(tmp, "day"); day.mkdir()
         (day / "noon.exr").touch()
         (day / "a.hdr").touch()
+        (day / "a.exr").touch()  # 同名不同扩展，缩略图缓存键不得碰撞
         (day / "nested").mkdir()
         (day / "nested" / "deep.hdr").touch()  # 嵌套子文件夹归到第一级分类
         night = Path(tmp, "night"); night.mkdir()
@@ -253,18 +255,32 @@ def main():
         (night / ".thumb_cache" / "junk.hdr").touch()  # 隐藏目录不扫描
 
         results = hdr_browser.scan_hdrs(tmp)
-        assert len(results) == 5, results  # 5 个 HDR，隐藏目录里的不算
+        assert len(results) == 6, results  # 6 个 HDR，隐藏目录里的不算
         rels_cats = {(os.path.relpath(p, tmp), c) for p, c, _t in results}
         assert ("sunset.hdr", "") in rels_cats, rels_cats          # 根目录 → 未分类
         assert (os.path.join("day", "noon.exr"), "day") in rels_cats
         assert (os.path.join("day", "nested", "deep.hdr"), "day") in rels_cats  # 嵌套归第一级
         assert not any("thumb_cache" in rp for rp, _c in rels_cats), rels_cats
-        # 两个 a.hdr 缩略图路径必须不同；根目录文件命名与旧版一致
-        assert hdr_browser.thumb_path(tmp, str(day / "a.hdr")) != \
-            hdr_browser.thumb_path(tmp, str(night / "a.hdr"))
+        # 缓存名带相对路径 + 原扩展名:同名/同名字不同扩展互不冲突
+        tp_day = hdr_browser.thumb_path(tmp, str(day / "a.hdr"))
+        tp_night = hdr_browser.thumb_path(tmp, str(night / "a.hdr"))
+        tp_exr = hdr_browser.thumb_path(tmp, str(day / "a.exr"))
+        assert len({tp_day, tp_night, tp_exr}) == 3, (tp_day, tp_night, tp_exr)
+        assert os.path.basename(tp_day) == "day__a.hdr.jpg"
         assert os.path.basename(
             hdr_browser.thumb_path(tmp, str(Path(tmp) / "sunset.hdr"))) \
-            == "sunset.jpg"
+            == "sunset.hdr.jpg"
+        # 缩略图 mtime 旧于 HDR → 视为失效（内容更新后自动重生成）
+        stale_tp = hdr_browser.thumb_path(tmp, str(day / "noon.exr"))
+        os.makedirs(os.path.dirname(stale_tp), exist_ok=True)
+        open(stale_tp, "wb").close()
+        past = time.time() - 3600
+        os.utime(stale_tp, (past, past))
+        scan_map = {p: t for p, _c, t in hdr_browser.scan_hdrs(tmp)}
+        assert scan_map[str(day / "noon.exr")] is None, scan_map
+        # .part 残片无对应 HDR → 被 clean_stale_thumbs 清理
+        open(stale_tp + ".part", "wb").close()
+        assert hdr_browser.clean_stale_thumbs(tmp) >= 1
         print("HdrLibrary subfolder scan OK")
 
         # 收藏 + 侧栏过滤（用临时 JsonStore，不污染真实 settings/；
@@ -280,7 +296,7 @@ def main():
             assert hdr_browser.set_favorite(target, True) is True
             assert hdr_browser.set_favorite(target, True) is True  # 幂等
             win = hdr_browser._HdrLibraryWindow(tmp)
-            assert win.list.count() == 5, win.list.count()
+            assert win.list.count() == 6, win.list.count()
             # 侧栏：全部 / 收藏 / 未分类(根目录文件) / day / night
             keys = [win.sidebar.item(i).data(QtCore.Qt.UserRole)
                     for i in range(win.sidebar.count())]
@@ -299,8 +315,10 @@ def main():
             assert not hdr_browser.get_favorites()
             # 全部视图恢复
             win._select_category(hdr_browser.KEY_ALL)
-            assert win._visible_count() == 5
-            # 5 个缺缩略图的 HDR 会启动后台生成线程，销毁前必须停掉
+            assert win._visible_count() == 6
+            # 后台线程不得 parent 到窗口（PR 反馈:Reload 销毁窗口会连带
+            # 销毁运行中的线程导致崩溃）；6 个缺缩略图会启动线程
+            assert win._thread is None or win._thread.parent() is None
             if win._thread is not None and win._thread.isRunning():
                 win._thread.requestInterruption()
                 assert win._thread.wait(5000), "thumbnail thread not stopping"

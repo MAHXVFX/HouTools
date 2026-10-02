@@ -665,18 +665,9 @@ class _VideoToSequenceWindow(QDialog):
     # ── Window flags (Windows) ───────────────────────────────────────
 
     def _apply_window_flags(self):
-        """确保窗口在 Houdini 层级中正确显示"""
-        if os.name == "nt":
-            try:
-                import ctypes
-                hwnd = int(self.winId())
-                GWL_EXSTYLE = -20
-                WS_EX_APPWINDOW = 0x00040000
-                ctypes.windll.user32.SetWindowLongW(
-                    hwnd, GWL_EXSTYLE, WS_EX_APPWINDOW
-                )
-            except Exception:
-                pass
+        """确保窗口在 Houdini 层级中正确显示（任务栏常驻，失败静默）"""
+        from houtools.ui.taskbar import apply_appwindow_flags
+        apply_appwindow_flags(self)
 
     # ── UI Construction ──────────────────────────────────────────────
 
