@@ -7,7 +7,7 @@
 - 库按"总目录 / 一级分类子文件夹"组织（如 hdr白天、hdr黑夜、室内、户外），
   递归扫描；第一级子文件夹即分类，左侧侧栏切换（全部 / 收藏 / 各分类），
   分类文件夹可在侧栏右键新建/打开，后续下载的 HDR 放进对应分类即可。
-- 缩略图按需生成：打开面板/刷新时比对缓存目录，仅缺失的由后台
+- 缩略图按需生成：点「刷新」时比对缓存目录，仅缺失的由后台
   QThread 调用 Houdini 自带 hoiiotool 生成（linear→sRGB + 缩放），
   生成完线程即退出，无常驻开销；无主缓存（HDR 已删）在刷新时清理。
   线程不 parent 到窗口：Reload 关窗销毁窗口时，运行中的线程改为
@@ -91,7 +91,12 @@ def default_lib_dir():
 
 
 def get_lib_dir():
-    return _SETTINGS.get("lib_dir") or default_lib_dir()
+    """配置的库目录；settings 里未配置时返回空串。
+
+    不回退默认目录：默认路径只作「更换目录」对话框的起始位置，
+    未配置就让界面空着，不显示用户从没设置过的路径。
+    """
+    return _SETTINGS.get("lib_dir") or ""
 
 
 def _houdini_bin():
@@ -681,11 +686,20 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self._timer.start(self.REFRESH_MS)
 
         self._update_dir_label()
-        self.reload()
+        # 打开不自动扫描/生成缩略图：点「刷新」才开始
+        self.status.setText("点击「刷新」扫描 HDR 库")
 
     # ---------------- 数据加载 ----------------
 
     def reload(self):
+        if not self.lib_dir:
+            # 未配置库目录：清空视图只给提示，绝不扫文件系统
+            self._hdrs = []
+            self._thumbs = {}
+            self._rebuild_sidebar()
+            self._apply_filter()
+            self.status.setText("未设置库目录，请先点「更换目录」选择 HDR 库")
+            return
         # 先清理无主缩略图（HDR 已被删除/移走的），再递归扫描
         stale = clean_stale_thumbs(self.lib_dir)
         hdrs = scan_hdrs(self.lib_dir)
@@ -952,8 +966,9 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self.status.setText("已创建分类文件夹 {}，把下载的 HDR 放进去后点刷新".format(name))
 
     def _choose_dir(self):
+        start = self.lib_dir or default_lib_dir()
         d = QtWidgets.QFileDialog.getExistingDirectory(
-            self, "选择 HDR 库目录", self.lib_dir)
+            self, "选择 HDR 库目录", start)
         if d:
             self.lib_dir = d
             _SETTINGS.set("lib_dir", d)  # 记住该机器上的选择
@@ -1060,6 +1075,11 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
                                 len(self._hdrs), ok_count))
 
     def _update_dir_label(self):
+        """顶部路径显示：未配置库目录时显示为空（不展示未设置过的路径）。"""
+        if not self.lib_dir:
+            self.dir_label.setText("")
+            self.dir_label.setToolTip("")
+            return
         fm = self.dir_label.fontMetrics()
         text = fm.elidedText(self.lib_dir, QtCore.Qt.ElideMiddle, 240)
         self.dir_label.setText("当前目录: {}".format(text))

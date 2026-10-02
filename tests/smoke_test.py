@@ -296,6 +296,9 @@ def main():
             assert hdr_browser.set_favorite(target, True) is True
             assert hdr_browser.set_favorite(target, True) is True  # 幂等
             win = hdr_browser._HdrLibraryWindow(tmp)
+            # 打开不自动扫描/生成缩略图：列表为空，手动 reload（=点「刷新」）才开始
+            assert win.list.count() == 0, win.list.count()
+            win.reload()
             assert win.list.count() == 6, win.list.count()
             # 侧栏：全部 / 收藏 / 未分类(根目录文件) / day / night
             keys = [win.sidebar.item(i).data(QtCore.Qt.UserRole)
@@ -338,6 +341,14 @@ def main():
             if win._thread is not None and win._thread.isRunning():
                 assert win._thread.wait(5000), "thumbnail thread not stopping"
             win.deleteLater()
+
+            # 未配置库目录：路径显示为空，刷新只提示不扫描
+            empty = hdr_browser._HdrLibraryWindow("")
+            assert empty.dir_label.text() == "", empty.dir_label.text()
+            empty.reload()
+            assert empty.list.count() == 0, empty.list.count()
+            assert "更换目录" in empty.status.text(), empty.status.text()
+            empty.deleteLater()
         fav_store.path.unlink(missing_ok=True)
     print("HdrLibrary window + favorites OK")
 
