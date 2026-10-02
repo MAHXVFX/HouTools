@@ -900,6 +900,8 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        # 恢复 closeEvent 停掉的选中轮询（start 对运行中的 QTimer 只是重置，无害）
+        self._timer.start(self.REFRESH_MS)
         self._fit_grid()
 
     def _fit_grid(self):
@@ -1165,6 +1167,9 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self._fit_timer.stop()
         self._size_timer.stop()
         self._icon_timer.stop()
+        # 选中轮询是关窗（隐藏）后唯一还在跑的定时器：一并停掉，隐藏期
+        # 零轮询开销（不做任何 hou.selectedNodes 探测）；showEvent 里恢复
+        self._timer.stop()
         thread = self._thread
         if thread is not None:
             try:
