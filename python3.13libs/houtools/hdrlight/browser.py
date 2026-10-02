@@ -225,8 +225,11 @@ def make_thumbnail(lib_dir, hdr_path, interrupt=None):
         return None
     out = thumb_path(lib_dir, hdr_path)
     os.makedirs(os.path.dirname(out), exist_ok=True)
-    tmp_out = os.path.join(os.path.dirname(out),
-                           "~tmp_" + os.path.basename(out))
+    # 临时名带线程标识：刷新时旧线程未及停止而新线程已开工，两者可能
+    # 同时生成同一张 HDR，固定临时名会互相覆写留下坏缩略图
+    tmp_out = os.path.join(
+        os.path.dirname(out),
+        "~tmp_{}_{}".format(threading.get_ident(), os.path.basename(out)))
     env = _ocio_env()
     size = _image_size(oiiotool, hdr_path, env, interrupt)
     if not size or size[0] <= 0:
@@ -483,11 +486,16 @@ class ThumbnailThread(QtCore.QThread):
 
         def work(path):
             out = None
-            if not interrupt():
-                self._wait_if_paused()
+            try:
                 if not interrupt():
-                    out = make_thumbnail(self.lib_dir, path,
-                                         interrupt=interrupt)
+                    self._wait_if_paused()
+                    if not interrupt():
+                        out = make_thumbnail(self.lib_dir, path,
+                                             interrupt=interrupt)
+            except Exception as exc:
+                # 单张异常不能让 pool.map 中止：剩余任务会被跳过，
+                # finishedCount 不再发射，进度条永远停住
+                log.warning("thumbnail worker failed for %s: %s", path, exc)
             with lock:
                 counter["done"] += 1
                 counter["ok"] += 1 if out else 0
@@ -678,8 +686,6 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
     # ---------------- 数据加载 ----------------
 
     def reload(self):
-        placeholder = self._placeholder
-
         # 先清理无主缩略图（HDR 已被删除/移走的），再递归扫描
         stale = clean_stale_thumbs(self.lib_dir)
         hdrs = scan_hdrs(self.lib_dir)
@@ -689,13 +695,14 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
 
         self._favs = get_favorites()
         self._rebuild_sidebar()
-        self._apply_filter()
-
-        self.status.setText("共 {} 个 HDR（{}{}）".format(
-            len(hdrs),
-            "已清理 {} 张无主缩略图；".format(stale) if stale else "",
-            "正在后台生成 {} 张缩略图...".format(len(need_gen))
-            if need_gen else "缩略图就绪"))
+        # 状态文案与过滤视图一次写好：这里先写会被 _apply_filter 覆盖
+        notes = []
+        if stale:
+            notes.append("已清理 {} 张无主缩略图".format(stale))
+        if need_gen:
+            notes.append("正在后台生成 {} 张缩略图".format(len(need_gen)))
+        self._apply_filter(
+            note="（{}）".format("；".join(notes)) if notes else "")
         if need_gen:
             self._start_worker(need_gen)
 
@@ -760,7 +767,7 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
             return "收藏"
         return key or "未分类"
 
-    def _apply_filter(self):
+    def _apply_filter(self, note=""):
         """按当前分类重建网格条目（只添加匹配的）。
 
         不用 item.setHidden()：IconMode+gridSize 下隐藏条目不绘制但
@@ -796,8 +803,8 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
                 self._item_by_path[path] = item
         finally:
             self.list.setUpdatesEnabled(True)
-        self.status.setText("{}：{}/{} 个 HDR。选中场景灯光后双击缩略图链接贴图".format(
-            self._category_label(key), len(entries), len(self._hdrs)))
+        self.status.setText("{}：{}/{} 个 HDR{}。选中场景灯光后双击缩略图链接贴图".format(
+            self._category_label(key), len(entries), len(self._hdrs), note))
 
     def _visible_count(self):
         return sum(0 if self.list.item(i).isHidden() else 1
@@ -988,12 +995,15 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self._thread.start()
 
     def _on_worker_finished(self):
-        if self._thread is self.sender():
-            self._thread = None
+        if self._thread is not self.sender():
+            return  # 被打断的旧线程收尾：新线程还在跑，UI 不动
+        self._thread = None
         self.progress_widget.setVisible(False)
         self.pause_btn.setText("暂停")
 
     def _on_thumb_progress(self, done, total):
+        if self._thread is not self.sender():
+            return  # 旧线程的余量进度不写新进度条
         self.progress_bar.setValue(done)
         self.progress_label.setText("生成缩略图 {}/{}".format(done, total))
 
@@ -1043,6 +1053,8 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
             self.list.setUpdatesEnabled(True)
 
     def _on_thumbs_done(self, ok_count):
+        if self._thread is not self.sender():
+            return  # 旧线程的完成数不覆盖新状态
         self.status.setText("共 {} 个 HDR，缩略图就绪（本次新生成 {} 张）。"
                             "选中灯光后双击缩略图链接贴图".format(
                                 len(self._hdrs), ok_count))
