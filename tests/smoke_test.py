@@ -45,7 +45,11 @@ def main():
         ET.parse(ROOT / menu_file)
     print("menu XMLs: well-formed")
 
-    # 粘贴为 Object Merge：XML 里的 item id 与热键符号约定必须一一对应
+    # 粘贴为 Object Merge:入口在网络编辑器菜单(item id 用 pane.wsheet.*
+    # 前缀,热键符号随之);主菜单仅保留快捷键设置
+    main_xml = (ROOT / "MainMenuCommon.xml").read_text(encoding="utf-8")
+    assert 'id="houtools.paste_as_object_merge"' not in main_xml
+    assert 'id="houtools.paste_hotkey_settings"' in main_xml
     nv_xml = (ROOT / "NetworkViewMenu.xml").read_text(encoding="utf-8")
     assert 'id="pane.wsheet.houtools_paste_as_object_merge"' in nv_xml
     compile((ROOT / "python3.13libs" / "uiready.py").read_text(encoding="utf-8"),
@@ -61,6 +65,7 @@ def main():
     import houtools.core.hotkeys
     import houtools.dev.dispatcher  # noqa: F401
     import houtools.tools.paste_as_object_merge
+    import houtools.tools.paste_hotkey_settings  # noqa: F401
     import houtools.tools.automation  # noqa: F401
     import houtools.automation.window  # noqa: F401
     import houtools.videoseq.window  # noqa: F401
@@ -236,6 +241,15 @@ def main():
     assert store.get("n") == 2
     store.path.unlink(missing_ok=True)
     print("settings round-trip OK")
+
+    # 热键自定义存储 round-trip(JsonStore,settings/ 目录)
+    from houtools.core import hotkeys
+    _sym = "h.pane.wsheet.houtools_paste_as_object_merge"
+    hotkeys.set_custom_key(_sym, "Ctrl+Alt+P")
+    assert hotkeys.get_custom_key(_sym) == "Ctrl+Alt+P"
+    assert hotkeys.get_custom_key("h.houtools.nonexistent") is None
+    hotkeys._store().path.unlink(missing_ok=True)
+    print("hotkey store round-trip OK")
 
     print("SMOKE TEST OK")
 

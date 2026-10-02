@@ -32,8 +32,9 @@ root/
 | 菜单点击入口 | `houtools/dev/dispatcher.py` | `run(tool_id)` → `importlib.import_module("houtools.tools." + tool_id)` → 调其 `run()` |
 | 菜单定义 | `MainMenuCommon.xml` / `NetworkViewMenu.xml` | 顶层子菜单 id：`houtools_tools_menu` / `houtools_network_view_menu`；均插在 help_menu 前 |
 | 新增工具 | `houtools/tools/<tool_id>.py` + 两份菜单 XML | 模块暴露 `run()`；菜单 scriptCode 只写两行分发器 |
-| 默认热键 | `houtools/core/hotkeys.py`（清单）+ `python3.13libs/uiready.py`（执行） | 菜单 item id 须为 `pane.wsheet.<name>` 前缀，热键符号才是 `h.pane.wsheet.<name>`；会话内 `hou.hotkeys.addAssignment`，用户自定义优先 |
-| 粘贴为 Object Merge | `houtools/tools/paste_as_object_merge.py` | Ctrl+Shift+V 按"目标上下文×源类别"建引用（XXX=源名，颜色随源）：SOP→SOP object_merge(Merge_XXX)；SOP→OBJ geo(XXX) 内 object_merge(Merge_XXX)；SOP→LOP / OBJ→LOP sopimport(SOP_XXX)；LOP→SOP lopimport(LOP_XXX)；LOP→LOP fetch(LOP_XXX)；LOP→ROP usdrender(XXX)；SOP→ROP fetch(SOP_XXX, source)；SOP→DOP staticobject(Object_XXX)；SOP→COP(新COP) sopimport(SOP_XXX, usesoppath=1)；未列组合跳过；单 undo 槽。源路径靠 OS 剪贴板文本（内部剪贴板无法反查原件），SOP 网络文本失效时 `pasteItemsFromClipboard` 粘贴副本兜底 |
+| 默认热键 | `houtools/core/hotkeys.py`（清单+自定义存储）+ `python3.13libs/uiready.py`（执行） | 菜单 item id 须为 `pane.wsheet.<name>` 前缀，热键符号才是 `h.pane.wsheet.<name>`；`settings/hotkeys.json` 的自定义键每次启动强制应用，其次尊重 Hotkey Manager 已有键位，最后落默认值 |
+| 粘贴为 Object Merge | `houtools/tools/paste_as_object_merge.py` | 网络编辑器菜单入口 / `Ctrl+Shift+V`（`Paste Hotkey Settings` 可改）；按"目标上下文×源类别"建引用（XXX=源名，颜色随源）：SOP→SOP object_merge(Merge_XXX)；SOP→OBJ geo(XXX) 内 object_merge(Merge_XXX)；SOP→LOP / OBJ→LOP sopimport(SOP_XXX)；LOP→SOP lopimport(LOP_XXX)；LOP→LOP fetch(LOP_XXX)；LOP→ROP usdrender(XXX)；SOP→ROP fetch(SOP_XXX, source)；SOP→DOP staticobject(Object_XXX)；SOP→COP(新COP) sopimport(SOP_XXX, usesoppath=1)；未列组合跳过；单 undo 槽。源路径靠 OS 剪贴板文本（内部剪贴板无法反查原件），SOP 网络文本失效时 `pasteItemsFromClipboard` 粘贴副本兜底 |
+| 快捷键设置 | `houtools/tools/paste_hotkey_settings.py` | 捕获式改键 → `hou.hotkeys.addAssignment` 会话即时生效 + `settings/hotkeys.json` 持久化；经 `window_manager` 单例 |
 | 窗口单例 | `houtools/ui/window_manager.py` | `open_window(tool_id, factory)`；close_all 供 Reload 前调用 |
 | 项目路径 | `houtools/core/constants.py` | `PROJECT_ROOT = Path(__file__).parents[3]`，不依赖 cwd |
 | 日志 | `houtools/core/log.py` | `get_logger("tools.xxx")`；handler 全局只配置一次，重载安全 |

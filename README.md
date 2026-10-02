@@ -30,7 +30,7 @@
 | 工具 | 菜单项 / 键位 | 说明 |
 |------|--------|------|
 | Automation | `HouTools → Automation`（Python Panel） | 自动化批处理：节点按钮点击 / Flipbook 拍屏 / HomeAssistant Webhook / 打开DW |
-| 粘贴为 Object Merge | 网络编辑器 `HouTools` 菜单 / `Ctrl+Shift+V` | 复制节点后，按"目标上下文 × 源类别"在鼠标位置粘贴引用节点 |
+| 粘贴为 Object Merge | 网络编辑器 `HouTools` 菜单 / `Ctrl+Shift+V` | 复制节点后，按"目标上下文 × 源类别"在鼠标位置粘贴引用节点；键位在 `HouTools → Paste Hotkey Settings` 修改 |
 | 视频转序列图 | `HouTools → Video to Sequence` | ffmpeg 提取视频为 JPG 序列（帧级进度，质量/起始帧/位数/前缀可调），可选自动设置相机 Background Image |
 
 ### Automation
@@ -46,9 +46,11 @@
 
 ### 粘贴为 Object Merge
 
-网络编辑器里 Ctrl+C 复制节点后，切到目标网络按 `Ctrl+Shift+V`（或点 `HouTools` 菜单），
-在鼠标位置创建引用节点，颜色随源节点。默认键位经 `python3.13libs/uiready.py`
-会话启动时分配，可在 Hotkey Manager 修改。
+网络编辑器里 Ctrl+C 复制节点后，切到目标网络按 `Ctrl+Shift+V`（或点网络
+编辑器的 `HouTools` 菜单），在鼠标位置创建引用节点，颜色随源节点。键位在
+主菜单 `HouTools → Paste Hotkey Settings` 中修改（捕获式输入，保存到
+`settings/hotkeys.json`，每次启动自动应用）；也可在 Houdini 自带
+Hotkey Manager 中修改，符号为 `h.pane.wsheet.houtools_paste_as_object_merge`。
 
 | 复制的源 → 粘贴目标 | 创建的节点（XXX = 源节点名） |
 |------|------|

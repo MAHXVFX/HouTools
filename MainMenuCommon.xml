@@ -34,6 +34,20 @@ import houtools.dev.dispatcher as _houtools_dispatcher
 _houtools_dispatcher.run("video_to_sequence")
         ]]></scriptCode>
       </scriptItem>
+
+      <separatorItem/>
+
+      <!-- 快捷键设置:捕获式改键,写 settings/hotkeys.json,
+           uiready 每次启动应用。
+           (粘贴为 Object Merge 无菜单入口,纯快捷键触发 —— 热键符号
+           由 toolbar/HouTools.shelf 的隐藏 shelf tool 注册) -->
+      <scriptItem id="houtools.paste_hotkey_settings">
+        <label>Paste Hotkey Settings</label>
+        <scriptCode><![CDATA[
+import houtools.dev.dispatcher as _houtools_dispatcher
+_houtools_dispatcher.run("paste_hotkey_settings")
+        ]]></scriptCode>
+      </scriptItem>
     </subMenu>
   </menuBar>
 </mainMenu>

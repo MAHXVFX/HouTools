@@ -29,7 +29,8 @@ _houtools_dispatcher.run("video_to_sequence")
 
       <!-- 粘贴为 Object Merge：id 必须是 pane.wsheet.* 前缀，
            热键符号才是 h.pane.wsheet.houtools_paste_as_object_merge（网络编辑器上下文），
-           默认键位 Ctrl+Shift+V 由 python3.13libs/uiready.py 在会话启动时分配 -->
+           默认键位 Ctrl+Shift+V 由 python3.13libs/uiready.py 在会话启动时分配，
+           主菜单 HouTools -> Paste Hotkey Settings 可修改 -->
       <scriptItem id="pane.wsheet.houtools_paste_as_object_merge">
         <label>Paste as Object Merge</label>
         <scriptCode><![CDATA[
