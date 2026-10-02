@@ -18,6 +18,7 @@ root/
 │   ├── ui/                        # window_manager：工具窗口单例登记，Reload 前统一关闭
 │   ├── automation/                # Automation：task_types / data_manager / execution_engine / styles / window
 │   ├── videoseq/                  # 视频转序列图：ffmpeg 查找 + 窗口（拖放 + 可编辑路径框）
+│   ├── hdrlight/                  # Hdr Library：HDR 库浏览 + 缩略图 + 双击赋给灯光
 │   ├── icons/                     # UI 图标（SVG，文件名不含空格）
 │   └── tools/                     # 工具入口：<tool_id>.py 暴露 run()
 ├── tests/smoke_test.py            # 无头回归：菜单 XML / 全包导入 / reload_all / TaskItem 往返
@@ -45,6 +46,7 @@ root/
 | 界面接入（Python Panel） | `houtools/automation/window.py` | `create_panel_widget` / `open_floating_panel`（`hou.pypanel.installFile` + `createFloatingPanel`）；节点拖放为 Houdini 原生投递（MIME text 是逗号分隔的节点路径） |
 | ffmpeg 查找 | `houtools/videoseq/ffmpeg.py` | 优先级：项目根 `ffmpeg.exe` → `$HFS/bin/hffmpeg` → `$HFS/bin/ffmpeg` → PATH（hffmpeg 优先） |
 | 视频拖放/路径框 | `houtools/videoseq/window.py` | 整窗 + `_VideoSourceGroup` 双层接收拖放；`_load_video` 是浏览/拖放/手输共用入口 |
+| HDR 库浏览器 | `houtools/hdrlight/browser.py` + `tools/hdr_library.py` | 菜单 Hdr Library；扫描 `.hdr/.hdri/.exr`，双击缩略图把路径赋给选中灯光（`env_map` 等参数按序匹配，自动关 `skymap_enable`）；缩略图后台 QThread 调 `$HFS/bin/hoiiotool` 生成（缓存 256px 存库目录 `.thumb_cache/`；坑：`--resize` 必须写全 WxH，`--colorconvert` 需 OCIO 配置、缺失时自动注入 `$HFS/packages/ocio/`）；库目录存 `settings/hdr_library.json`（默认 `~/HouTools/hdri`，可用环境变量 `HDR_TOOL_LIB` 覆盖） |
 
 ## Conventions
 
