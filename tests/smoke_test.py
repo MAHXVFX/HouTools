@@ -52,8 +52,8 @@ def main():
             "uiready.py", "exec")
     print("paste_as_object_merge wiring: consistent")
 
-    ET.parse(ROOT / "python_panels" / "MA_Automation.pypanel")
-    print("MA_Automation.pypanel: well-formed")
+    ET.parse(ROOT / "python_panels" / "Automation.pypanel")
+    print("Automation.pypanel: well-formed")
 
     import houtools
     import houtools.core.constants
@@ -61,6 +61,7 @@ def main():
     import houtools.core.hotkeys
     import houtools.dev.dispatcher  # noqa: F401
     import houtools.tools.paste_as_object_merge
+    import houtools.tools.automation  # noqa: F401
     import houtools.automation.window  # noqa: F401
     import houtools.videoseq.window  # noqa: F401
     import houtools.videoseq.ffmpeg
@@ -99,28 +100,28 @@ def main():
     from houtools.automation import data_manager as dm
 
     with tempfile.TemporaryDirectory() as tmp:
-        cfg = Path(tmp) / "MA_Automation_Config.json"
-        with patch.object(dm.MA_Automation_DataManager, "get_app_config_path",
+        cfg = Path(tmp) / "Automation_Config.json"
+        with patch.object(dm.AutomationDataManager, "get_app_config_path",
                           return_value=str(cfg)):
-            assert dm.MA_Automation_DataManager.load_dw_exe_path() \
+            assert dm.AutomationDataManager.load_dw_exe_path() \
                 == dm.DW_EXE_PATH_DEFAULT
-            dm.MA_Automation_DataManager.ensure_dw_config()
+            dm.AutomationDataManager.ensure_dw_config()
             assert cfg.exists(), "ensure_dw_config did not create the file"
-            assert dm.MA_Automation_DataManager.load_dw_exe_path() \
+            assert dm.AutomationDataManager.load_dw_exe_path() \
                 == dm.DW_EXE_PATH_DEFAULT
             cfg.write_text(json.dumps({"dw_exe_path": "D:/tools/dw.exe"}),
                            encoding="utf-8")
-            assert dm.MA_Automation_DataManager.load_dw_exe_path() \
+            assert dm.AutomationDataManager.load_dw_exe_path() \
                 == "D:/tools/dw.exe"
             # 缺字段时 ensure 只补齐,不覆盖用户已有键
             cfg.write_text(json.dumps({"other": 1}), encoding="utf-8")
-            dm.MA_Automation_DataManager.ensure_dw_config()
+            dm.AutomationDataManager.ensure_dw_config()
             data = json.loads(cfg.read_text(encoding="utf-8"))
             assert data["other"] == 1
             assert data["dw_exe_path"] == dm.DW_EXE_PATH_DEFAULT
 
     # deserialize_params：Flipbook 字段恢复 + 旧 JSON 遗留字段过滤
-    flipbook = dm.MA_Automation_DataManager.deserialize_params(
+    flipbook = dm.AutomationDataManager.deserialize_params(
         "FLIPBOOK",
         {
             "start_frame": "101",
@@ -138,7 +139,7 @@ def main():
 
     # 随项目发布的配置文件存在且含有效 dw_exe_path 字段
     shipped = json.loads(
-        (ROOT / "MA_Automation_Config.json").read_text(encoding="utf-8"))
+        (ROOT / "Automation_Config.json").read_text(encoding="utf-8"))
     assert isinstance(shipped.get("dw_exe_path"), str)
     assert shipped["dw_exe_path"].strip()
     print("OPEN_DW task + app config OK")
@@ -146,7 +147,7 @@ def main():
     # ffmpeg 查找函数可执行（无头环境找不到也不算失败）
     print("find_ffmpeg ->", houtools.videoseq.ffmpeg.find_ffmpeg())
 
-    # 真实实例化 MA Automation 界面（捕获 __init__ 结构损伤）
+    # 真实实例化 Automation 界面（捕获 __init__ 结构损伤）
     from PySide6.QtWidgets import (
         QApplication, QComboBox, QLineEdit, QPushButton, QStackedWidget)
 

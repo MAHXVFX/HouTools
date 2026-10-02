@@ -1,11 +1,10 @@
-"""MA Automation 样式常量。
+"""Automation 样式常量。
 
-集中管理主窗口 `STYLE_SHEET`，与项目其他模块 (`hdr_library/`、
-`shelf_tool_pro/`) 拆分 styles.py 的约定保持一致。
+集中管理主窗口 `STYLE_SHEET`（暗色主题：#18181b 底 + #0d6399 蓝 /
+#8a5cf5 紫强调，与项目其他工具的 styles 常量共享同一套配色语义）。
 
 设计意图:
-- 颜色用字面量写死（不抽常量），因为这套配色只服务本面板，跨模块共享的
-  颜色统一在 `MA/common/styles.py` 维护（待未来真需要时再抽）
+- 颜色用字面量写死（不抽常量）：这套配色只服务本面板，真需要跨模块共享时再抽
 - 关键 objectName (`startBtn` / `taskSlot`) 在样式表中通过 ``#name`` 选择器特化样式;
   `addBtn` / `removeBtn` 的样式在 window.py 里用部件级内联样式实现
   （pane 内窗口级规则会被 Houdini 全局样式表压过）
@@ -52,7 +51,7 @@ QComboBox#configCombo::drop-down:on {
     background-color: rgba(138, 92, 245, 80);  /* 按下紫色微高亮 */
 }
 QComboBox#configCombo::down-arrow {
-    /* SVG 由 automation_window.py 注入(combo-level stylesheet,
+    /* SVG 由 window.py 注入(combo-level stylesheet,
        路径用 Path(__file__) 算绝对,避免 CWD 不可靠) */
     image: none;
     width: 16px; height: 16px;

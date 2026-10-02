@@ -1,7 +1,7 @@
 """
-MA Automation — Data Manager 数据持久化模块
+Automation — Data Manager 数据持久化模块
 ==============================================
-提供 MA_Automation_DataManager 类，负责 JSON 文件的读写和任务对象的
+提供 AutomationDataManager 类，负责 JSON 文件的读写和任务对象的
 序列化/反序列化。
 
 所有方法均为 @classmethod，因为全局只需一个逻辑实例，
@@ -11,7 +11,7 @@ MA Automation — Data Manager 数据持久化模块
 可选的 ``filename`` 参数(无 ``.json`` 后缀),用于支持 UI 中"可编辑
 配置下拉菜单"——用户可选择配置目录下任一现存配置,或键入新名
 让 ``save()`` 在 Start 时创建新文件。``filename=None`` 走默认
-``MA_Automation.json``,保持向后兼容。
+``Automation.json``,保持向后兼容。
 """
 
 import os
@@ -34,15 +34,15 @@ from houtools.core.constants import PROJECT_ROOT
 from houtools.core.log import get_logger
 logger = get_logger("automation.data")
 
-# 打开DW 任务的默认可执行文件路径（写入 MA_Automation_Config.json 的初始值）
+# 打开DW 任务的默认可执行文件路径（写入 Automation_Config.json 的初始值）
 DW_EXE_PATH_DEFAULT = "C:/Program Files/Thinkbox/Deadline10/bin/deadlineworker.exe"
 
 
-class MA_Automation_DataManager:
-    """MA Automation 数据持久化管理器。
+class AutomationDataManager:
+    """Automation 数据持久化管理器。
 
     所有方法均为类方法，无需实例化即可使用。
-    数据以 JSON 格式存储在 ``{HIP}/MA Automation/json/MA_Automation.json``，
+    数据以 JSON 格式存储在 ``{HIP}/HouTools_cfg/Automation_json/Automation.json``，
     $HIP 不可用时 fallback 到系统临时目录。
     """
 
@@ -70,7 +70,7 @@ class MA_Automation_DataManager:
 
         Args:
             filename: 配置文件 basename(**无** ``.json`` 后缀)。
-                      ``None`` 时返回默认 ``MA_Automation.json``。
+                      ``None`` 时返回默认 ``Automation.json``。
 
         ``hou`` 只在函数内部 try/except 导入,避免 Houdini 外 ImportError。
 
@@ -79,20 +79,20 @@ class MA_Automation_DataManager:
         """
         base = cls._hip_base()
 
-        name = filename if filename else "MA_Automation"
-        return os.path.join(base, "MA Automation", "json", f"{name}.json")
+        name = filename if filename else "Automation"
+        return os.path.join(base, "HouTools_cfg", "Automation_json", f"{name}.json")
 
-    # ── 应用级配置(MA_Automation_Config.json) ─────────────
+    # ── 应用级配置(Automation_Config.json) ─────────────
 
     @classmethod
     def get_app_config_path(cls) -> str:
-        """返回应用级配置文件路径: ``{项目根}/MA_Automation_Config.json``。
+        """返回应用级配置文件路径: ``{项目根}/Automation_Config.json``。
 
         随插件项目一起发布、版本化管理,不随 $HIP 走 —— DW 软件路径
         虽是机器相关的,但插件安装目录本来就是每台机器一份,直接改
         安装目录里的这个文件即可。
         """
-        return str(PROJECT_ROOT / "MA_Automation_Config.json")
+        return str(PROJECT_ROOT / "Automation_Config.json")
 
     @classmethod
     def ensure_dw_config(cls) -> dict:
@@ -149,7 +149,7 @@ class MA_Automation_DataManager:
 
         Args:
             filename: 配置文件 basename(**无** ``.json`` 后缀)。
-                      ``None`` 时加载默认 ``MA_Automation.json``。
+                      ``None`` 时加载默认 ``Automation.json``。
 
         返回 ``data["tasks"]``,若文件不存在或 JSON 损坏则返回空列表。
         """
@@ -174,12 +174,12 @@ class MA_Automation_DataManager:
         Args:
             tasks_data: 任务数据列表
             filename: 配置文件 basename(**无** ``.json`` 后缀)。
-                      ``None`` 时保存到默认 ``MA_Automation.json``。
+                      ``None`` 时保存到默认 ``Automation.json``。
 
         写入结构: ``{"tasks": tasks_data}``
         使用 ``ensure_ascii=False``(支持中文)和 ``indent=2``。
 
-        **副作用**:首次调用会创建 ``{HIP}/MA Automation/json/`` 目录
+        **副作用**:首次调用会创建 ``{HIP}/HouTools_cfg/Automation_json/`` 目录
         (``os.makedirs(exist_ok=True)``)。这是 DataManager 中**唯一**允许
         创建配置目录的入口,与"仅在 Start 时落盘"的语义配合
         —— 打开面板不会产生任何文件。
@@ -279,7 +279,7 @@ class MA_Automation_DataManager:
           - 出错时静默返回空列表(权限错误等)
 
         Returns:
-            排序后的 basename 列表,例 ``["MA_Automation", "MAtest1", "MAtest2"]``。
+            排序后的 basename 列表,例 ``["Automation", "MAtest1", "MAtest2"]``。
         """
         json_dir = os.path.dirname(cls.get_data_path())
         if not os.path.isdir(json_dir):

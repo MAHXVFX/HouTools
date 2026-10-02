@@ -19,11 +19,11 @@ _houtools_reloader.reload_all()
 
       <!-- 工具入口：scriptCode 只写两行薄分发器，
            工具逻辑改动通过 Reload 按钮热加载，无需重启 -->
-      <scriptItem id="houtools.ma_automation">
-        <label>MA Automation</label>
+      <scriptItem id="houtools.automation">
+        <label>Automation</label>
         <scriptCode><![CDATA[
 import houtools.dev.dispatcher as _houtools_dispatcher
-_houtools_dispatcher.run("ma_automation")
+_houtools_dispatcher.run("automation")
         ]]></scriptCode>
       </scriptItem>
 

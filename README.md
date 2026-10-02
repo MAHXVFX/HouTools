@@ -2,7 +2,7 @@
 
 从零构建的 Houdini 22 插件工具集，开发期支持**手动热加载**：改完代码无需重启 Houdini。
 
-> 仅支持 Windows：MA Automation 的窗口置顶用 Win32 API，部分工具的"打开所在文件夹"依赖 explorer。
+> 仅支持 Windows：Automation 的窗口置顶用 Win32 API，部分工具的"打开所在文件夹"依赖 explorer。
 
 ## 安装
 
@@ -29,16 +29,17 @@
 
 | 工具 | 菜单项 / 键位 | 说明 |
 |------|--------|------|
-| MA Automation | `HouTools → MA Automation`（Python Panel） | 自动化批处理：节点按钮点击 / Flipbook 拍屏 / HomeAssistant Webhook / 打开DW |
+| Automation | `HouTools → Automation`（Python Panel） | 自动化批处理：节点按钮点击 / Flipbook 拍屏 / HomeAssistant Webhook / 打开DW |
 | 粘贴为 Object Merge | 网络编辑器 `HouTools` 菜单 / `Ctrl+Shift+V` | 复制节点后，按"目标上下文 × 源类别"在鼠标位置粘贴引用节点 |
 | 视频转序列图 | `HouTools → Video to Sequence` | ffmpeg 提取视频为 JPG 序列（帧级进度，质量/起始帧/位数/前缀可调），可选自动设置相机 Background Image |
 
-### MA Automation
+### Automation
 
 以 Python Panel 在 Houdini 浮动面板中打开。
 
-- QThread 后台执行，配置 JSON 按 `$HIP` 存储
-- DW 软件路径在项目根目录 `MA_Automation_Config.json` 中配置（随项目发布，可直接编辑）
+- QThread 后台执行；配置 JSON 存 `$HIP/HouTools_cfg/Automation_json/`，执行日志存
+  `$HIP/HouTools_cfg/Automation_logs/`
+- DW 软件路径在项目根目录 `Automation_Config.json` 中配置（随项目发布，可直接编辑）
 - 节点可直接拖入参数路径框（原生投递、无视窗泄漏）
 - `Reload Modules (Dev)` 不会自动重建已打开的面板（避免丢弃未 Start 保存的编辑），
   需点面板工具条自带的刷新按钮重建界面
@@ -117,15 +118,15 @@ HouTools/
 ├── MainMenuCommon.xml             # 顶部菜单（Houdini 规定文件名）
 ├── NetworkViewMenu.xml            # 网络编辑器面板菜单栏（HouTools 顶层菜单，注入机制同上）
 ├── HouTools.json                # 包清单副本（生效的一份在 packages/ 下）
-├── MA_Automation_Config.json      # MA Automation 的 DW 软件路径等配置（随项目发布）
-├── python_panels/MA_Automation.pypanel  # MA Automation 的 Python Panel 界面
+├── Automation_Config.json      # Automation 的 DW 软件路径等配置（随项目发布）
+├── python_panels/Automation.pypanel  # Automation 的 Python Panel 界面
 ├── python3.13libs/
 │   ├── uiready.py                 # UI 启动钩子：装默认键位（会话启动时执行）
 │   └── houtools/
 │       ├── dev/                   # 热加载框架（reloader / dispatcher，不参与重载）
 │       ├── core/                  # 路径常量 / 日志 / JSON 设置
 │       ├── ui/                    # window_manager 窗口登记
-│       ├── automation/            # MA Automation（任务类型/持久化/执行引擎/窗口）
+│       ├── automation/            # Automation（任务类型/持久化/执行引擎/窗口）
 │       ├── videoseq/              # 视频转序列图（ffmpeg 查找 + 窗口）
 │       ├── icons/                 # UI 图标（SVG）
 │       └── tools/                 # 工具入口（<tool_id>.py 暴露 run()）

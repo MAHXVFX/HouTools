@@ -10,13 +10,13 @@ root/
 ├── MainMenuCommon.xml             # Houdini 顶部菜单（薄分发器 scriptItem）
 ├── NetworkViewMenu.xml            # 网络编辑器面板菜单栏（HouTools 顶层菜单，注入机制同主菜单）
 ├── HouTools.json                # 包清单副本（生效的一份在 Documents/houdini22.0/packages/）
-├── python_panels/MA_Automation.pypanel  # MA Automation 的 Python Panel 界面定义
+├── python_panels/Automation.pypanel  # Automation 的 Python Panel 界面定义
 ├── python3.13libs/uiready.py      # UI 启动钩子：装默认键位；会链式执行路径上后续 uiready.py
 ├── python3.13libs/houtools/           # 核心 Python 包（python3.13libs 由 Houdini 自动加入 sys.path）
 │   ├── dev/                       # ★ 热加载框架：reloader / dispatcher（永不参与重载）
 │   ├── core/                      # constants（路径自算）/ log / settings(JsonStore)
 │   ├── ui/                        # window_manager：工具窗口单例登记，Reload 前统一关闭
-│   ├── automation/                # MA Automation：task_types / data_manager / execution_engine / styles / window
+│   ├── automation/                # Automation：task_types / data_manager / execution_engine / styles / window
 │   ├── videoseq/                  # 视频转序列图：ffmpeg 查找 + 窗口（拖放 + 可编辑路径框）
 │   ├── icons/                     # UI 图标（SVG，文件名不含空格）
 │   └── tools/                     # 工具入口：<tool_id>.py 暴露 run()
@@ -39,7 +39,7 @@ root/
 | 日志 | `houtools/core/log.py` | `get_logger("tools.xxx")`；handler 全局只配置一次，重载安全 |
 | JSON 设置 | `houtools/core/settings.py` | `JsonStore(filename, defaults)`，defaults 合并语义，存项目 `settings/` |
 | 自动化任务模型 | `houtools/automation/task_types.py` | TaskType 枚举 + dataclass 参数 + TaskItem.to_dict/from_dict |
-| 自动化持久化 | `houtools/automation/data_manager.py` | 按 `$HIP/MA Automation/json/` 存取（跟场景走，是有意设计）；多配置文件 |
+| 自动化持久化 | `houtools/automation/data_manager.py` | 按 `$HIP/HouTools_cfg/Automation_json/` 存取（跟场景走，是有意设计）；多配置文件 |
 | 自动化执行引擎 | `houtools/automation/execution_engine.py` | QThread；Houdini API 经 `hdefereval.executeDeferred` + Event 同步派发主线程；`dl_Submit` 特例：点击前强制 `hipFile.save()`，失败则跳过点击 |
 | 界面接入（Python Panel） | `houtools/automation/window.py` | `create_panel_widget` / `open_floating_panel`（`hou.pypanel.installFile` + `createFloatingPanel`）；节点拖放为 Houdini 原生投递（MIME text 是逗号分隔的节点路径） |
 | ffmpeg 查找 | `houtools/videoseq/ffmpeg.py` | 优先级：项目根 `ffmpeg.exe` → `$HFS/bin/hffmpeg` → `$HFS/bin/ffmpeg` → PATH（hffmpeg 优先） |
@@ -49,7 +49,7 @@ root/
 
 - **新增工具三步**：`houtools/tools/<tool_id>.py`（暴露 `run()`）→ 两份菜单 XML 各加 `scriptItem`（scriptCode 仅 `import houtools.dev.dispatcher` + `_houtools_dispatcher.run("<tool_id>")` 两行）→ 重启 Houdini 一次让菜单出现；此后该工具代码迭代全部走 Reload 热加载。
 - **菜单栏标签一律英文/ASCII**（H22 菜单栏对中文渲染不可靠）；工具窗口内部 UI 可用中文。
-- **顶层窗口与 Python Panel**：独立 QDialog 必须经 `window_manager.open_window()` 创建（如视频转序列图），否则 Reload 无法自动关闭旧窗口；MA Automation 是 Python Panel 部件（pane 托管），**不得**注册进 window_manager。
+- **顶层窗口与 Python Panel**：独立 QDialog 必须经 `window_manager.open_window()` 创建（如视频转序列图），否则 Reload 无法自动关闭旧窗口；Automation 是 Python Panel 部件（pane 托管），**不得**注册进 window_manager。
 - **Reload 与 pypanel**：Reload Modules 不重建已打开的 Python Panel（避免丢弃未 Start 保存的编辑），由用户点面板工具条自带的刷新按钮重建界面。
 - **`import hou` 只放函数内**或 try/except，保证模块在 Houdini 外可导入（冒烟测试依赖这一点）。
 - **线程**：QThread + Signal；任何回改 Houdini 的调用经 `hdefereval.executeDeferred` 派发主线程（参考 `execution_engine._run_deferred`）。

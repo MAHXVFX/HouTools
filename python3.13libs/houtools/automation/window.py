@@ -1,5 +1,5 @@
 """
-MA Automation — 主界面（Python Panel 部件）
+Automation — 主界面（Python Panel 部件）
 ==========================================
 以 .pypanel 载入 Houdini 面板体系（默认由菜单在浮动面板中打开）。
 网络编辑器的节点拖放可直落入参数路径框——Houdini 面板体系内走原生
@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QPoint, QSize, QRect, QEvent, QTimer
 from PySide6.QtGui import QColor, QIcon, QKeySequence, QShortcut
 
-from houtools.automation.data_manager import MA_Automation_DataManager
+from houtools.automation.data_manager import AutomationDataManager
 from houtools.automation.task_types import (
     TaskItem,
     TaskType,
@@ -42,7 +42,7 @@ logger = get_logger("automation.window")
 
 
 # ── 配置下拉图标(SVG,绝对路径避开 Houdini CWD 不可靠) ──────────
-# 蓝色圆 + 下箭头 SVG,放在 ``python3.11libs/MA/icons/``。
+# 蓝色圆 + 下箭头 SVG,放在 ``python3.13libs/houtools/icons/``。
 # 用 ``__file__`` 解析绝对路径后注入到 combo-level stylesheet,
 # 不在 styles.py 写死(Houdini 启动 CWD 不固定,相对路径会失效)。
 _MA_ICONS_DIR = Path(__file__).resolve().parent.parent / "icons"
@@ -174,8 +174,8 @@ def _extract_parm_path(text: str) -> str:
 
 # ── Python Panel 接入 ────────────────────────────────────────
 
-INTERFACE_NAME = "MA_Automation"
-"""MA_Automation.pypanel 中 <interface name> 的名字。"""
+INTERFACE_NAME = "Automation"
+"""Automation.pypanel 中 <interface name> 的名字。"""
 
 _DEBUG_LOG = PROJECT_ROOT / "settings" / "panel_debug.log"
 
@@ -309,7 +309,7 @@ def _qt_floating_window(panel):
 
 
 def open_floating_panel():
-    """在 Houdini 浮动面板中打开 MA Automation（Python Panel 界面）。
+    """在 Houdini 浮动面板中打开 Automation（Python Panel 界面）。
 
     用 Houdini 管理的浮动面板而非独立 QDialog：网络编辑器的节点拖放
     对 Houdini 面板体系走内部投递，不会像跨入独立原生窗口那样把待定
@@ -318,14 +318,14 @@ def open_floating_panel():
     **单实例**：已存在本工具面板时菜单点击只前置激活，绝不另开新面板
     —— 重复创建会让 panelN 递增，且隐藏面板带着部件树与应用级事件
     过滤器越积越多、打开越来越卡。复用激活时返回 None，新建时返回
-    FloatingPanel。新建的面板固定命名为 ``MA_Automation``（显示在窗口
+    FloatingPanel。新建的面板固定命名为 ``Automation``（显示在窗口
     标题，替代 Houdini 递增的 panelN 编号）。
     """
     import hou
 
     # .pypanel 定义每个会话只需安装一次(热重载只换 py 模块,不动注册表)
     if hou.pypanel.interfaceByName(INTERFACE_NAME) is None:
-        interface_file = PROJECT_ROOT / "python_panels" / "MA_Automation.pypanel"
+        interface_file = PROJECT_ROOT / "python_panels" / "Automation.pypanel"
         hou.pypanel.installFile(str(interface_file))
         if hou.pypanel.interfaceByName(INTERFACE_NAME) is None:
             raise ValueError(
@@ -546,7 +546,7 @@ def _frame_node_in_editor(editor, node):
 
 
 class AutomationWindow(QWidget):
-    """MA Automation 主界面（Python Panel 部件）。
+    """Automation 主界面（Python Panel 部件）。
 
     包含可动态增删的任务槽列表、工具栏（Start / Auto Fill / Clear / + / -）、
     数据持久化加载/保存以及 ExecutionEngine 后台执行集成。
@@ -554,7 +554,7 @@ class AutomationWindow(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("MA Automation")
+        self.setWindowTitle("Automation")
         self.setMinimumSize(600, 450)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setStyleSheet(STYLE_SHEET)
@@ -584,10 +584,10 @@ class AutomationWindow(QWidget):
         self._drag_threshold: int = 5  # 像素,超过才认作拖动
 
         # 配置下拉相关状态:当前加载的配置文件 basename(无 .json 后缀)。
-        # 初始默认 ``MA_Automation``(保留向后兼容)。用户从下拉选其它
+        # 初始默认 ``Automation``(保留向后兼容)。用户从下拉选其它
         # 配置后会被 ``_on_config_changed`` 更新;Start 保存后会被
         # ``_save_data`` 更新(用当前 combo 文本)。
-        self._current_config_name: str = "MA_Automation"
+        self._current_config_name: str = "Automation"
 
         # 设置项:日志输出到磁盘
         self._log_to_disk_enabled: bool = False
@@ -597,9 +597,9 @@ class AutomationWindow(QWidget):
         self._load_settings()
         self._install_app_event_filter()
 
-        # 打开DW 的应用级配置(项目根 MA_Automation_Config.json)——
+        # 打开DW 的应用级配置(项目根 Automation_Config.json)——
         # 文件随项目发布,意外缺失时在此按默认值兜底补建
-        MA_Automation_DataManager.ensure_dw_config()
+        AutomationDataManager.ensure_dw_config()
 
     def _install_app_event_filter(self):
         """把本窗口挂为 QApplication 级事件过滤器（Delete 修复的实现）。
@@ -871,7 +871,7 @@ class AutomationWindow(QWidget):
         dw_hint.setStyleSheet("color: #999999; background: transparent;")
         dw_hint.setToolTip(
             "软件路径在配置文件中设置:\n"
-            + MA_Automation_DataManager.get_app_config_path()
+            + AutomationDataManager.get_app_config_path()
         )
         p3_layout.addWidget(dw_hint)
         stacked.addWidget(page3)
@@ -1177,14 +1177,14 @@ class AutomationWindow(QWidget):
         node_path = (node_path or "").strip()
         if not node_path:
             hou.ui.setStatusMessage(
-                "MA Automation: 该任务未填写参数路径",
+                "Automation: 该任务未填写参数路径",
                 severity=hou.severityType.Warning,
             )
             return
         node = hou.node(node_path)
         if node is None:
             hou.ui.setStatusMessage(
-                f"MA Automation: 节点不存在 {node_path}",
+                f"Automation: 节点不存在 {node_path}",
                 severity=hou.severityType.Warning,
             )
             return
@@ -1196,7 +1196,7 @@ class AutomationWindow(QWidget):
             editor = hou.ui.paneTabOfType(hou.paneTabType.NetworkEditor)
         if editor is None:
             hou.ui.setStatusMessage(
-                "MA Automation: 未找到网络编辑器",
+                "Automation: 未找到网络编辑器",
                 severity=hou.severityType.Warning,
             )
             return
@@ -1518,7 +1518,7 @@ class AutomationWindow(QWidget):
         # 日志输出到磁盘选项
         self._log_to_disk_cb = QCheckBox("将日志输出到磁盘")
         self._log_to_disk_cb.setChecked(self._log_to_disk_enabled)
-        self._log_to_disk_cb.setToolTip("勾选后，执行日志将保存到 $HIP/MA Automation/logs/")
+        self._log_to_disk_cb.setToolTip("勾选后，执行日志将保存到 $HIP/HouTools_cfg/Automation_logs/")
         layout.addWidget(self._log_to_disk_cb)
 
         # 按钮
@@ -1538,12 +1538,12 @@ class AutomationWindow(QWidget):
 
     def _load_settings(self):
         """从配置文件加载设置。"""
-        settings = MA_Automation_DataManager.load_settings(self._current_config_name)
+        settings = AutomationDataManager.load_settings(self._current_config_name)
         self._log_to_disk_enabled = settings.get("log_to_disk", False)
 
     def _save_settings(self):
         """保存设置到配置文件。"""
-        MA_Automation_DataManager.save_settings(
+        AutomationDataManager.save_settings(
             {"log_to_disk": self._log_to_disk_enabled},
             self._current_config_name,
         )
@@ -1565,7 +1565,7 @@ class AutomationWindow(QWidget):
             import tempfile
             base = tempfile.gettempdir()
 
-        log_dir = os.path.join(base, "MA Automation", "logs")
+        log_dir = os.path.join(base, "HouTools_cfg", "Automation_logs")
         os.makedirs(log_dir, exist_ok=True)
 
         base_name = datetime.now().strftime("%Y%m%d%H%M")
@@ -1635,7 +1635,7 @@ class AutomationWindow(QWidget):
                     webhook_url = params.get("webhook_url", "")
                     lines.append(f"  Webhook: {webhook_url}")
                 elif task_type == "OPEN_DW":
-                    lines.append(f"  DW 软件路径: {MA_Automation_DataManager.load_dw_exe_path()}")
+                    lines.append(f"  DW 软件路径: {AutomationDataManager.load_dw_exe_path()}")
                 lines.append("")
         else:
             lines.append("任务列表: (空)")
@@ -1654,14 +1654,14 @@ class AutomationWindow(QWidget):
         流程:
           1. ``_refresh_config_dropdown()`` — 列出配置目录下所有现存 .json
              并恢复当前选中(``_current_config_name``)
-          2. ``MA_Automation_DataManager.load(self._current_config_name)`` —
+          2. ``AutomationDataManager.load(self._current_config_name)`` —
              加载该配置文件
           3. 清空现有槽 + 重建;若为空则添加1个空槽
         """
         # 1. 先刷新下拉(列表 + 恢复当前选中),让 UI 与状态同步
         self._refresh_config_dropdown()
         # 2. 加载当前选中的配置
-        raw_list = MA_Automation_DataManager.load(self._current_config_name)
+        raw_list = AutomationDataManager.load(self._current_config_name)
 
         # 清空现有槽
         for slot in self._slot_widgets:
@@ -1687,9 +1687,9 @@ class AutomationWindow(QWidget):
         ``setCurrentIndex()`` 触发 ``currentIndexChanged`` →
         ``_on_config_changed`` → ``_load_data`` 死循环。
 
-        首次打开时显示默认配置名 ``MA_Automation``,即使该文件尚不存在。
+        首次打开时显示默认配置名 ``Automation``,即使该文件尚不存在。
         """
-        configs = MA_Automation_DataManager.list_configs()
+        configs = AutomationDataManager.list_configs()
         self._config_combo.blockSignals(True)
         try:
             self._config_combo.clear()
@@ -1726,7 +1726,7 @@ class AutomationWindow(QWidget):
         """从下拉当前文本提取保存文件名(已 sanitize)。
 
         行为:
-          - 空 / 全空白 → ``None``(fall back 到默认 ``MA_Automation.json``)
+          - 空 / 全空白 → ``None``(fall back 到默认 ``Automation.json``)
           - 末尾 ``.json`` → 剥后缀(容错用户键入带后缀)
           - 含 ``/`` 或 ``\\`` → ``None``(拒绝路径分隔符,避免破坏目录结构)
           - Windows 保留名 (``CON`` / ``PRN`` / ``AUX`` / ``NUL`` / ``COM1-9`` /
@@ -1848,10 +1848,10 @@ class AutomationWindow(QWidget):
         """收集并持久化任务数据,返回收集到的 ``list[dict]`` 供调用方使用。
 
         保存目标由 ``_get_save_target_name()`` 决定(从下拉当前文本提取):
-          - 空 / 全空白 / 含路径分隔符 → fall back 到默认 ``MA_Automation.json``
+          - 空 / 全空白 / 含路径分隔符 → fall back 到默认 ``Automation.json``
           - 其它 → 写到该名 .json(**不存在则创建**,这是"键入新名 + Start"的核心)
 
-        **失败处理**:``MA_Automation_DataManager.save()`` 返回 ``False``(写盘
+        **失败处理**:``AutomationDataManager.save()`` 返回 ``False``(写盘
         异常:磁盘满 / 权限 / 只读 / OS 拒绝保留名)时,``logger.warning``
         记录 + **不**更新 ``_current_config_name`` / **不** refresh 下拉,
         让用户重试。否则 UI 会"假装成功",后续 ``_load_data`` 加载错误的旧
@@ -1864,11 +1864,11 @@ class AutomationWindow(QWidget):
         """
         tasks_data = self._collect_data()
         save_name = self._get_save_target_name()  # 可能为 None
-        ok = MA_Automation_DataManager.save(tasks_data, filename=save_name)
+        ok = AutomationDataManager.save(tasks_data, filename=save_name)
         if not ok:
             # 写盘失败:不更新状态,让用户重试 + 看到日志提示
             logger.warning(
-                "MA Automation: 保存失败 filename=%s", save_name
+                "Automation: 保存失败 filename=%s", save_name
             )
             return tasks_data
         # 状态同步:更新当前配置名(只有显式保存到某名时才更新)
@@ -1923,7 +1923,7 @@ class AutomationWindow(QWidget):
         """取消正在执行的任务。"""
         if self._engine is not None:
             self._engine.cancel()
-        print("MA Automation: 用户取消执行")
+        print("Automation: 用户取消执行")
         self._running = False
         self._start_btn.setText("执行")
         self._restore_stdout()

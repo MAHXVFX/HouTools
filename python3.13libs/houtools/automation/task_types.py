@@ -1,5 +1,5 @@
 """
-MA Automation — 任务类型定义
+Automation — 任务类型定义
 =============================
 TaskType 枚举 + TaskParams 数据类 + TaskItem 容器（可序列化）。
 """
