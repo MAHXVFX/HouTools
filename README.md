@@ -32,6 +32,7 @@ Houdini 22 插件工具集，开发期支持**手动热加载**：改完代码�
 | Automation | `HouTools → Automation`（Python Panel） | 自动化批处理：节点按钮点击 / Flipbook 拍屏 / HomeAssistant Webhook / 打开DW |
 | 粘贴为 Object Merge | 网络编辑器 `HouTools` 菜单 / `Ctrl+Shift+V` | 复制节点后，按"目标上下文 × 源类别"在鼠标位置粘贴引用节点；键位在 `HouTools → Paste Hotkey Settings` 修改 |
 | 视频转序列图 | `HouTools → Video to Sequence` | ffmpeg 提取视频为 JPG 序列（帧级进度，质量/起始帧/位数/前缀可调），可选自动设置相机 Background Image |
+| Hdr Library | `HouTools → Hdr Library` | HDR 环境贴图库浏览器：缩略图网格（后台生成）、子文件夹分类 + 收藏，选中灯光后双击即贴图 |
 
 ### Automation
 
@@ -72,6 +73,23 @@ Hotkey Manager 中修改，符号为 `h.pane.wsheet.houtools_paste_as_object_mer
 ffmpeg 说明：优先使用 Houdini 自带的 `$HFS/bin/hffmpeg`，**无需单独安装**；如需指定版本，
 把 `ffmpeg.exe` 放到项目根目录即可（已被 `.gitignore` 排除，不入库）。
 
+### Hdr Library
+
+HDR 环境贴图库浏览器（独立窗口，进任务栏）。库按"总目录 / 一级分类子文件夹"组织，
+第一级子文件夹即分类，左侧栏切换 全部 / ★ 收藏 / 各分类（侧栏右键可新建/打开分类文件夹，
+空分类也列出，嵌套子文件夹归入第一级）。
+
+- **库目录**：默认 `~/HouTools/hdri`，可用环境变量 `HDR_TOOL_LIB` 覆盖或窗口内"更换目录"；
+  目录、缩略图大小、置顶、收藏都存 `settings/hdr_library.json`（随机器各自保存）
+- **缩略图**：后台线程池调 Houdini 自带 `$HFS/bin/hoiiotool` 按需生成（无需安装），
+  缓存在库目录 `.thumb_cache/`；首次打开逐张生成（底部有进度条，可暂停/停止），
+  之后秒开；HDR 文件更新后旧缩略图自动失效重生成
+- **贴图**：选中场景里的灯光后**双击缩略图**，把 HDR 路径写入灯光环境贴图参数——
+  支持 OBJ `envlight`（Karma，自动关 skymap 程序化天空）、RenderMan dome 灯、
+  LOP `domelight` 全家族（Solaris）；其余灯型在状态栏给出友好提示
+- **右键缩略图**：收藏 / 复制路径 / 打开所在文件夹；收藏项带 ★ 前缀并计入侧栏计数
+- 窗口可置顶；大小滑条只决定列数，网格自动拉伸铺满面板宽度
+
 ## 新增一个工具
 
 1. 新建 `python3.13libs/houtools/tools/<tool_id>.py`，暴露 `run()` 入口；
@@ -96,6 +114,9 @@ _houtools_dispatcher.run("<tool_id>")
 
 - **窗口**：所有 PySide6 顶层窗口必须经 `houtools.ui.window_manager.open_window(tool_id, factory)`
   创建（单例 + 登记），否则 Reload 无法自动关闭旧窗口，会残留旧代码引用。
+- **任务栏常驻**：独立工具窗口（videoseq / Hdr Library）构造时调
+  `houtools.ui.taskbar.apply_appwindow_flags(self)`；不要用进程级 AppUserModelID
+  （会连 Houdini 主窗的任务栏分组一起改）。
 - **日志**：`from houtools.core.log import get_logger`，`get_logger("tools.xxx")`。
 - **设置**：`houtools.core.settings.JsonStore("xxx.json", defaults={...})`，存到项目 `settings/` 目录。
 - **线程**：QThread + Signal；回改 Houdini 的调用经 `hdefereval.executeDeferred` 派发主线程。
@@ -111,7 +132,7 @@ _houtools_dispatcher.run("<tool_id>")
 ```
 
 （按本机 Houdini 安装位置调整路径，须用 Houdini 自带的 Python 3.13。）
-无头验证菜单 XML、全包导入与 `reload_all()`。
+无头验证菜单 XML、全包导入、各窗口实例化（Automation / Hdr Library 等）与 `reload_all()`。
 
 ## 结构
 
@@ -127,9 +148,10 @@ HouTools/
 │   └── houtools/
 │       ├── dev/                   # 热加载框架（reloader / dispatcher，不参与重载）
 │       ├── core/                  # 路径常量 / 日志 / JSON 设置
-│       ├── ui/                    # window_manager 窗口登记
+│       ├── ui/                    # window_manager 窗口登记 + taskbar 任务栏常驻
 │       ├── automation/            # Automation（任务类型/持久化/执行引擎/窗口）
 │       ├── videoseq/              # 视频转序列图（ffmpeg 查找 + 窗口）
+│       ├── hdrlight/              # Hdr Library（HDR 库浏览 + 缩略图 + 灯光赋值）
 │       ├── icons/                 # UI 图标（SVG）
 │       └── tools/                 # 工具入口（<tool_id>.py 暴露 run()）
 ├── tests/smoke_test.py
