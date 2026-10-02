@@ -528,6 +528,15 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
 
     STYLE_SHEET = """
         QWidget { background-color: #18181b; color: #dddddd; }
+        /* QPushButton 须写在 QWidget 通用背景规则之后：同优先级时后者生效，
+           否则按钮背景被通用规则盖住，只剩文字读不出按钮形状 */
+        QPushButton {
+            background-color: #2d2d2d; border: 1px solid #3d3d3d;
+            border-radius: 4px; padding: 4px 14px;
+        }
+        QPushButton:hover { background-color: #3d3d3d; border-color: #0d6399; }
+        QPushButton:pressed { background-color: #0d6399; }
+        QPushButton:disabled { color: #666666; background-color: #232326; }
         QLabel#statusLabel { color: #888888; padding: 4px 8px; }
         QListWidget {
             background-color: #1D1D20; border: 1px solid #3d3d3d;
