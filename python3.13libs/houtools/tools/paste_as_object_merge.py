@@ -10,13 +10,14 @@
   规则 5    LOP → SOP   lopimport ``LOP_XXX``（loppath）
   规则 6    SOP → DOP   staticobject ``Object_XXX``（soppath）
   规则 7    LOP → LOP   fetch ``LOP_XXX``（loppath）
-  规则 8    SOP → ROP   fetch ``SOP_XXX``（source）
+  规则 8    SOP → ROP   fetch ``SOP_XXX``（source；源为 File Cache 时
+                        路径追加 ``/render``，指向其内部缓存 ROP）
   规则 9    SOP → COP   sopimport ``SOP_XXX``（soppath；仅新 COP，且需置 usesoppath=1）
   规则 10   OBJ → LOP   sopimport ``SOP_XXX``（soppath，可填 obj 路径）
 
 前置规则：粘贴出的节点颜色与源节点一致（规则 2 的 geo 容器同样着色）。
 未列出的"目标 × 源"组合一律跳过，未覆盖的上下文静默不动。每个引用节点
-横向偏移 n*3 排开；首个新节点带 clear_all_selected 选中。整次操作包在
+横向偏移 n*2 排开；首个新节点带 clear_all_selected 选中。整次操作包在
 ``hou.undos.group`` 里，占用单个 undo 槽。
 
 源节点解析分两层（稳定性增强）：
@@ -180,6 +181,7 @@ def _paste_reference_nodes(context, position, rules):
         _status("剪贴板中没有可粘贴的节点（先在网络编辑器 Ctrl+C 复制节点）")
         return
 
+    context_type = context.type().childTypeCategory()
     n = 0
     for item in src_items:
         src = hou.node(item)
@@ -192,7 +194,7 @@ def _paste_reference_nodes(context, position, rules):
         node = context.createNode(node_type, prefix + item.rsplit("/", 1)[-1])
         for extra_name, extra_value in extra_parms.items():
             node.parm(extra_name).set(extra_value)
-        node.parm(parm_name).set(str(item))
+        node.parm(parm_name).set(str(item) + _path_suffix(context_type, src))
         _place(node, position, n, src.color())
         node.setSelected(True, clear_all_selected=(n == 0))
         n += 1
@@ -280,10 +282,26 @@ def _objpath_for(merge, src_path: str) -> str:
     return src_path
 
 
+def _path_suffix(context_type, src) -> str:
+    """路径参数的追加后缀：SOP→ROP 的 fetch 且源为 File Cache 时返回 /render。
+
+    File Cache（filecache / filecache::2.0 等）的缓存由其内部 ``render``
+    ROP 触发，ROP 网络引用时须指向 ``<filecache>/render``。其余组合一律
+    原样引用节点本身。
+    """
+    import hou
+
+    if context_type != hou.ropNodeTypeCategory():
+        return ""
+    if src.type().name().split("::", 1)[0] != "filecache":
+        return ""
+    return "/render"
+
+
 def _place(node, position, n, color=None):
-    """放在鼠标位置并按序号横向偏移 n*3，继承源节点颜色。"""
+    """放在鼠标位置并按序号横向偏移 n*2，继承源节点颜色。"""
     node.setPosition(position)
-    node.move([n * 3.0, 0])
+    node.move([n * 2.0, 0])
     if color is not None:
         node.setColor(color)
 
