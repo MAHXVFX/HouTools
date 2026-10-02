@@ -1,6 +1,6 @@
 # HouTools (Houdini 22 / Python 3.13)
 
-从零构建的 Houdini 22 插件工具集，开发期支持**手动热加载**：改完代码无需重启 Houdini。
+Houdini 22 插件工具集，开发期支持**手动热加载**：改完代码无需重启 Houdini。
 
 > 仅支持 Windows：Automation 的窗口置顶用 Win32 API，部分工具的"打开所在文件夹"依赖 explorer。
 
