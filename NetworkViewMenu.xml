@@ -27,6 +27,14 @@ _houtools_dispatcher.run("video_to_sequence")
         ]]></scriptCode>
       </scriptItem>
 
+      <scriptItem id="houtools.networkview.hdr_library">
+        <label>Hdr Library</label>
+        <scriptCode><![CDATA[
+import houtools.dev.dispatcher as _houtools_dispatcher
+_houtools_dispatcher.run("hdr_library")
+        ]]></scriptCode>
+      </scriptItem>
+
       <!-- 粘贴为 Object Merge：id 必须是 pane.wsheet.* 前缀，
            热键符号才是 h.pane.wsheet.houtools_paste_as_object_merge（网络编辑器上下文），
            默认键位 Ctrl+Shift+V 由 python3.13libs/uiready.py 在会话启动时分配，
