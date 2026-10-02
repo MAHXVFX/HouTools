@@ -1,4 +1,4 @@
-# MAHX_Tools (Houdini 22 / Python 3.13)
+# HouTools (Houdini 22 / Python 3.13)
 
 从零构建的 Houdini 22 插件工具集，开发期支持**手动热加载**：改完代码无需重启 Houdini。
 
@@ -6,32 +6,32 @@
 
 ## 安装
 
-1. 把本文件夹整个拷贝到 `Documents/houdiniXX.X/MAHX_Tools`（与 `packages/` 同级）；
-2. 把项目根目录下的 `MAHX_Tools.json` 放入 `Documents/houdiniXX.X/packages/`；
-3. 启动 Houdini，顶部菜单即出现 **MAHX Tools**。
+1. 把本文件夹整个拷贝到 `Documents/houdiniXX.X/HouTools`（与 `packages/` 同级）；
+2. 把项目根目录下的 `HouTools.json` 放入 `Documents/houdiniXX.X/packages/`；
+3. 启动 Houdini，顶部菜单即出现 **HouTools**。
 
-若需将文件夹放置到其他位置，修改 `packages/MAHX_Tools.json` 里的路径即可。
+若需将文件夹放置到其他位置，修改 `packages/HouTools.json` 里的路径即可。
 
 ## 开发工作流
 
 | 改动 | 生效方式 |
 |------|----------|
-| `mahx/` 下任意工具/核心/UI 代码 | 菜单 `MAHX Tools → Reload Modules (Dev)`，立即生效 |
+| `houtools/` 下任意工具/核心/UI 代码 | 菜单 `HouTools → Reload Modules (Dev)`，立即生效 |
 | 已打开的工具窗口 | Reload 时自动关闭，重新打开即新代码 |
 | `python_panels/*.pypanel`（如新增） | 面板自带 Reload 按钮 |
 | `MainMenuCommon.xml` / `NetworkViewMenu.xml` 菜单结构 | **重启 Houdini**（H22 硬约束，无法运行时重载） |
-| `mahx/dev/` 热加载框架自身 | 重启 Houdini（刻意不参与重载） |
+| `houtools/dev/` 热加载框架自身 | 重启 Houdini（刻意不参与重载） |
 
-验收闭环：修改任意 `mahx/` 模块 → 保存 → 菜单点 Reload → 重新打开对应工具，改动即生效
+验收闭环：修改任意 `houtools/` 模块 → 保存 → 菜单点 Reload → 重新打开对应工具，改动即生效
 （已打开的工具窗口会在 Reload 时自动关闭）。
 
 ## 工具列表
 
 | 工具 | 菜单项 / 键位 | 说明 |
 |------|--------|------|
-| MA Automation | `MAHX Tools → MA Automation`（Python Panel） | 自动化批处理：节点按钮点击 / Flipbook 拍屏 / HomeAssistant Webhook / 打开DW |
-| 粘贴为 Object Merge | 网络编辑器 `MAHX` 菜单 / `Ctrl+Shift+V` | 复制节点后，按"目标上下文 × 源类别"在鼠标位置粘贴引用节点 |
-| 视频转序列图 | `MAHX Tools → Video to Sequence` | ffmpeg 提取视频为 JPG 序列（帧级进度，质量/起始帧/位数/前缀可调），可选自动设置相机 Background Image |
+| MA Automation | `HouTools → MA Automation`（Python Panel） | 自动化批处理：节点按钮点击 / Flipbook 拍屏 / HomeAssistant Webhook / 打开DW |
+| 粘贴为 Object Merge | 网络编辑器 `HouTools` 菜单 / `Ctrl+Shift+V` | 复制节点后，按"目标上下文 × 源类别"在鼠标位置粘贴引用节点 |
+| 视频转序列图 | `HouTools → Video to Sequence` | ffmpeg 提取视频为 JPG 序列（帧级进度，质量/起始帧/位数/前缀可调），可选自动设置相机 Background Image |
 
 ### MA Automation
 
@@ -45,7 +45,7 @@
 
 ### 粘贴为 Object Merge
 
-网络编辑器里 Ctrl+C 复制节点后，切到目标网络按 `Ctrl+Shift+V`（或点 `MAHX` 菜单），
+网络编辑器里 Ctrl+C 复制节点后，切到目标网络按 `Ctrl+Shift+V`（或点 `HouTools` 菜单），
 在鼠标位置创建引用节点，颜色随源节点。默认键位经 `python3.13libs/uiready.py`
 会话启动时分配，可在 Hotkey Manager 修改。
 
@@ -62,7 +62,7 @@
 | LOP → LOP | fetch `LOP_XXX` |
 | LOP → ROP | usdrender `XXX` |
 
-未列出的组合一律跳过；路径参数细则见 `mahx/tools/paste_as_object_merge.py` 模块 docstring。
+未列出的组合一律跳过；路径参数细则见 `houtools/tools/paste_as_object_merge.py` 模块 docstring。
 源路径取 OS 剪贴板文本（引用语义必须有"原件路径"），文本失效时退回内部剪贴板粘贴副本兜底
 （仅 SOP 网络）。整次操作占用单个 undo 槽。
 
@@ -71,17 +71,17 @@ ffmpeg 说明：优先使用 Houdini 自带的 `$HFS/bin/hffmpeg`，**无需单�
 
 ## 新增一个工具
 
-1. 新建 `python3.13libs/mahx/tools/<tool_id>.py`，暴露 `run()` 入口；
+1. 新建 `python3.13libs/houtools/tools/<tool_id>.py`，暴露 `run()` 入口；
 2. 在两份菜单 XML 里各加一个 `scriptItem`（`MainMenuCommon.xml` 顶部菜单 /
    `NetworkViewMenu.xml` 网络编辑器菜单，按需取舍，惯例两份都加），
    `scriptCode` 只写两行薄分发器：
 
 ```xml
-<scriptItem id="mahx.<tool_id>">
+<scriptItem id="houtools.<tool_id>">
   <label>Tool Label</label>
   <scriptCode><![CDATA[
-import mahx.dev.dispatcher as _mahx_dispatcher
-_mahx_dispatcher.run("<tool_id>")
+import houtools.dev.dispatcher as _houtools_dispatcher
+_houtools_dispatcher.run("<tool_id>")
   ]]></scriptCode>
 </scriptItem>
 ```
@@ -91,10 +91,10 @@ _mahx_dispatcher.run("<tool_id>")
 
 ## 约定
 
-- **窗口**：所有 PySide6 顶层窗口必须经 `mahx.ui.window_manager.open_window(tool_id, factory)`
+- **窗口**：所有 PySide6 顶层窗口必须经 `houtools.ui.window_manager.open_window(tool_id, factory)`
   创建（单例 + 登记），否则 Reload 无法自动关闭旧窗口，会残留旧代码引用。
-- **日志**：`from mahx.core.log import get_logger`，`get_logger("tools.xxx")`。
-- **设置**：`mahx.core.settings.JsonStore("xxx.json", defaults={...})`，存到项目 `settings/` 目录。
+- **日志**：`from houtools.core.log import get_logger`，`get_logger("tools.xxx")`。
+- **设置**：`houtools.core.settings.JsonStore("xxx.json", defaults={...})`，存到项目 `settings/` 目录。
 - **线程**：QThread + Signal；回改 Houdini 的调用经 `hdefereval.executeDeferred` 派发主线程。
 - **`import hou` 只放函数内**（或 try/except 包裹）：保证模块在 Houdini 外可导入，
   无头冒烟测试依赖这一点。
@@ -113,15 +113,15 @@ _mahx_dispatcher.run("<tool_id>")
 ## 结构
 
 ```
-MAHX_Tools/
+HouTools/
 ├── MainMenuCommon.xml             # 顶部菜单（Houdini 规定文件名）
-├── NetworkViewMenu.xml            # 网络编辑器面板菜单栏（MAHX 顶层菜单，注入机制同上）
-├── MAHX_Tools.json                # 包清单副本（生效的一份在 packages/ 下）
+├── NetworkViewMenu.xml            # 网络编辑器面板菜单栏（HouTools 顶层菜单，注入机制同上）
+├── HouTools.json                # 包清单副本（生效的一份在 packages/ 下）
 ├── MA_Automation_Config.json      # MA Automation 的 DW 软件路径等配置（随项目发布）
 ├── python_panels/MA_Automation.pypanel  # MA Automation 的 Python Panel 界面
 ├── python3.13libs/
 │   ├── uiready.py                 # UI 启动钩子：装默认键位（会话启动时执行）
-│   └── mahx/
+│   └── houtools/
 │       ├── dev/                   # 热加载框架（reloader / dispatcher，不参与重载）
 │       ├── core/                  # 路径常量 / 日志 / JSON 设置
 │       ├── ui/                    # window_manager 窗口登记

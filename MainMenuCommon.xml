@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mainMenu>
   <menuBar>
-    <subMenu id="mahx_tools_menu">
+    <subMenu id="houtools_tools_menu">
       <!-- 挂在 Help 菜单之前 -->
       <insertBefore>help_menu</insertBefore>
-      <label>MAHX Tools</label>
+      <label>HouTools</label>
 
-      <!-- 开发期热加载按钮：重载所有 mahx 模块 -->
-      <scriptItem id="mahx.dev.reload">
+      <!-- 开发期热加载按钮：重载所有 houtools 模块 -->
+      <scriptItem id="houtools.dev.reload">
         <label>Reload Modules (Dev)</label>
         <scriptCode><![CDATA[
-import mahx.dev.reloader as _mahx_reloader
-_mahx_reloader.reload_all()
+import houtools.dev.reloader as _houtools_reloader
+_houtools_reloader.reload_all()
         ]]></scriptCode>
       </scriptItem>
 
@@ -19,19 +19,19 @@ _mahx_reloader.reload_all()
 
       <!-- 工具入口：scriptCode 只写两行薄分发器，
            工具逻辑改动通过 Reload 按钮热加载，无需重启 -->
-      <scriptItem id="mahx.ma_automation">
+      <scriptItem id="houtools.ma_automation">
         <label>MA Automation</label>
         <scriptCode><![CDATA[
-import mahx.dev.dispatcher as _mahx_dispatcher
-_mahx_dispatcher.run("ma_automation")
+import houtools.dev.dispatcher as _houtools_dispatcher
+_houtools_dispatcher.run("ma_automation")
         ]]></scriptCode>
       </scriptItem>
 
-      <scriptItem id="mahx.video_to_sequence">
+      <scriptItem id="houtools.video_to_sequence">
         <label>Video to Sequence</label>
         <scriptCode><![CDATA[
-import mahx.dev.dispatcher as _mahx_dispatcher
-_mahx_dispatcher.run("video_to_sequence")
+import houtools.dev.dispatcher as _houtools_dispatcher
+_houtools_dispatcher.run("video_to_sequence")
         ]]></scriptCode>
       </scriptItem>
     </subMenu>

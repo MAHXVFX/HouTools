@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <pythonPanelDocument>
   <!-- MA Automation 的 Python Panel 界面。
-       界面逻辑全部在 mahx.automation.window（热加载可迭代），
+       界面逻辑全部在 houtools.automation.window（热加载可迭代），
        这里只保留一个最小 onCreateInterface 入口。
-       打开方式：菜单 MAHX Tools -> MA Automation（在浮动面板中打开），
+       打开方式：菜单 HouTools -> MA Automation（在浮动面板中打开），
        或手动添加 Python Panel 标签后在下拉里选择本界面。 -->
   <interface name="MA_Automation" label="MA Automation">
     <script><![CDATA[def onCreateInterface():
-    import mahx.automation.window as _window
+    import houtools.automation.window as _window
     return _window.create_panel_widget()
 
 ]]></script>

@@ -1,7 +1,7 @@
-# MAHX_Tools UI 启动钩子
+# HouTools UI 启动钩子
 # ======================
 # Houdini 对路径上每个 pythonX.Ylibs/uiready.py 都会执行（UI 就绪后，
-# 仅交互会话）。这里安装 MAHX 菜单项的默认键位 —— 必须等菜单 XML 注册
+# 仅交互会话）。这里安装 HouTools 菜单项的默认键位 —— 必须等菜单 XML 注册
 # 完热键符号，所以放 uiready 而不是 ready.py / 123.py。
 #
 # 注意：HFS 自带同名钩子（窗口预热等）。若 Houdini 的加载方式是"导入
@@ -13,16 +13,16 @@ import sys
 from pathlib import Path
 
 try:
-    import mahx.core.hotkeys
-    mahx.core.hotkeys.install_defaults()
+    import houtools.core.hotkeys
+    houtools.core.hotkeys.install_defaults()
 except Exception as e:
-    print(f"[MAHX] uiready 安装默认键位失败: {e}")
+    print(f"[HouTools] uiready 安装默认键位失败: {e}")
 
 
 def _run_downstream_uiready():
     """执行路径上下一个 python3.13libs/uiready.py（通常是 $HH 官方那份）。
 
-    sys.path 上放的是各个 python3.13libs 目录本身（mahx 能被导入即证），
+    sys.path 上放的是各个 python3.13libs 目录本身（houtools 能被导入即证），
     官方文件即 ``<entry>/uiready.py``；同时兼容 entry 为包根的挂载方式。
     """
     try:
@@ -39,7 +39,7 @@ def _run_downstream_uiready():
                 if candidate.is_file() and candidate.resolve() != ours:
                     code = compile(candidate.read_text(encoding="utf-8"),
                                    str(candidate), "exec")
-                    exec(code, {"__name__": "_mahx_downstream_uiready",
+                    exec(code, {"__name__": "_houtools_downstream_uiready",
                                 "__file__": str(candidate)})
                     return
             except OSError:

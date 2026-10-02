@@ -47,7 +47,7 @@ def main():
 
     # 粘贴为 Object Merge：XML 里的 item id 与热键符号约定必须一一对应
     nv_xml = (ROOT / "NetworkViewMenu.xml").read_text(encoding="utf-8")
-    assert 'id="pane.wsheet.mahx_paste_as_object_merge"' in nv_xml
+    assert 'id="pane.wsheet.houtools_paste_as_object_merge"' in nv_xml
     compile((ROOT / "python3.13libs" / "uiready.py").read_text(encoding="utf-8"),
             "uiready.py", "exec")
     print("paste_as_object_merge wiring: consistent")
@@ -55,20 +55,20 @@ def main():
     ET.parse(ROOT / "python_panels" / "MA_Automation.pypanel")
     print("MA_Automation.pypanel: well-formed")
 
-    import mahx
-    import mahx.core.constants
-    import mahx.core.settings
-    import mahx.core.hotkeys
-    import mahx.dev.dispatcher  # noqa: F401
-    import mahx.tools.paste_as_object_merge
-    import mahx.automation.window  # noqa: F401
-    import mahx.videoseq.window  # noqa: F401
-    import mahx.videoseq.ffmpeg
-    from mahx.automation import task_types
-    from mahx.dev import reloader
+    import houtools
+    import houtools.core.constants
+    import houtools.core.settings
+    import houtools.core.hotkeys
+    import houtools.dev.dispatcher  # noqa: F401
+    import houtools.tools.paste_as_object_merge
+    import houtools.automation.window  # noqa: F401
+    import houtools.videoseq.window  # noqa: F401
+    import houtools.videoseq.ffmpeg
+    from houtools.automation import task_types
+    from houtools.dev import reloader
 
-    print("imports OK, mahx", mahx.__version__)
-    assert mahx.core.constants.PROJECT_ROOT == ROOT, PROJECT_ROOT_MESSAGE
+    print("imports OK, houtools", houtools.__version__)
+    assert houtools.core.constants.PROJECT_ROOT == ROOT, PROJECT_ROOT_MESSAGE
 
     # TaskItem 序列化 / 反序列化闭环
     item = task_types.TaskItem(
@@ -83,7 +83,7 @@ def main():
     print("task_types round-trip OK")
 
     # 粘贴为 Object Merge：路径/表达式解析
-    from mahx.tools import paste_as_object_merge as pam
+    from houtools.tools import paste_as_object_merge as pam
     assert pam._HOU_NODE_RE.match('hou.node("/obj/grid1")').group(1) \
         == "/obj/grid1"
     assert pam._HOU_NODE_RE.match("hou.parm('/obj/x')") is None
@@ -96,7 +96,7 @@ def main():
     assert dw_item.to_dict() == {"type": "OPEN_DW", "params": {}, "enabled": True}
 
     from unittest.mock import patch
-    from mahx.automation import data_manager as dm
+    from houtools.automation import data_manager as dm
 
     with tempfile.TemporaryDirectory() as tmp:
         cfg = Path(tmp) / "MA_Automation_Config.json"
@@ -144,14 +144,14 @@ def main():
     print("OPEN_DW task + app config OK")
 
     # ffmpeg 查找函数可执行（无头环境找不到也不算失败）
-    print("find_ffmpeg ->", mahx.videoseq.ffmpeg.find_ffmpeg())
+    print("find_ffmpeg ->", houtools.videoseq.ffmpeg.find_ffmpeg())
 
     # 真实实例化 MA Automation 界面（捕获 __init__ 结构损伤）
     from PySide6.QtWidgets import (
         QApplication, QComboBox, QLineEdit, QPushButton, QStackedWidget)
 
     app = QApplication.instance() or QApplication([])
-    from mahx.automation.window import AutomationWindow
+    from houtools.automation.window import AutomationWindow
 
     win = AutomationWindow()
     for name in ("startBtn", "autoFillBtn", "clearBtn", "settingsBtn"):
@@ -182,7 +182,7 @@ def main():
     win.hide()
 
     # 单实例注册表:create_panel_widget 登记弱引用,失效引用被清理
-    from mahx.automation import window as aw
+    from houtools.automation import window as aw
     w2 = aw.create_panel_widget()
     assert any(r() is w2 for r in aw._PANEL_REFS)
     assert w2 in aw._iter_live_panels()
@@ -197,7 +197,7 @@ def main():
     assert "FAILED" not in summary, summary
 
     # Settings round-trip against the real settings/ directory.
-    store = mahx.core.settings.JsonStore("_smoke_test.json", defaults={"n": 1})
+    store = houtools.core.settings.JsonStore("_smoke_test.json", defaults={"n": 1})
     store.set("n", 2, save=True)
     assert store.get("n") == 2
     store.path.unlink(missing_ok=True)
