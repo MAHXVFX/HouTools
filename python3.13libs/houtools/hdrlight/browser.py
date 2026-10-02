@@ -737,7 +737,9 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         # 选中灯光跟踪：注册 Houdini 原生选中变化推送
         # （hou.ui.addSelectionCallback），无常驻轮询；无 GUI 环境
         # （无头冒烟测试）没有 hou.ui，跳过注册、label 保持初始文案
-        if self._register_selection_callback():
+        self._selection_cb_registered = False
+        self._register_selection_callback()
+        if self._selection_cb_registered:
             self._on_selection_changed()  # 回调只在变化时触发，先初始化一次
 
         self._update_dir_label()
@@ -900,6 +902,10 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        # 关窗时注销了选中推送（隐藏期零开销）；重开是同一实例、__init__
+        # 不再执行，在此重注册，并刷一次显示（隐藏期间选择可能已变）
+        self._register_selection_callback()
+        self._on_selection_changed()
         self._fit_grid()
 
     def _fit_grid(self):
@@ -937,29 +943,33 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
 
     # ---------------- 目标灯光跟踪 ----------------
 
-    def _register_selection_callback(self) -> bool:
-        """注册 Houdini 全局选中变化推送，返回是否注册成功。
+    def _register_selection_callback(self):
+        """注册 Houdini 全局选中变化推送（幂等，可反复调用）。
 
         无 GUI 环境（无头冒烟测试）没有 hou.ui，注册失败属预期，
         此时左上角 label 不跟踪选择。
         """
+        if self._selection_cb_registered:
+            return
         try:
             import hou
             hou.ui.addSelectionCallback(self._on_selection_changed)
-            return True
+            self._selection_cb_registered = True
         except Exception as exc:
             log.debug("selection push unavailable: %s", exc)
-            return False
 
     def _unregister_selection_callback(self):
         """注销选中推送回调。HOM 注册表持有回调强引用，不注销会阻止
         窗口回收，且 Reload 后回调会打进已销毁的控件。"""
+        if not self._selection_cb_registered:
+            return
         try:
             import hou
             hou.ui.removeSelectionCallback(self._on_selection_changed)
         except Exception as exc:
             # 未注册（无头环境）或已注销（OperationFailed）：预期内跳过
             log.debug("selection push removal skipped: %s", exc)
+        self._selection_cb_registered = False
 
     def _on_selection_changed(self, selection=None):
         """全局选中变化推送回调（也可手动调用做初始刷新）。
