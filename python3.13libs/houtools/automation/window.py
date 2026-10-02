@@ -717,8 +717,8 @@ class AutomationWindow(QWidget):
         self._load_settings()
         self._install_app_event_filter()
 
-        # 打开DW 的应用级配置(项目根 Automation_Config.json)——
-        # 文件随项目发布,意外缺失时在此按默认值兜底补建
+        # 打开DW 的应用级配置(settings/Automation_Config.json)——
+        # gitignored 运行时数据,意外缺失时在此按默认值兜底补建
         AutomationDataManager.ensure_dw_config()
 
     def _install_app_event_filter(self):

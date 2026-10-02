@@ -30,7 +30,7 @@ from .task_types import (
     OpenDWParams,
 )
 
-from houtools.core.constants import PROJECT_ROOT
+from houtools.core.constants import SETTINGS_DIR
 from houtools.core.log import get_logger
 logger = get_logger("automation.data")
 
@@ -86,20 +86,22 @@ class AutomationDataManager:
 
     @classmethod
     def get_app_config_path(cls) -> str:
-        """返回应用级配置文件路径: ``{项目根}/Automation_Config.json``。
+        """返回应用级配置文件路径: ``{项目根}/settings/Automation_Config.json``。
 
-        随插件项目一起发布、版本化管理,不随 $HIP 走 —— DW 软件路径
-        虽是机器相关的,但插件安装目录本来就是每台机器一份,直接改
-        安装目录里的这个文件即可。
+        存放在项目 ``settings/`` 运行时用户数据目录（gitignored，逐机
+        生成），不随 $HIP 走 —— DW 软件路径本是机器相关的，每台机器
+        一份插件安装目录各存各的。意外缺失时由 ``ensure_dw_config``
+        按默认值兜底补建。
         """
-        return str(PROJECT_ROOT / "Automation_Config.json")
+        return str(SETTINGS_DIR / "Automation_Config.json")
 
     @classmethod
     def ensure_dw_config(cls) -> dict:
         """确保应用级配置文件可用,返回其内容 dict。
 
-        配置文件随项目发布;意外缺失(被删除等)或缺 ``dw_exe_path``
-        字段时,以默认路径补建。面板打开时调用,兜底保证文件始终可编辑。
+        配置文件存 ``settings/``（gitignored，逐机生成）;意外缺失(被删
+        除等)或缺 ``dw_exe_path`` 字段时,以默认路径补建。面板打开时
+        调用,兜底保证文件始终可编辑。
         """
         path = cls.get_app_config_path()
         data: dict = {}

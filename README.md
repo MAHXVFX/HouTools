@@ -40,7 +40,7 @@ Houdini 22 插件工具集，开发期支持**手动热加载**：改完代码�
 
 - QThread 后台执行；配置 JSON 存 `$HIP/HouTools_cfg/Automation_json/`，执行日志存
   `$HIP/HouTools_cfg/Automation_logs/`
-- DW 软件路径在项目根目录 `Automation_Config.json` 中配置（随项目发布，可直接编辑）
+- DW 软件路径在 `settings/Automation_Config.json` 中配置（gitignored 运行时数据，缺失时打开面板自动按默认值补建，可直接编辑）
 - 节点可直接拖入参数路径框（原生投递、无视窗泄漏）
 - `Reload Modules (Dev)` 不会自动重建已打开的面板（避免丢弃未 Start 保存的编辑），
   需点面板工具条自带的刷新按钮重建界面
@@ -142,7 +142,6 @@ HouTools/
 ├── MainMenuCommon.xml             # 顶部菜单（Houdini 规定文件名）
 ├── NetworkViewMenu.xml            # 网络编辑器面板菜单栏（HouTools 顶层菜单，注入机制同上）
 ├── HouTools.json                # 包清单副本（生效的一份在 packages/ 下）
-├── Automation_Config.json      # Automation 的 DW 软件路径等配置（随项目发布）
 ├── python_panels/Automation.pypanel  # Automation 的 Python Panel 界面
 ├── python3.13libs/
 │   ├── uiready.py                 # UI 启动钩子：装默认键位（会话启动时执行）
@@ -156,5 +155,6 @@ HouTools/
 │       ├── icons/                 # UI 图标（SVG）
 │       └── tools/                 # 工具入口（<tool_id>.py 暴露 run()）
 ├── tests/smoke_test.py
-└── settings/                      # 运行时生成
+└── settings/                      # 运行时生成（gitignored）
+    └── Automation_Config.json     # Automation 的 DW 软件路径等配置（缺失时自动补建）
 ```

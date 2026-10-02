@@ -150,9 +150,12 @@ def main():
     assert flipbook.save_to_disk is False
     print("deserialize_params Flipbook OK")
 
-    # 随项目发布的配置文件存在且含有效 dw_exe_path 字段
+    # settings/ 下的应用级配置可读且含有效 dw_exe_path 字段
+    # (gitignored 运行时数据;缺失时 ensure 按默认值兜底补建)
+    dm.AutomationDataManager.ensure_dw_config()
     shipped = json.loads(
-        (ROOT / "Automation_Config.json").read_text(encoding="utf-8"))
+        Path(dm.AutomationDataManager.get_app_config_path()).read_text(
+            encoding="utf-8"))
     assert isinstance(shipped.get("dw_exe_path"), str)
     assert shipped["dw_exe_path"].strip()
     print("OPEN_DW task + app config OK")

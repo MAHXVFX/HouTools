@@ -241,7 +241,7 @@ class ExecutionEngine(QThread):
     def _execute_open_dw(self, params: OpenDWParams):
         """执行打开DW：启动 Deadline Worker。
 
-        软件路径从应用配置文件 ``{项目根}/Automation_Config.json``
+        软件路径从应用配置文件 ``{项目根}/settings/Automation_Config.json``
         的 ``dw_exe_path`` 字段读取（用户可手动编辑），任务参数为空。
         ``subprocess.Popen`` 非阻塞启动，无需派发主线程。
 
@@ -252,7 +252,7 @@ class ExecutionEngine(QThread):
         exe_path = self._dw_exe_path
         if not exe_path:
             raise ValueError(
-                "DW 软件路径为空，请在 Automation_Config.json 中配置 dw_exe_path"
+                "DW 软件路径为空，请在 settings/Automation_Config.json 中配置 dw_exe_path"
             )
         if not os.path.isfile(exe_path):
             raise ValueError(f"DW 软件路径不存在: {exe_path}")
