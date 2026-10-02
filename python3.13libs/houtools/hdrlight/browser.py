@@ -31,10 +31,12 @@
   ocio/houdini-config*.ocio）。
 """
 
+import concurrent.futures
 import glob
 import os
 import re
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -372,33 +374,79 @@ def assign_hdr(hdr_path, node=None):
 # --------------------------------------------------------------------------
 
 class ThumbnailThread(QtCore.QThread):
-    """后台逐个生成缺失的缩略图。
+    """后台线程池批量生成缺失缩略图。
 
-    不 parent 到窗口：Reload/关窗时窗口可能被 deleteLater，QObject 带
-    运行中的 QThread 一起销毁会报 "QThread: Destroyed while thread is
-    still running"（Windows 上有崩溃风险）。改为窗口持 Python 引用，
-    线程结束自删；中断请求在每张图生成前后及子进程等待中响应。
+    - 不 parent 到窗口：Reload/关窗时窗口可能被 deleteLater，QObject 带
+      运行中的 QThread 一起销毁会报 "QThread: Destroyed while thread is
+      still running"（Windows 上有崩溃风险）。改为窗口持 Python 引用，
+      线程结束自删；中断请求在每张开工前后及子进程等待中响应。
+    - 并发数按机器性能取中低档（核数/4，夹在 2..4）：每张 hoiiotool
+      是独立子进程，几张并行能吃掉空闲核，又给 Houdini 留足余量。
+    - progress(done, total) 每完成一张发一次；pause()/resume() 让每张
+      开工前挂起等待（进行中的一张会跑完），停止用 requestInterruption。
     """
 
     thumbReady = QtCore.Signal(str, str)   # hdr_path, thumb_path
     finishedCount = QtCore.Signal(int)     # 成功数量
+    progress = QtCore.Signal(int, int)     # 已完成数, 总数
 
     def __init__(self, lib_dir, hdr_paths):
         super().__init__()
         self.lib_dir = lib_dir
         self.hdr_paths = hdr_paths
+        cores = os.cpu_count() or 4
+        self.workers = max(2, min(4, cores // 4))
+        self._mutex = QtCore.QMutex()
+        self._pause_cond = QtCore.QWaitCondition()
+        self._paused = False
+
+    def pause(self):
+        self._mutex.lock()
+        self._paused = True
+        self._mutex.unlock()
+
+    def resume(self):
+        self._mutex.lock()
+        self._paused = False
+        self._mutex.unlock()
+        self._pause_cond.wakeAll()
+
+    def is_paused(self):
+        return self._paused
+
+    def _wait_if_paused(self):
+        """在暂停标志与中断请求之间等待；唤醒条件：resume 或停止。"""
+        self._mutex.lock()
+        try:
+            while self._paused and not self.isInterruptionRequested():
+                self._pause_cond.wait(self._mutex)
+        finally:
+            self._mutex.unlock()
 
     def run(self):
-        ok = 0
+        total = len(self.hdr_paths)
+        counter = {"done": 0, "ok": 0}
+        lock = threading.Lock()
         interrupt = self.isInterruptionRequested
-        for hdr_path in self.hdr_paths:
-            if interrupt():
-                break
-            out = make_thumbnail(self.lib_dir, hdr_path, interrupt=interrupt)
+
+        def work(path):
+            out = None
+            if not interrupt():
+                self._wait_if_paused()
+                if not interrupt():
+                    out = make_thumbnail(self.lib_dir, path,
+                                         interrupt=interrupt)
+            with lock:
+                counter["done"] += 1
+                counter["ok"] += 1 if out else 0
             if out:
-                ok += 1
-                self.thumbReady.emit(hdr_path, out)
-        self.finishedCount.emit(ok)
+                self.thumbReady.emit(path, out)
+            self.progress.emit(counter["done"], total)
+
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=self.workers) as pool:
+            list(pool.map(work, self.hdr_paths))
+        self.finishedCount.emit(counter["ok"])
 
 
 # --------------------------------------------------------------------------
@@ -412,7 +460,6 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
     FIT_DELAY_MS = 150     # 面板尺寸变化后重排网格的防抖
     SIDEBAR_MIN = 140
     SIDEBAR_MAX = 300
-    SB_RESERVE = 20        # 恒定预留的纵向滚动条宽度（含边距）
 
     STYLE_SHEET = """
         QWidget { background-color: #18181b; color: #dddddd; }
@@ -445,6 +492,9 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self.resize(1080, 620)
         self.setStyleSheet(self.STYLE_SHEET)
         apply_appwindow_flags(self)  # 任务栏常驻（失败静默）
+        # 网格自适应的滚动条预留量：按系统滚动条宽度度量，随 DPI 缩放
+        self._sb_reserve = QtWidgets.QApplication.style().pixelMetric(
+            QtWidgets.QStyle.PM_ScrollBarExtent) + 6
 
         # ---- 顶部栏 ----
         self.target_label = QtWidgets.QLabel("目标灯光: (未选中)")
@@ -508,14 +558,34 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self.status = QtWidgets.QLabel("选中场景里的灯光节点后，双击缩略图即可链接贴图")
         self.status.setObjectName("statusLabel")
 
+        # ---- 缩略图生成进度（仅生成中显示）----
+        self.progress_label = QtWidgets.QLabel()
+        self.progress_bar = QtWidgets.QProgressBar()
+        self.pause_btn = QtWidgets.QPushButton("暂停")
+        self.stop_btn = QtWidgets.QPushButton("停止")
+        self.pause_btn.setToolTip("暂停后台缩略图生成；进行中的一张会跑完")
+        self.stop_btn.setToolTip("停止后台缩略图生成；已生成的保留，下次刷新只补缺的")
+        prow = QtWidgets.QHBoxLayout()
+        prow.setContentsMargins(0, 0, 0, 0)
+        prow.addWidget(self.progress_label)
+        prow.addWidget(self.progress_bar, 1)
+        prow.addWidget(self.pause_btn)
+        prow.addWidget(self.stop_btn)
+        self.progress_widget = QtWidgets.QWidget()
+        self.progress_widget.setLayout(prow)
+        self.progress_widget.setVisible(False)
+
         lay = QtWidgets.QVBoxLayout(self)
         lay.addLayout(top)
         lay.addWidget(self.splitter, 1)
+        lay.addWidget(self.progress_widget)
         lay.addWidget(self.status)
 
         self.dir_btn.clicked.connect(self._choose_dir)
         self.refresh_btn.clicked.connect(self.reload)
         self.pin_chk.toggled.connect(self._toggle_pin)
+        self.pause_btn.clicked.connect(self._on_pause_resume)
+        self.stop_btn.clicked.connect(self._on_stop)
 
         # 缩略图基准大小变化做 150ms 防抖，拖动滑条时不反复重排
         self._size_timer = QtCore.QTimer(self)
@@ -699,15 +769,18 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
     def _fit_grid(self):
         """网格列宽拉伸到正好铺满面板宽度（必须保持幂等）。
 
-        滑条值只决定列数（列数 = 可视宽 / 基准单元宽），单元格宽 =
-        可视宽 / 列数，缩略图随之拉伸——窗口拉大不再留大片空白。
-        幂等两点缺一不可，否则滚动条出现→视口变窄→列数翻转→内容
-        高度变化→滚动条消失→…… 网格无限重排，表现为缩略图一直闪：
-        1) 滚动条宽度恒定预留（不随其显隐改变计算输入）；
+        滑条值只决定列数（列数 = 可用宽 / 基准单元宽），单元格宽 =
+        可用宽 / 列数，缩略图随之拉伸——窗口拉大不再留大片空白。
+
+        幂等的关键是计算输入不能随滚动条显隐变化：滚动条一出现视口
+        就窄 17px，若用视口宽计算，两个状态各算出不同网格尺寸，互相
+        触发切换 → 滚动条再翻转 → 无限重排（缩略图一直闪）。所以：
+        1) 用列表控件自身宽度（含滚动条区域，滚动条显隐不改变它）减
+           去按系统度量动态预留的滚动条宽度；
         2) 算出的尺寸与当前一致时直接跳过，不触发无谓重排。
         """
         base = self.size_slider.value()
-        vw = self.list.viewport().width() - self.SB_RESERVE
+        vw = self.list.width() - self._sb_reserve
         if vw < 120:
             return
         cols = max(1, int(vw // (base + GRID_PADDING_X)))
@@ -835,6 +908,7 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         if thread is not None:
             try:
                 if thread.isRunning():
+                    thread.resume()  # 若在暂停中，先唤醒使其能响应中断
                     thread.requestInterruption()
                     thread.wait(1000)
             except RuntimeError:
@@ -842,13 +916,50 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self._thread = ThumbnailThread(self.lib_dir, hdr_paths)
         self._thread.thumbReady.connect(self._on_thumb_ready)
         self._thread.finishedCount.connect(self._on_thumbs_done)
+        self._thread.progress.connect(self._on_thumb_progress)
         self._thread.finished.connect(self._on_worker_finished)
         self._thread.finished.connect(self._thread.deleteLater)
+        self.progress_bar.setRange(0, max(1, len(hdr_paths)))
+        self.progress_bar.setValue(0)
+        self.progress_label.setText("生成缩略图 0/{}（{} 线程）".format(
+            len(hdr_paths), self._thread.workers))
+        self.pause_btn.setText("暂停")
+        self.progress_widget.setVisible(True)
         self._thread.start()
 
     def _on_worker_finished(self):
         if self._thread is self.sender():
             self._thread = None
+        self.progress_widget.setVisible(False)
+        self.pause_btn.setText("暂停")
+
+    def _on_thumb_progress(self, done, total):
+        self.progress_bar.setValue(done)
+        self.progress_label.setText("生成缩略图 {}/{}".format(done, total))
+
+    def _on_pause_resume(self):
+        thread = self._thread
+        if thread is None:
+            return
+        try:
+            if thread.is_paused():
+                thread.resume()
+                self.pause_btn.setText("暂停")
+            else:
+                thread.pause()
+                self.pause_btn.setText("继续")
+        except RuntimeError:
+            pass
+
+    def _on_stop(self):
+        thread = self._thread
+        if thread is None:
+            return
+        try:
+            thread.resume()  # 暂停中的线程必须先唤醒才能响应中断
+            thread.requestInterruption()
+        except RuntimeError:
+            pass
 
     def _on_thumb_ready(self, hdr_path, thumb_path):
         for i in range(self.list.count()):
@@ -875,6 +986,7 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         if thread is not None:
             try:
                 if thread.isRunning():
+                    thread.resume()  # 暂停中的线程必须先唤醒才能响应中断
                     thread.requestInterruption()
                     thread.wait(2000)
             except RuntimeError:

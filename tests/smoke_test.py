@@ -316,11 +316,22 @@ def main():
             # 全部视图恢复
             win._select_category(hdr_browser.KEY_ALL)
             assert win._visible_count() == 6
+            # 生成中显示进度行;线程池并发按核数取中低档(2..4)
+            assert win.progress_widget.isVisibleTo(win), \
+                "generating but progress row hidden"
+            assert 2 <= win._thread.workers <= 4, win._thread.workers
+            # 暂停/继续:暂停后标志位可见,经按钮处理器恢复
+            win._thread.pause()
+            assert win._thread.is_paused()
+            win._on_pause_resume()
+            assert not win._thread.is_paused()
+            assert win.pause_btn.text() == "暂停"
             # 后台线程不得 parent 到窗口（PR 反馈:Reload 销毁窗口会连带
             # 销毁运行中的线程导致崩溃）；6 个缺缩略图会启动线程
             assert win._thread is None or win._thread.parent() is None
+            # 停止处理器:唤醒(防暂停中卡死)+中断,线程应快速退出
+            win._on_stop()
             if win._thread is not None and win._thread.isRunning():
-                win._thread.requestInterruption()
                 assert win._thread.wait(5000), "thumbnail thread not stopping"
             win.deleteLater()
         fav_store.path.unlink(missing_ok=True)
