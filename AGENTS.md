@@ -46,7 +46,7 @@ root/
 | 界面接入（Python Panel） | `houtools/automation/window.py` | `create_panel_widget` / `open_floating_panel`（`hou.pypanel.installFile` + `createFloatingPanel`）；节点拖放为 Houdini 原生投递（MIME text 是逗号分隔的节点路径） |
 | ffmpeg 查找 | `houtools/videoseq/ffmpeg.py` | 优先级：项目根 `ffmpeg.exe` → `$HFS/bin/hffmpeg` → `$HFS/bin/ffmpeg` → PATH（hffmpeg 优先） |
 | 视频拖放/路径框 | `houtools/videoseq/window.py` | 整窗 + `_VideoSourceGroup` 双层接收拖放；`_load_video` 是浏览/拖放/手输共用入口 |
-| HDR 库浏览器 | `houtools/hdrlight/browser.py` + `tools/hdr_library.py` | 菜单 Hdr Library；扫描 `.hdr/.hdri/.exr`，双击缩略图把路径赋给选中灯光（`env_map` 等参数按序匹配，自动关 `skymap_enable`）；缩略图后台 QThread 调 `$HFS/bin/hoiiotool` 生成（缓存 256px 存库目录 `.thumb_cache/`；坑：`--resize` 必须写全 WxH，`--colorconvert` 需 OCIO 配置、缺失时自动注入 `$HFS/packages/ocio/`）；库目录存 `settings/hdr_library.json`（默认 `~/HouTools/hdri`，可用环境变量 `HDR_TOOL_LIB` 覆盖） |
+| HDR 库浏览器 | `houtools/hdrlight/browser.py` + `tools/hdr_library.py` | 菜单 Hdr Library；递归扫描 `.hdr/.hdri/.exr`，第一级子文件夹即分类（左侧侧栏切换 全部/收藏/各分类，侧栏右键可新建/打开分类文件夹，空分类也列出）；右键收藏 HDR（存 `settings/hdr_library.json` 的 `favorites`，normcase 路径），侧栏"★ 收藏"过滤；双击缩略图把路径赋给选中灯光（`env_map` 等参数按序匹配，自动关 `skymap_enable`）；网格列宽自适应铺满面板宽度（滑条只定列数，视口 resize 防抖重算，图标上限 400px）；缩略图后台 QThread 调 `$HFS/bin/hoiiotool` 生成（缓存 256px 存库目录 `.thumb_cache/`，按相对路径命名、目录用 `__` 连接避免子文件夹同名冲突；坑：`--resize` 必须写全 WxH，`--colorconvert` 需 OCIO 配置、缺失时自动注入 `$HFS/packages/ocio/`）；库目录存 `settings/hdr_library.json`（默认 `~/HouTools/hdri`，可用环境变量 `HDR_TOOL_LIB` 覆盖） |
 
 ## Conventions
 

@@ -4,11 +4,19 @@
 双击缩略图，把 HDR 路径写入该灯光的环境贴图参数（env_map）。
 
 设计要点：
+- 库按"总目录 / 一级分类子文件夹"组织（如 hdr白天、hdr黑夜、室内、户外），
+  递归扫描；第一级子文件夹即分类，左侧侧栏切换（全部 / 收藏 / 各分类），
+  分类文件夹可在侧栏右键新建/打开，后续下载的 HDR 放进对应分类即可。
 - 缩略图按需生成：打开面板/刷新时比对缓存目录，仅缺失的由后台
   QThread 调用 Houdini 自带 hoiiotool 生成（linear→sRGB + 缩放），
   生成完线程即退出，无常驻开销；无主缓存（HDR 已删）在刷新时清理。
-- 缓存固定 256px 宽（清晰度），显示大小由滑条控制（64-256px）。
-- 用户设置（库目录/显示大小/置顶）经 houtools.core.settings.JsonStore
+- 缓存固定 256px 宽（清晰度），以相对路径命名（目录用 __ 连接），
+  子文件夹同名文件不冲突；根目录文件命名与旧版一致，旧缓存直接复用。
+- 显示大小：滑条值决定列数，网格列宽自动拉伸铺满面板宽度（防抖重算），
+  窗口缩放不留大片空白；图标上限 400px（缓存 256px，过度放大会模糊）。
+- 收藏：右键收藏/取消收藏，侧栏"★ 收藏"一键过滤；收藏以 normcase
+  后的绝对路径存 settings（Windows 不区分大小写）。
+- 用户设置（库目录/显示大小/置顶/收藏）经 houtools.core.settings.JsonStore
   持久化到项目 settings/ 目录（gitignored，随机器各自保存）。
 - 窗口经 houtools.ui.window_manager 单例登记，Reload 热加载时自动关闭。
 - 本机 hoiiotool（OIIO 2.5.18）的坑：--resize 不支持省略高度的
@@ -35,6 +43,13 @@ TOOL_ID = "hdr_library"
 HDR_EXTS = (".hdr", ".hdri", ".exr")
 THUMB_WIDTH = 256          # 缓存缩略图宽度（固定，保证清晰度）
 DEFAULT_THUMB_SIZE = 128   # 打开工具时的默认显示大小（滑条可调 64-256）
+ICON_MAX_WIDTH = 400       # 显示图标上限（超过则相对缓存过度放大而模糊）
+GRID_PADDING_X = 24        # 网格单元内图标左右的留白
+GRID_PADDING_Y = 46        # 网格单元内图标下方留给文件名的高度
+
+# 侧栏特殊分类键（普通分类键为子文件夹名，根目录文件为 ""）
+KEY_ALL = "__all__"
+KEY_FAV = "__fav__"
 
 # 灯光节点上可能的环境贴图参数，按顺序匹配
 MAP_PARMS = ("env_map", "map", "envmap", "environment_map", "texture_map")
@@ -45,6 +60,7 @@ _SETTINGS = JsonStore("hdr_library.json", defaults={
     "lib_dir": "",          # 空 = 用默认库目录
     "thumb_size": DEFAULT_THUMB_SIZE,
     "pin_on_top": True,
+    "favorites": [],        # 收藏的 HDR 绝对路径（normcase 后）
 })
 
 
@@ -103,6 +119,31 @@ def _ocio_env():
 
 
 # --------------------------------------------------------------------------
+# 收藏
+# --------------------------------------------------------------------------
+
+def _norm_path(path):
+    """收藏键：绝对路径 + normcase（Windows 不区分大小写）。"""
+    return os.path.normcase(os.path.abspath(path))
+
+
+def get_favorites():
+    return {_norm_path(p) for p in (_SETTINGS.get("favorites") or [])}
+
+
+def set_favorite(hdr_path, fav):
+    """添加/移除收藏并持久化，返回操作后的收藏状态。"""
+    favs = get_favorites()
+    key = _norm_path(hdr_path)
+    if fav:
+        favs.add(key)
+    else:
+        favs.discard(key)
+    _SETTINGS.set("favorites", sorted(favs))
+    return fav
+
+
+# --------------------------------------------------------------------------
 # 缩略图
 # --------------------------------------------------------------------------
 
@@ -111,8 +152,11 @@ def thumb_cache_dir(lib_dir):
 
 
 def thumb_path(lib_dir, hdr_path):
-    base = os.path.splitext(os.path.basename(hdr_path))[0]
-    return os.path.join(thumb_cache_dir(lib_dir), base + ".jpg")
+    """缓存缩略图路径：按相对路径命名（目录用 __ 连接），子文件夹同名
+    文件不冲突；根目录文件的命名与旧版一致（<文件名>.jpg），旧缓存复用。"""
+    rel = os.path.splitext(os.path.relpath(hdr_path, lib_dir))[0]
+    safe = rel.replace(os.sep, "__").replace("/", "__")
+    return os.path.join(thumb_cache_dir(lib_dir), safe + ".jpg")
 
 
 def _image_size(oiiotool, image_path, env):
@@ -159,14 +203,44 @@ def make_thumbnail(lib_dir, hdr_path):
     return out if os.path.exists(out) else None
 
 
+def _iter_hdrs(lib_dir):
+    """递归列出库里的 HDR，返回 [(path, category)]。
+
+    category 为第一级子文件夹名（嵌套子文件夹归到第一级），
+    根目录文件为 ""；跳过隐藏目录（含 .thumb_cache）。
+    """
+    out = []
+    for root, dirs, files in os.walk(lib_dir):
+        dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+        rel = os.path.relpath(root, lib_dir)
+        category = "" if rel == "." else rel.split(os.sep)[0]
+        for name in files:
+            if name.lower().endswith(HDR_EXTS):
+                out.append((os.path.join(root, name), category))
+    out.sort(key=lambda t: (t[1].lower(), os.path.basename(t[0]).lower()))
+    return out
+
+
+def list_categories(lib_dir):
+    """库目录下的一级子文件夹（含空分类），已排除隐藏目录，排序返回。"""
+    try:
+        names = os.listdir(lib_dir)
+    except OSError as exc:
+        log.warning("cannot list %s: %s", lib_dir, exc)
+        return []
+    return sorted(
+        (n for n in names
+         if not n.startswith(".") and os.path.isdir(os.path.join(lib_dir, n))),
+        key=str.lower)
+
+
 def scan_hdrs(lib_dir):
-    """扫描 HDR 库目录，返回 [(hdr_path, thumb_path_or_None), ...]。"""
+    """递归扫描 HDR 库目录，返回 [(hdr_path, category, thumb_path_or_None), ...]。"""
     results = []
-    for ext in HDR_EXTS:
-        results.extend(glob.glob(os.path.join(lib_dir, "*" + ext)))
-    results = sorted(set(results), key=lambda p: os.path.basename(p).lower())
-    return [(p, thumb_path(lib_dir, p) if os.path.exists(thumb_path(lib_dir, p)) else None)
-            for p in results]
+    for p, category in _iter_hdrs(lib_dir):
+        tp = thumb_path(lib_dir, p)
+        results.append((p, category, tp if os.path.exists(tp) else None))
+    return results
 
 
 def clean_stale_thumbs(lib_dir):
@@ -174,13 +248,11 @@ def clean_stale_thumbs(lib_dir):
     cache = thumb_cache_dir(lib_dir)
     if not os.path.isdir(cache):
         return 0
-    hdr_bases = set()
-    for ext in HDR_EXTS:
-        for p in glob.glob(os.path.join(lib_dir, "*" + ext)):
-            hdr_bases.add(os.path.splitext(os.path.basename(p))[0])
+    expected = {os.path.basename(thumb_path(lib_dir, p))
+                for p, _category in _iter_hdrs(lib_dir)}
     removed = 0
     for f in glob.glob(os.path.join(cache, "*.jpg")):
-        if os.path.splitext(os.path.basename(f))[0] not in hdr_bases:
+        if os.path.basename(f) not in expected:
             try:
                 os.remove(f)
                 removed += 1
@@ -277,6 +349,9 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
     """HDR 库浏览器主窗口（经 window_manager 单例登记）。"""
 
     REFRESH_MS = 400
+    FIT_DELAY_MS = 150     # 面板尺寸变化后重排网格的防抖
+    SIDEBAR_MIN = 140
+    SIDEBAR_MAX = 300
 
     STYLE_SHEET = """
         QWidget { background-color: #18181b; color: #dddddd; }
@@ -287,6 +362,7 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         }
         QListWidget::item { color: #bbbbbb; }
         QListWidget::item:selected { background-color: #0d6399; }
+        QSplitter::handle:horizontal { background: #2d2d2d; width: 2px; }
         QSlider::groove:horizontal { height: 4px; background: #3d3d3d; border-radius: 2px; }
         QSlider::handle:horizontal {
             background: #0d6399; width: 12px; margin: -5px 0; border-radius: 6px;
@@ -300,9 +376,12 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self.lib_dir = lib_dir
         self._thread = None
         self._last_target = None
+        self._category_key = KEY_ALL
+        self._favs = get_favorites()
+        self._hdrs = []   # 最近一次 scan_hdrs 的结果，供侧栏计数复用
 
         self.setWindowTitle("Hdr Library")
-        self.resize(1080, 600)
+        self.resize(1080, 620)
         self.setStyleSheet(self.STYLE_SHEET)
 
         # ---- 顶部栏 ----
@@ -320,7 +399,8 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self.size_slider.setRange(64, 256)
         self.size_slider.setValue(int(_SETTINGS.get("thumb_size")))
         self.size_slider.setFixedWidth(140)
-        self.size_slider.setToolTip("缩略图大小")
+        self.size_slider.setToolTip(
+            "基准大小：决定每行列数，网格自动拉伸铺满面板宽度")
         self.size_label = QtWidgets.QLabel("{}px".format(self.size_slider.value()))
 
         top = QtWidgets.QHBoxLayout()
@@ -333,10 +413,17 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         top.addWidget(self.dir_btn)
         top.addWidget(self.refresh_btn)
 
+        # ---- 分类侧栏 ----
+        self.sidebar = QtWidgets.QListWidget()
+        self.sidebar.setMinimumWidth(self.SIDEBAR_MIN)
+        self.sidebar.setMaximumWidth(self.SIDEBAR_MAX)
+        self.sidebar.currentItemChanged.connect(self._on_category_changed)
+        self.sidebar.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.sidebar.customContextMenuRequested.connect(self._on_sidebar_menu)
+
         # ---- 缩略图列表 ----
         self.list = QtWidgets.QListWidget()
         self.list.setViewMode(QtWidgets.QListWidget.IconMode)
-        self._apply_thumb_size(self.size_slider.value())
         self.list.setResizeMode(QtWidgets.QListWidget.Adjust)
         # 性能关键项：Batched 分批重排 + UniformItemSizes，
         # 条目多时拖动面板/滚动不卡顿
@@ -347,26 +434,39 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self.list.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._on_context_menu)
 
+        self.splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        self.splitter.setHandleWidth(4)
+        self.splitter.addWidget(self.sidebar)
+        self.splitter.addWidget(self.list)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setSizes([190, 890])
+
         # ---- 底部状态 ----
         self.status = QtWidgets.QLabel("选中场景里的灯光节点后，双击缩略图即可链接贴图")
         self.status.setObjectName("statusLabel")
 
         lay = QtWidgets.QVBoxLayout(self)
         lay.addLayout(top)
-        lay.addWidget(self.list, 1)
+        lay.addWidget(self.splitter, 1)
         lay.addWidget(self.status)
 
         self.dir_btn.clicked.connect(self._choose_dir)
         self.refresh_btn.clicked.connect(self.reload)
         self.pin_chk.toggled.connect(self._toggle_pin)
 
-        # 缩略图大小变化做 150ms 防抖，拖动滑条时不反复重排
+        # 缩略图基准大小变化做 150ms 防抖，拖动滑条时不反复重排
         self._size_timer = QtCore.QTimer(self)
         self._size_timer.setSingleShot(True)
-        self._size_timer.setInterval(150)
-        self._size_timer.timeout.connect(
-            lambda: self._apply_thumb_size(self.size_slider.value()))
+        self._size_timer.setInterval(self.FIT_DELAY_MS)
+        self._size_timer.timeout.connect(self._fit_grid)
         self.size_slider.valueChanged.connect(self._on_size_changed)
+
+        # 面板宽度变化（窗口缩放/滚动条出现消失）后防抖重排网格，铺满面板
+        self._fit_timer = QtCore.QTimer(self)
+        self._fit_timer.setSingleShot(True)
+        self._fit_timer.setInterval(self.FIT_DELAY_MS)
+        self._fit_timer.timeout.connect(self._fit_grid)
+        self.list.viewport().installEventFilter(self)
 
         # 定时跟踪 Houdini 选择
         self._timer = QtCore.QTimer(self)
@@ -382,16 +482,18 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self.list.clear()
         placeholder = self._make_placeholder()
 
-        # 先清理无主缩略图（HDR 已被删除/移走的），再扫描
+        # 先清理无主缩略图（HDR 已被删除/移走的），再递归扫描
         stale = clean_stale_thumbs(self.lib_dir)
         hdrs = scan_hdrs(self.lib_dir)
+        self._hdrs = hdrs
         need_gen = []
         # 批量填充时暂停重绘，条目多时明显更快
         self.list.setUpdatesEnabled(False)
         try:
-            for hdr_path, thumb in hdrs:
+            for hdr_path, category, thumb in hdrs:
                 item = QtWidgets.QListWidgetItem(os.path.basename(hdr_path))
                 item.setData(QtCore.Qt.UserRole, hdr_path)
+                item.setData(QtCore.Qt.UserRole + 1, category)
                 item.setToolTip(hdr_path)
                 if thumb:
                     item.setIcon(QtGui.QIcon(thumb))
@@ -402,6 +504,11 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         finally:
             self.list.setUpdatesEnabled(True)
 
+        self._favs = get_favorites()
+        self._mark_favorite_items()
+        self._rebuild_sidebar()
+        self._apply_filter()
+
         self.status.setText("共 {} 个 HDR（{}{}）".format(
             len(hdrs),
             "已清理 {} 张无主缩略图；".format(stale) if stale else "",
@@ -410,36 +517,146 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         if need_gen:
             self._start_worker(need_gen)
 
-    def _update_dir_label(self):
-        fm = self.dir_label.fontMetrics()
-        text = fm.elidedText(self.lib_dir, QtCore.Qt.ElideMiddle, 240)
-        self.dir_label.setText("当前目录: {}".format(text))
-        self.dir_label.setToolTip(self.lib_dir)
+    # ---------------- 分类侧栏 ----------------
 
-    def _make_placeholder(self):
-        pm = QtGui.QPixmap(THUMB_WIDTH, THUMB_WIDTH // 2)
-        pm.fill(QtCore.Qt.darkGray)
-        return QtGui.QIcon(pm)
+    def _rebuild_sidebar(self):
+        """按最近一次扫描结果 + 库里的一级子文件夹重建分类侧栏。
 
-    def _start_worker(self, hdr_paths):
-        if self._thread is not None and self._thread.isRunning():
-            self._thread.requestInterruption()
-            self._thread.wait(1000)
-        self._thread = ThumbnailThread(self.lib_dir, hdr_paths, self)
-        self._thread.thumbReady.connect(self._on_thumb_ready)
-        self._thread.finishedCount.connect(self._on_thumbs_done)
-        self._thread.start()
+        空分类文件夹也列出（方便"按分类下载"先建目录）；
+        保持当前选中分类，原分类不存在（换目录/被删）时回"全部"。
+        """
+        counts = {}
+        fav_count = 0
+        for hdr_path, category, _thumb in self._hdrs:
+            counts[category] = counts.get(category, 0) + 1
+            if _norm_path(hdr_path) in self._favs:
+                fav_count += 1
+        categories = set(list_categories(self.lib_dir))
+        categories.update(counts)
 
-    def _on_thumb_ready(self, hdr_path, thumb_path):
-        for i in range(self.list.count()):
-            item = self.list.item(i)
-            if item.data(QtCore.Qt.UserRole) == hdr_path:
-                item.setIcon(QtGui.QIcon(thumb_path))
+        self.sidebar.blockSignals(True)
+        self.sidebar.clear()
+        entries = [(KEY_ALL, "全部", len(self._hdrs)),
+                   (KEY_FAV, "★ 收藏", fav_count)]
+        entries.extend(
+            (cat, cat or "未分类", counts.get(cat, 0))
+            for cat in sorted(categories, key=str.lower))
+        for key, label, n in entries:
+            item = QtWidgets.QListWidgetItem("{} ({})".format(label, n))
+            item.setData(QtCore.Qt.UserRole, key)
+            if key not in (KEY_ALL, KEY_FAV):
+                item.setToolTip(os.path.join(self.lib_dir, key))
+            self.sidebar.addItem(item)
+        row = next((i for i in range(self.sidebar.count())
+                    if self.sidebar.item(i).data(QtCore.Qt.UserRole)
+                    == self._category_key), 0)
+        self.sidebar.setCurrentRow(row)
+        self.sidebar.blockSignals(False)
+
+    def _on_category_changed(self, current, _previous=None):
+        if current is None:
+            return
+        self._category_key = current.data(QtCore.Qt.UserRole) or KEY_ALL
+        self._apply_filter()
+
+    def _select_category(self, key):
+        """切换分类（侧栏编程入口，测试也用它）。"""
+        self._category_key = key
+        self._apply_filter()
+        self.sidebar.blockSignals(True)
+        for i in range(self.sidebar.count()):
+            if self.sidebar.item(i).data(QtCore.Qt.UserRole) == key:
+                self.sidebar.setCurrentRow(i)
                 break
+        self.sidebar.blockSignals(False)
 
-    def _on_thumbs_done(self, ok_count):
-        self.status.setText("共 {} 个 HDR，缩略图就绪（本次新生成 {} 张）。"
-                            "选中灯光后双击缩略图链接贴图".format(self.list.count(), ok_count))
+    @staticmethod
+    def _category_label(key):
+        if key == KEY_ALL:
+            return "全部"
+        if key == KEY_FAV:
+            return "收藏"
+        return key or "未分类"
+
+    def _apply_filter(self):
+        """按当前分类隐藏/显示缩略图条目，并把统计写进状态栏。"""
+        visible = 0
+        total = self.list.count()
+        for i in range(total):
+            item = self.list.item(i)
+            path = item.data(QtCore.Qt.UserRole)
+            if self._category_key == KEY_ALL:
+                show = True
+            elif self._category_key == KEY_FAV:
+                show = _norm_path(path) in self._favs
+            else:
+                show = item.data(QtCore.Qt.UserRole + 1) == self._category_key
+            item.setHidden(not show)
+            visible += show
+        self.status.setText("{}：{}/{} 个 HDR。选中场景灯光后双击缩略图链接贴图".format(
+            self._category_label(self._category_key), visible, total))
+
+    def _visible_count(self):
+        return sum(0 if self.list.item(i).isHidden() else 1
+                   for i in range(self.list.count()))
+
+    # ---------------- 收藏 ----------------
+
+    def _mark_favorite_items(self):
+        for i in range(self.list.count()):
+            self._set_item_text(self.list.item(i))
+
+    def _set_item_text(self, item):
+        path = item.data(QtCore.Qt.UserRole)
+        name = os.path.basename(path)
+        item.setText("★ " + name if _norm_path(path) in self._favs else name)
+
+    def _set_favorite(self, item, fav):
+        """收藏/取消收藏一个条目，刷新文本、侧栏计数与过滤。"""
+        path = item.data(QtCore.Qt.UserRole)
+        set_favorite(path, fav)
+        self._favs = get_favorites()
+        self._set_item_text(item)
+        self._rebuild_sidebar()
+        self._apply_filter()
+        self.status.setText("{}：{}".format(
+            os.path.basename(path), "已收藏" if fav else "已取消收藏"))
+
+    # ---------------- 网格自适应（铺满面板宽度） ----------------
+
+    def eventFilter(self, obj, event):
+        if obj is self.list.viewport() and event.type() == QtCore.QEvent.Resize:
+            self._fit_timer.start()
+        return super().eventFilter(obj, event)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._fit_grid()
+
+    def _fit_grid(self):
+        """网格列宽拉伸到正好铺满面板宽度。
+
+        滑条值只决定列数（列数 = 可视宽 / 基准单元宽），单元格宽 =
+        可视宽 / 列数，缩略图随之拉伸——窗口拉大不再留大片空白。
+        纵向滚动条出现时预留其宽度，避免重排引发滚动条闪烁。
+        """
+        base = self.size_slider.value()
+        vw = self.list.viewport().width()
+        sb = self.list.verticalScrollBar()
+        if sb.isVisible():
+            vw -= sb.width() + 2
+        if vw < 120:
+            return
+        cols = max(1, int(vw // (base + GRID_PADDING_X)))
+        cell_w = int(vw / cols)
+        icon_w = max(64, min(cell_w - GRID_PADDING_X, ICON_MAX_WIDTH))
+        icon_h = icon_w // 2  # 环境贴图都是 2:1
+        self.list.setIconSize(QtCore.QSize(icon_w, icon_h))
+        self.list.setGridSize(QtCore.QSize(cell_w, icon_h + GRID_PADDING_Y))
+
+    def _on_size_changed(self, val):
+        self.size_label.setText("{}px".format(val))
+        self._size_timer.start()
 
     # ---------------- 目标灯光跟踪 ----------------
 
@@ -475,14 +692,55 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         if item is None:
             return
         path = item.data(QtCore.Qt.UserRole)
+        fav = _norm_path(path) in self._favs
         menu = QtWidgets.QMenu(self)
+        act_fav = menu.addAction("取消收藏" if fav else "收藏")
+        menu.addSeparator()
         act_copy = menu.addAction("复制路径")
         act_open = menu.addAction("打开所在文件夹")
         act = menu.exec_(self.list.mapToGlobal(pos))
-        if act is act_copy:
+        if act is act_fav:
+            self._set_favorite(item, not fav)
+        elif act is act_copy:
             QtWidgets.QApplication.clipboard().setText(path)
         elif act is act_open:
             subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
+
+    def _on_sidebar_menu(self, pos):
+        item = self.sidebar.itemAt(pos)
+        menu = QtWidgets.QMenu(self)
+        act_new = menu.addAction("新建分类...")
+        act_open = None
+        if item is not None:
+            key = item.data(QtCore.Qt.UserRole)
+            if key not in (KEY_ALL, KEY_FAV):
+                act_open = menu.addAction("打开分类文件夹")
+        act = menu.exec_(self.sidebar.mapToGlobal(pos))
+        if act is act_new:
+            self._create_category()
+        elif act is act_open and item is not None:
+            subprocess.Popen(["explorer",
+                              os.path.join(self.lib_dir,
+                                           item.data(QtCore.Qt.UserRole))])
+
+    def _create_category(self):
+        name, ok = QtWidgets.QInputDialog.getText(self, "新建分类", "分类文件夹名：")
+        name = (name or "").strip()
+        if not ok or not name:
+            return
+        if any(c in name for c in '\\/:*?"<>|'):
+            QtWidgets.QMessageBox.warning(
+                self, "新建分类", "名称不能包含 \\/ : * ? \" < > | 等字符")
+            return
+        try:
+            os.makedirs(os.path.join(self.lib_dir, name), exist_ok=True)
+        except OSError as exc:
+            log.warning("create category failed: %s", exc)
+            self.status.setText("新建分类失败: {}".format(exc))
+            return
+        self._category_key = name  # 重建后停在新分类上
+        self.reload()
+        self.status.setText("已创建分类文件夹 {}，把下载的 HDR 放进去后点刷新".format(name))
 
     def _choose_dir(self):
         d = QtWidgets.QFileDialog.getExistingDirectory(
@@ -498,17 +756,41 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self.setWindowFlag(QtCore.Qt.WindowStaysOnTopHint, on)
         self.show()  # setWindowFlag 会使窗口隐藏，需要重新 show
 
-    def _on_size_changed(self, val):
-        self.size_label.setText("{}px".format(val))
-        self._size_timer.start()
+    def _make_placeholder(self):
+        pm = QtGui.QPixmap(THUMB_WIDTH, THUMB_WIDTH // 2)
+        pm.fill(QtCore.Qt.darkGray)
+        return QtGui.QIcon(pm)
 
-    def _apply_thumb_size(self, w):
-        h = w // 2  # 环境贴图都是 2:1
-        self.list.setIconSize(QtCore.QSize(w, h))
-        self.list.setGridSize(QtCore.QSize(w + 24, h + 46))
+    def _start_worker(self, hdr_paths):
+        if self._thread is not None and self._thread.isRunning():
+            self._thread.requestInterruption()
+            self._thread.wait(1000)
+        self._thread = ThumbnailThread(self.lib_dir, hdr_paths, self)
+        self._thread.thumbReady.connect(self._on_thumb_ready)
+        self._thread.finishedCount.connect(self._on_thumbs_done)
+        self._thread.start()
+
+    def _on_thumb_ready(self, hdr_path, thumb_path):
+        for i in range(self.list.count()):
+            item = self.list.item(i)
+            if item.data(QtCore.Qt.UserRole) == hdr_path:
+                item.setIcon(QtGui.QIcon(thumb_path))
+                break
+
+    def _on_thumbs_done(self, ok_count):
+        self.status.setText("共 {} 个 HDR，缩略图就绪（本次新生成 {} 张）。"
+                            "选中灯光后双击缩略图链接贴图".format(self.list.count(), ok_count))
+
+    def _update_dir_label(self):
+        fm = self.dir_label.fontMetrics()
+        text = fm.elidedText(self.lib_dir, QtCore.Qt.ElideMiddle, 240)
+        self.dir_label.setText("当前目录: {}".format(text))
+        self.dir_label.setToolTip(self.lib_dir)
 
     def closeEvent(self, event):
         _SETTINGS.set("thumb_size", int(self.size_slider.value()))
+        self._fit_timer.stop()
+        self._size_timer.stop()
         if self._thread is not None and self._thread.isRunning():
             self._thread.requestInterruption()
             self._thread.wait(2000)  # 最多等 2 秒，避免界面卡死
