@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QStackedWidget, QCheckBox, QWidget, QScrollArea, QSizePolicy,
     QGraphicsDropShadowEffect, QApplication, QMessageBox, QMenu,
 )
-from PySide6.QtCore import Qt, Signal, QPoint, QSize, QRect, QEvent, QTimer
+from PySide6.QtCore import Qt, Signal, QPoint, QSize, QRect, QEvent, QTimer, QObject
 from PySide6.QtGui import QColor, QIcon, QKeySequence, QShortcut
 
 from houtools.automation.data_manager import AutomationDataManager
@@ -323,23 +323,98 @@ def _activate_existing_panel(desktop) -> bool:
 
 
 def _qt_floating_window(panel):
-    """返回浮动面板的原生窗口 QWidget；失败返回 None。"""
+    """返回浮动面板的原生窗口 QWidget；拿不到返回 None。
+
+    三路尝试(前两路失败会打 debug 日志留痕,便于排查 pre-hide 不生效):
+      1. hou.qt.floatingPanelWindow —— 官方桥;
+      2. 未公开的 _qtParentWindow 指针手工包装成 QWidget;
+      3. 按窗口标题在顶层部件里扫描 —— 面板已在 open_floating_panel
+         中 setName(INTERFACE_NAME),Houdini 标题格式 "Houdini FX - <名>"。
+    """
     try:
         import hou
         return hou.qt.floatingPanelWindow(panel)
-    except Exception:
-        pass
-    # 兜底:未公开的 _qtParentWindow 指针手工包装成 QWidget
+    except Exception as exc:
+        logger.debug("hou.qt.floatingPanelWindow failed: %s", exc)
+
     try:
         import shiboken6
         from PySide6.QtWidgets import QWidget
 
         ptr = panel._qtParentWindow()
-        if not ptr:
-            return None
-        return shiboken6.wrapInstance(int(ptr), QWidget)
+        if ptr:
+            return shiboken6.wrapInstance(int(ptr), QWidget)
+    except Exception as exc:
+        logger.debug("_qtParentWindow fallback failed: %s", exc)
+
+    try:
+        from PySide6.QtWidgets import QApplication
+
+        for w in QApplication.topLevelWidgets():
+            if w.windowTitle().endswith(INTERFACE_NAME):
+                return w
+    except Exception as exc:
+        logger.debug("top-level title scan failed: %s", exc)
+    return None
+
+
+def _apply_centered_position(panel, main, frame_w, frame_h):
+    """把面板写到"主窗口外框正中"。
+
+    setPosition 的坐标语义(H22 实测双轴标定):X 与 Qt 一致(向右);
+    **Y 轴向上、原点在屏幕底边** —— 参数是窗口底边距屏幕底部的高度,
+    与 Qt 的 y 向下相反。直接传 Qt 的 y 会得到上下镜像的位置
+    (历次"偏上 / 右上角"的根因)。frame_w/h 为窗口外框尺寸。
+    """
+    try:
+        screen_h = main.windowHandle().screen().geometry().height()
+        c = main.frameGeometry().center()
+        panel.setPosition((
+            c.x() - frame_w // 2,
+            screen_h - c.y() - frame_h // 2,
+        ))
+        return True
     except Exception:
-        return None
+        return False
+
+
+class _PanelCenterFilter(QObject):
+    """一次性过滤器:本工具浮动面板的顶层窗口首次 Show 时,把面板移到
+    主窗口正中。
+
+    背景(MCP 现场实测,H22):createFloatingPanel 返回时原生窗口尚未
+    创建、不可见,HOM 的 position()/size() 初始为 (-1,-1);Houdini 在
+    自动 show 环节才建窗口并摆到"上次关闭的位置" —— 发生在
+    open_floating_panel 返回之后,创建期的 setPosition 会被覆盖。在
+    Show 事件阶段(paint 尚未发生)同步 setPosition,窗口第一次上屏
+    就在居中位置,消除"先旧位置、再跳中间"的闪烁。
+    """
+
+    def __init__(self, panel):
+        super().__init__()
+        self._panel = panel
+
+    def eventFilter(self, obj, event):  # noqa: N802 — Qt 命名约定
+        if event.type() != QEvent.Show:
+            return False
+        try:
+            if not obj.windowTitle().endswith(INTERFACE_NAME):
+                return False
+        except RuntimeError:
+            return False  # C++ 对象已销毁
+        try:
+            import hou
+            main = hou.qt.mainWindow()
+            fg = obj.frameGeometry()
+            if main is not None and fg.width() > 0 and fg.height() > 0:
+                _apply_centered_position(
+                    self._panel, main, fg.width(), fg.height())
+        except Exception:
+            pass  # 定位失败:保持 Houdini 摆位,150ms 兜底校正仍在
+        app = QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
+        return False  # 不吞事件,show 流程照常(位置已被改为居中)
 
 
 def open_floating_panel():
@@ -383,31 +458,41 @@ def open_floating_panel():
     except hou.OperationFailed:
         pass  # 命名失败仅影响标题显示,不阻塞打开
 
-    # 打开位置对齐 Video to Sequence(QDialog 默认相对主窗口居中):
-    # createFloatingPanel 默认落在屏幕左下角。Houdini 会在面板首次布局时
-    # 自行覆盖窗口几何,同步 move 会被盖掉 —— 除立即 move 外,还在事件
-    # 循环里(QTimer.singleShot(0))补一次定位,确保盖过 Houdini 的初始摆位。
+    # 打开位置:主窗口正中(对齐 Video to Sequence 的 QDialog 落点)。
+    # 机制见 _PanelCenterFilter docstring(MCP 现场实测):窗口在 Houdini
+    # 的 show 环节才创建并摆到上次位置,必须靠 Show 事件拦截定位;
+    # 创建后立即写一次状态层(修正 size()=-1 的回落),0ms/150ms 定时器
+    # 兜底防 Houdini 更晚的摆位。
     from PySide6.QtCore import QTimer
 
-    win = _qt_floating_window(panel)
-    if win is not None:
-        def _center_panel():
-            try:
-                main = hou.qt.mainWindow()
-                if main is None:
+    def _center_panel():
+        """把面板摆到主窗口外框正中;窗口未建时按创建尺寸近似。"""
+        try:
+            main = hou.qt.mainWindow()
+            if main is None:
+                return
+            win = _qt_floating_window(panel)
+            if win is not None:
+                fg = win.frameGeometry()
+                if fg.width() > 0 and fg.height() > 0:
+                    _apply_centered_position(
+                        panel, main, fg.width(), fg.height())
                     return
-                geo = main.geometry()
-                win.move(
-                    geo.x() + max(0, (geo.width() - win.width()) // 2),
-                    geo.y() + max(0, (geo.height() - win.height()) // 2),
-                )
-            except RuntimeError:
-                pass  # 面板窗口已销毁(用户秒关),忽略
-            except Exception:
-                pass  # 定位失败仅回落 Houdini 默认位置
+            w, h = panel.size()
+            if int(w) <= 0 or int(h) <= 0:
+                w, h = 620, 578  # 显示前 size() 无效:创建尺寸+标题栏近似
+            _apply_centered_position(panel, main, int(w), int(h))
+        except Exception:
+            pass  # 面板已销毁或定位失败:保持 Houdini 的摆位
 
-        _center_panel()
-        QTimer.singleShot(0, _center_panel)
+    _center_panel()  # 状态层先写好,供 Houdini show 时采用
+
+    app = QApplication.instance()
+    if app is not None:
+        app.installEventFilter(_PanelCenterFilter(panel))
+
+    QTimer.singleShot(0, _center_panel)
+    QTimer.singleShot(150, _center_panel)
     return panel
 
 
@@ -1784,11 +1869,12 @@ class AutomationWindow(QWidget):
         self._load_settings()  # 同步加载新配置的设置项
 
     def _on_new_config(self):
-        """新建配置:输入名字确认后**立即**落盘一份空配置文件并切换当前配置。
+        """新建配置:输入名字确认后**立即**落盘一份空配置文件,并把面板
+        刷新为该配置的内容(空配置 → 清空任务槽,补 1 个空槽)。
 
         独立 QInputDialog 而非在 combo 里键入 —— Houdini 浮动面板会
         清空部件焦点,内联编辑不可靠。同名配置已存在时**不覆盖**(否则
-        会把用户任务清成空),仅切换过去。
+        会把用户任务清成空),仅切换并加载其已有内容。
         """
         from PySide6.QtWidgets import QInputDialog
 
@@ -1817,9 +1903,11 @@ class AutomationWindow(QWidget):
             QMessageBox.warning(self, "创建失败", f"无法创建配置文件:\n{path}")
             return
         self._current_config_name = sanitized
-        # _refresh_config_dropdown 内部 blockSignals,不会触发
-        # _on_config_changed 而清空当前编辑内容
-        self._refresh_config_dropdown()
+        # 与下拉切换配置同款行为:加载新配置的内容到面板
+        # (空配置 → 清空任务槽并补 1 个空槽)。_load_data 内部的
+        # _refresh_config_dropdown 带 blockSignals,不会误触发切换。
+        self._load_data()
+        self._load_settings()
 
     def _get_save_target_name(self) -> str | None:
         """从下拉当前文本提取保存文件名(经 ``_sanitize_config_name`` 净化)。
