@@ -61,8 +61,12 @@ GRID_PADDING_Y = 46        # 网格单元内图标下方留给文件名的高度
 KEY_ALL = "__all__"
 KEY_FAV = "__fav__"
 
-# 灯光节点上可能的环境贴图参数，按顺序匹配
-MAP_PARMS = ("env_map", "map", "envmap", "environment_map", "texture_map")
+# 灯光节点上可能的环境贴图参数，按顺序精确匹配（parm 名全等）：
+# env_map = Karma OBJ envlight 与 RenderMan pxrdomelight；
+# rman__EnvMap = RenderMan pxrstdenvmaplight；light_texture = 遗留 hlight；
+# "map" 放最后兜底（灯光过滤器已在 is_light_node 里排除）
+MAP_PARMS = ("env_map", "rman__EnvMap", "envmap", "environment_map",
+             "texture_map", "light_texture", "map")
 # 灯光类节点判断：类型名包含这些关键字，或带有贴图参数
 LIGHT_HINTS = ("light", "env")
 
@@ -173,10 +177,13 @@ def _run_oiiotool(cmd, env, timeout, interrupt=None):
     """运行 hoiiotool 子进程，1 秒粒度轮询等待，返回 (stdout, rc)。
 
     interrupt() 返回 True（Reload/关窗）或超时都立即 kill 子进程，
-    不让生成线程卡在最长 120s 的外部调用上。
+    不让生成线程卡在最长 120s 的外部调用上。CREATE_NO_WINDOW 防止
+    每次调用弹控制台窗口（后台批量生成时会连续闪黑框）。
     """
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     proc = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
+        creationflags=flags)
     deadline = time.monotonic() + timeout
     while True:
         try:
@@ -328,12 +335,37 @@ def find_map_parm(node):
     return None
 
 
+def _find_lop_texture_parm(node):
+    """找 LOP 灯（domelight 家族等）的环境贴图参数。
+
+    Solaris 灯的环境贴图是 USD 输入 inputs:texture:file，LOP 把带特
+    殊字符的参数名 punycode 化（如 xn__inputstexturefile_r3ah），无法
+    按名字直取；按"名字含 texturefile"特征匹配，并返回其 _control
+    姊妹参数（USD 属性作者状态，须为 'set' 值才会写入 stage）。
+    返回 (值参数, 控制参数或 None)。
+    """
+    value = None
+    control = None
+    for parm in node.parms():
+        name = parm.name().lower()
+        if "texturefile" not in name:
+            continue
+        if "_control" in name:
+            control = control or parm
+        else:
+            value = value or parm
+    return value, control
+
+
 def is_light_node(node):
-    """判断节点是否可作为 HDR 赋值目标。"""
+    """判断节点是否可作为 HDR 赋值目标。灯光过滤器不接收环境贴图。"""
     try:
+        type_name = node.type().name().lower()
+        if "filter" in type_name:
+            return False
         if find_map_parm(node):
             return True
-        return any(h in node.type().name().lower() for h in LIGHT_HINTS)
+        return any(h in type_name for h in LIGHT_HINTS)
     except Exception:
         return False
 
@@ -348,25 +380,45 @@ def get_target_node():
 
 
 def assign_hdr(hdr_path, node=None):
-    """把 HDR 路径赋给灯光节点的环境贴图参数，返回 (节点路径, 参数名)。
+    """把 HDR 路径赋给灯光节点的环境贴图参数，返回 (节点路径, 参数显示名)。
 
-    envlight 的 env_map 在 skymap_enable != 0（程序化天空）时被禁用，
-    所以先关掉天空模式再赋值。
+    支持（已用 hython 实测参数结构）：
+    - OBJ envlight（Karma）：env_map；skymap_enable != 0（程序化天空）
+      时 env_map 被禁用，先关天空模式再赋值
+    - RenderMan dome 灯（pxrdomelight / pxrstdenvmaplight）：
+      env_map / rman__EnvMap，走通用匹配
+    - LOP domelight 全家族（Solaris）：USD 输入 inputs:texture:file，
+      参数名被 punycode 化（xn__inputstexturefile_*），按特征匹配；
+      其 _control 参数（作者状态）默认即 'set'，若被改过则修正，否则
+      值不会写入 USD stage
+    其余灯型（distant/point/rect 等非 dome 灯）本无环境贴图参数，抛错说明。
     """
     import hou
     node = node or get_target_node()
     if node is None:
-        raise RuntimeError("请先在场景中选中一个灯光节点（如 envlight）")
-    parm_name = find_map_parm(node)
-    if parm_name is None:
         raise RuntimeError(
-            "节点 {} 上找不到环境贴图参数（{}）".format(node.path(), ", ".join(MAP_PARMS)))
-    sky = node.parm("skymap_enable")
-    if sky is not None and sky.eval():
-        sky.set(0)
+            "请先在场景中选中一个灯光节点（如 OBJ envlight / LOP domelight）")
     path = os.path.abspath(hdr_path).replace("\\", "/")
-    node.parm(parm_name).set(path)
-    return node.path(), parm_name
+
+    parm_name = find_map_parm(node)
+    if parm_name:
+        sky = node.parm("skymap_enable")
+        if sky is not None and sky.eval():
+            sky.set(0)
+        node.parm(parm_name).set(path)
+        return node.path(), parm_name
+
+    value, control = _find_lop_texture_parm(node)
+    if value is not None:
+        if control is not None and control.evalAsString() != "set" \
+                and "set" in (control.menuItems() or []):
+            control.set("set")
+        value.set(path)
+        return node.path(), value.description() or value.name()
+
+    raise RuntimeError(
+        "节点 {} 上找不到环境贴图参数——该灯类型可能不支持环境贴图"
+        "（如 distant / point / rect 等非 dome 灯）".format(node.path()))
 
 
 # --------------------------------------------------------------------------
@@ -487,6 +539,10 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self._category_key = KEY_ALL
         self._favs = get_favorites()
         self._hdrs = []   # 最近一次 scan_hdrs 的结果，供侧栏计数复用
+        self._thumbs = {}        # path -> 缩略图路径或 None
+        self._item_by_path = {}  # path -> 当前网格里的条目（随过滤重建）
+        self._pending_icons = {}  # 待批量应用的缩略图（防每张一重排）
+        self._placeholder = self._make_placeholder()
 
         self.setWindowTitle("Hdr Library")
         self.resize(1080, 620)
@@ -517,11 +573,15 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
 
         top = QtWidgets.QHBoxLayout()
         top.addWidget(self.target_label, 1)
-        # 路径显示与"更换目录/刷新"按钮相邻成组，靠右侧对齐
+        # 路径显示与"更换目录"按钮相邻成组；各组之间等宽弹性间隔，
+        # 整行均匀分布
         top.addWidget(self.dir_label)
         top.addWidget(self.dir_btn)
+        top.addStretch(1)
         top.addWidget(self.refresh_btn)
+        top.addStretch(1)
         top.addWidget(self.pin_chk)
+        top.addStretch(1)
         top.addWidget(QtWidgets.QLabel("大小:"))
         top.addWidget(self.size_slider)
         top.addWidget(self.size_label)
@@ -601,6 +661,12 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self._fit_timer.timeout.connect(self._fit_grid)
         self.list.viewport().installEventFilter(self)
 
+        # 缩略图就绪后批量应用图标，避免每张触发一次全网格重排
+        self._icon_timer = QtCore.QTimer(self)
+        self._icon_timer.setSingleShot(True)
+        self._icon_timer.setInterval(400)
+        self._icon_timer.timeout.connect(self._flush_pending_icons)
+
         # 定时跟踪 Houdini 选择
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self._poll_selection)
@@ -612,33 +678,16 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
     # ---------------- 数据加载 ----------------
 
     def reload(self):
-        self.list.clear()
-        placeholder = self._make_placeholder()
+        placeholder = self._placeholder
 
         # 先清理无主缩略图（HDR 已被删除/移走的），再递归扫描
         stale = clean_stale_thumbs(self.lib_dir)
         hdrs = scan_hdrs(self.lib_dir)
         self._hdrs = hdrs
-        need_gen = []
-        # 批量填充时暂停重绘，条目多时明显更快
-        self.list.setUpdatesEnabled(False)
-        try:
-            for hdr_path, category, thumb in hdrs:
-                item = QtWidgets.QListWidgetItem(os.path.basename(hdr_path))
-                item.setData(QtCore.Qt.UserRole, hdr_path)
-                item.setData(QtCore.Qt.UserRole + 1, category)
-                item.setToolTip(hdr_path)
-                if thumb:
-                    item.setIcon(QtGui.QIcon(thumb))
-                else:
-                    item.setIcon(placeholder)
-                    need_gen.append(hdr_path)
-                self.list.addItem(item)
-        finally:
-            self.list.setUpdatesEnabled(True)
+        self._thumbs = {p: t for p, _c, t in hdrs}
+        need_gen = [p for p, _c, t in hdrs if not t]
 
         self._favs = get_favorites()
-        self._mark_favorite_items()
         self._rebuild_sidebar()
         self._apply_filter()
 
@@ -712,22 +761,43 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         return key or "未分类"
 
     def _apply_filter(self):
-        """按当前分类隐藏/显示缩略图条目，并把统计写进状态栏。"""
-        visible = 0
-        total = self.list.count()
-        for i in range(total):
-            item = self.list.item(i)
-            path = item.data(QtCore.Qt.UserRole)
-            if self._category_key == KEY_ALL:
+        """按当前分类重建网格条目（只添加匹配的）。
+
+        不用 item.setHidden()：IconMode+gridSize 下隐藏条目不绘制但
+        仍占据网格槽位，分类视图顶部会先铺满一片被隐藏条目的空槽
+        （表现为"第一个位置空着"）。重建顺带把条目数压到可见范围，
+        后台补图标时的重绘量也最小。
+        """
+        key = self._category_key
+        favs = self._favs
+        entries = []
+        for path, category, _thumb in self._hdrs:
+            if key == KEY_ALL:
                 show = True
-            elif self._category_key == KEY_FAV:
-                show = _norm_path(path) in self._favs
+            elif key == KEY_FAV:
+                show = _norm_path(path) in favs
             else:
-                show = item.data(QtCore.Qt.UserRole + 1) == self._category_key
-            item.setHidden(not show)
-            visible += show
+                show = category == key
+            if show:
+                entries.append(path)
+        self.list.setUpdatesEnabled(False)
+        try:
+            self.list.clear()
+            self._item_by_path = {}
+            for path in entries:
+                item = QtWidgets.QListWidgetItem()
+                name = os.path.basename(path)
+                item.setData(QtCore.Qt.UserRole, path)
+                item.setToolTip(path)
+                item.setText("★ " + name if _norm_path(path) in favs else name)
+                thumb = self._thumbs.get(path)
+                item.setIcon(QtGui.QIcon(thumb) if thumb else self._placeholder)
+                self.list.addItem(item)
+                self._item_by_path[path] = item
+        finally:
+            self.list.setUpdatesEnabled(True)
         self.status.setText("{}：{}/{} 个 HDR。选中场景灯光后双击缩略图链接贴图".format(
-            self._category_label(self._category_key), visible, total))
+            self._category_label(key), len(entries), len(self._hdrs)))
 
     def _visible_count(self):
         return sum(0 if self.list.item(i).isHidden() else 1
@@ -735,21 +805,11 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
 
     # ---------------- 收藏 ----------------
 
-    def _mark_favorite_items(self):
-        for i in range(self.list.count()):
-            self._set_item_text(self.list.item(i))
-
-    def _set_item_text(self, item):
-        path = item.data(QtCore.Qt.UserRole)
-        name = os.path.basename(path)
-        item.setText("★ " + name if _norm_path(path) in self._favs else name)
-
     def _set_favorite(self, item, fav):
-        """收藏/取消收藏一个条目，刷新文本、侧栏计数与过滤。"""
+        """收藏/取消收藏一个条目，重建网格与侧栏（更新星标与计数）。"""
         path = item.data(QtCore.Qt.UserRole)
         set_favorite(path, fav)
         self._favs = get_favorites()
-        self._set_item_text(item)
         self._rebuild_sidebar()
         self._apply_filter()
         self.status.setText("{}：{}".format(
@@ -900,7 +960,7 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
 
     def _make_placeholder(self):
         pm = QtGui.QPixmap(THUMB_WIDTH, THUMB_WIDTH // 2)
-        pm.fill(QtCore.Qt.darkGray)
+        pm.fill(QtGui.QColor("#313136"))  # 比背景亮一档，读作"待生成"
         return QtGui.QIcon(pm)
 
     def _start_worker(self, hdr_paths):
@@ -962,15 +1022,30 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
             pass
 
     def _on_thumb_ready(self, hdr_path, thumb_path):
-        for i in range(self.list.count()):
-            item = self.list.item(i)
-            if item.data(QtCore.Qt.UserRole) == hdr_path:
-                item.setIcon(QtGui.QIcon(thumb_path))
-                break
+        # 批量应用：每张 setIcon 都会触发 QListWidget 一次全网格延迟
+        # 重排（条目上千时表现为持续闪烁），攒 400ms 合成一次重绘
+        self._thumbs[hdr_path] = thumb_path
+        self._pending_icons[hdr_path] = thumb_path
+        self._icon_timer.start()
+
+    def _flush_pending_icons(self):
+        pending = self._pending_icons
+        if not pending:
+            return
+        self._pending_icons = {}
+        self.list.setUpdatesEnabled(False)
+        try:
+            for path, thumb in pending.items():
+                item = self._item_by_path.get(path)
+                if item is not None:  # 被过滤掉的条目不在当前网格，跳过
+                    item.setIcon(QtGui.QIcon(thumb))
+        finally:
+            self.list.setUpdatesEnabled(True)
 
     def _on_thumbs_done(self, ok_count):
         self.status.setText("共 {} 个 HDR，缩略图就绪（本次新生成 {} 张）。"
-                            "选中灯光后双击缩略图链接贴图".format(self.list.count(), ok_count))
+                            "选中灯光后双击缩略图链接贴图".format(
+                                len(self._hdrs), ok_count))
 
     def _update_dir_label(self):
         fm = self.dir_label.fontMetrics()
@@ -982,6 +1057,7 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         _SETTINGS.set("thumb_size", int(self.size_slider.value()))
         self._fit_timer.stop()
         self._size_timer.stop()
+        self._icon_timer.stop()
         thread = self._thread
         if thread is not None:
             try:

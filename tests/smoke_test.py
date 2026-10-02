@@ -303,13 +303,17 @@ def main():
             assert keys[0] == hdr_browser.KEY_ALL, keys
             assert keys[1] == hdr_browser.KEY_FAV, keys
             assert sorted(keys[2:]) == ["", "day", "night"], keys
-            fav_item = next(it for it in (win.list.item(i) for i in range(5))
+            # 收藏项有 ★ 前缀（重建式过滤：条目按当前分类重建，
+            # 切换视图后旧 item 对象已失效，须重新获取）
+            fav_item = next(it for it in (win.list.item(i) for i in range(6))
                             if it.data(QtCore.Qt.UserRole) == target)
             assert fav_item.text().startswith("★"), fav_item.text()
-            # 收藏视图过滤：5 个里只有 1 个收藏
+            # 收藏视图过滤：6 个里只有 1 个收藏
             win._select_category(hdr_browser.KEY_FAV)
             assert win._visible_count() == 1, win._visible_count()
             # 取消收藏后从收藏视图消失
+            fav_item = win.list.item(0)
+            assert fav_item is not None
             win._set_favorite(fav_item, False)
             assert win._visible_count() == 0
             assert not hdr_browser.get_favorites()
@@ -336,6 +340,43 @@ def main():
             win.deleteLater()
         fav_store.path.unlink(missing_ok=True)
     print("HdrLibrary window + favorites OK")
+
+    # 灯光赋值目标:LOP domelight 的 punycode 参数匹配 / 过滤器排除 /
+    # RenderMan 灯走通用匹配(鸭子类型 fake,无 hou 依赖)
+    class _FakeParm:
+        def __init__(self, name):
+            self._name = name
+        def name(self):
+            return self._name
+
+    class _FakeNode:
+        def __init__(self, type_name, parm_names):
+            self._type = type_name
+            self._parms = [_FakeParm(n) for n in parm_names]
+        def type(self):
+            return self
+        def name(self):
+            return self._type
+        def parm(self, name):
+            return next((p for p in self._parms if p.name() == name), None)
+        def parms(self):
+            return self._parms
+
+    lop_node = _FakeNode("domelight", [
+        "xn__inputstexturefile_control_shbh", "xn__inputstexturefile_r3ah",
+        "xn__inputstextureformat_1kbh",
+        "xn__inputskarmalightrecttextureflip_krbff"])
+    value, control = hdr_browser._find_lop_texture_parm(lop_node)
+    assert value.name() == "xn__inputstexturefile_r3ah", value.name()
+    assert control.name() == "xn__inputstexturefile_control_shbh", control.name()
+    # 灯光过滤器不接收环境贴图,即便带 map 参数
+    assert not hdr_browser.is_light_node(_FakeNode("pxrbarnlightfilter", ["map"]))
+    assert hdr_browser.is_light_node(_FakeNode("envlight", ["env_map", "skymap_enable"]))
+    assert hdr_browser.is_light_node(_FakeNode("domelight", ["xn__inputstexturefile_r3ah"]))
+    assert hdr_browser.find_map_parm(
+        _FakeNode("pxrstdenvmaplight", ["ri_envlight", "rman__EnvMap"])) \
+        == "rman__EnvMap"
+    print("HdrLibrary light mapping OK")
 
     summary = reloader.reload_all()
     print("reload_all ->", summary)
