@@ -160,10 +160,11 @@ class MA_Automation_DataManager:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             return data.get("tasks", [])
-        except json.JSONDecodeError:
-            print("警告: JSON 解析失败")
+        except json.JSONDecodeError as exc:
+            logger.warning("JSON 解析失败: %s (%s)", path, exc)
             return []
-        except Exception:
+        except Exception as exc:
+            logger.warning("读取配置失败: %s (%s)", path, exc)
             return []
 
     @classmethod

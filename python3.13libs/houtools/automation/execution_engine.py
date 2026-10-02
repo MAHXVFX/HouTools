@@ -24,6 +24,7 @@ from .task_types import (
     HomeAssistantParams,
     OpenDWParams,
 )
+from .data_manager import MA_Automation_DataManager
 
 # 尝试导入 hdefereval — Houdini 环境外不可用，此时为 None
 try:
@@ -240,7 +241,7 @@ class ExecutionEngine(QThread):
     def _execute_open_dw(self, params: OpenDWParams):
         """执行打开DW：启动 Deadline Worker。
 
-        软件路径从应用配置文件 ``{HIP}/MA Automation/MA_Automation_Config.json``
+        软件路径从应用配置文件 ``{项目根}/MA_Automation_Config.json``
         的 ``dw_exe_path`` 字段读取（用户可手动编辑），任务参数为空。
         ``subprocess.Popen`` 非阻塞启动，无需派发主线程。
 

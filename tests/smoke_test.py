@@ -192,6 +192,12 @@ def main():
     win._remove_slot(0)  # 槽管理冒烟
     print("AutomationWindow instantiation OK")
 
+    # ExecutionEngine 构造（回归：曾因缺 data_manager import 在此 NameError）
+    from houtools.automation.execution_engine import ExecutionEngine
+    engine = ExecutionEngine([])
+    assert engine._dw_exe_path
+    print("ExecutionEngine instantiation OK")
+
     summary = reloader.reload_all()
     print("reload_all ->", summary)
     assert "FAILED" not in summary, summary

@@ -104,7 +104,7 @@ _houtools_dispatcher.run("<tool_id>")
 ## 测试
 
 ```
-"D:\Program Files\Side Effects Software\Houdini 22.0.429\python313\python.exe" tests\smoke_test.py
+"C:\Program Files\Side Effects Software\Houdini 22.0.429\python313\python.exe" tests\smoke_test.py
 ```
 
 （按本机 Houdini 安装位置调整路径，须用 Houdini 自带的 Python 3.13。）

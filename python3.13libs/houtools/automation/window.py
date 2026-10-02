@@ -23,7 +23,6 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, QPoint, QSize, QRect, QEvent, QTimer
 from PySide6.QtGui import QColor, QIcon, QKeySequence, QShortcut
-from PySide6.QtGui import QColor, QIcon
 
 from houtools.automation.data_manager import MA_Automation_DataManager
 from houtools.automation.task_types import (
