@@ -205,8 +205,10 @@ def _image_size(oiiotool, image_path, env, interrupt=None):
 def make_thumbnail(lib_dir, hdr_path, interrupt=None):
     """生成单张缩略图，返回缩略图路径；失败或被中断返回 None。
 
-    先写 .part 临时文件再原子改名，避免被中断/失败时留下半张
-    比 HDR 新的坏缩略图（mtime 失效机制会被它骗过）。
+    先写 ~tmp_ 临时文件再原子改名，避免被中断/失败时留下半张
+    比 HDR 新的坏缩略图（mtime 失效机制会被它骗过）。临时名必须
+    以 .jpg 结尾：OIIO 靠扩展名选输出格式写入器，未知后缀（曾用
+    .part）会让 hoiiotool 直接报错，整条生成链路失败。
     """
     oiiotool = _oiiotool_path()
     if not oiiotool:
@@ -214,7 +216,8 @@ def make_thumbnail(lib_dir, hdr_path, interrupt=None):
         return None
     out = thumb_path(lib_dir, hdr_path)
     os.makedirs(os.path.dirname(out), exist_ok=True)
-    tmp_out = out + ".part"
+    tmp_out = os.path.join(os.path.dirname(out),
+                           "~tmp_" + os.path.basename(out))
     env = _ocio_env()
     size = _image_size(oiiotool, hdr_path, env, interrupt)
     if not size or size[0] <= 0:
@@ -291,7 +294,8 @@ def scan_hdrs(lib_dir):
 
 
 def clean_stale_thumbs(lib_dir):
-    """删除已无对应 HDR 的残留缩略图（含 .part 残片），返回删除数量。"""
+    """删除已无对应 HDR 的残留缩略图（含历史 .part 与 ~tmp_ 残片），
+    返回删除数量。"""
     cache = thumb_cache_dir(lib_dir)
     if not os.path.isdir(cache):
         return 0
