@@ -549,7 +549,6 @@ class ThumbnailThread(QtCore.QThread):
 class _HdrLibraryWindow(QtWidgets.QWidget):
     """HDR 库浏览器主窗口（经 window_manager 单例登记）。"""
 
-    REFRESH_MS = 400
     FIT_DELAY_MS = 150     # 面板尺寸变化后重排网格的防抖
     SIDEBAR_MIN = 140
     SIDEBAR_MAX = 300
@@ -735,10 +734,11 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self._icon_timer.setInterval(400)
         self._icon_timer.timeout.connect(self._flush_pending_icons)
 
-        # 定时跟踪 Houdini 选择
-        self._timer = QtCore.QTimer(self)
-        self._timer.timeout.connect(self._poll_selection)
-        self._timer.start(self.REFRESH_MS)
+        # 选中灯光跟踪：注册 Houdini 原生选中变化推送
+        # （hou.ui.addSelectionCallback），无常驻轮询；无 GUI 环境
+        # （无头冒烟测试）没有 hou.ui，跳过注册、label 保持初始文案
+        if self._register_selection_callback():
+            self._on_selection_changed()  # 回调只在变化时触发，先初始化一次
 
         self._update_dir_label()
         # 打开不自动扫描/生成缩略图：点「刷新」才开始
@@ -900,8 +900,6 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        # 恢复 closeEvent 停掉的选中轮询（start 对运行中的 QTimer 只是重置，无害）
-        self._timer.start(self.REFRESH_MS)
         self._fit_grid()
 
     def _fit_grid(self):
@@ -939,15 +937,47 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
 
     # ---------------- 目标灯光跟踪 ----------------
 
-    def _poll_selection(self):
-        targets = []
+    def _register_selection_callback(self) -> bool:
+        """注册 Houdini 全局选中变化推送，返回是否注册成功。
+
+        无 GUI 环境（无头冒烟测试）没有 hou.ui，注册失败属预期，
+        此时左上角 label 不跟踪选择。
+        """
         try:
-            targets = get_target_nodes()
-        except Exception as exc:  # 窗口在无场景/非 GUI 环境下打开时静默
-            log.debug("selection poll failed: %s", exc)
+            import hou
+            hou.ui.addSelectionCallback(self._on_selection_changed)
+            return True
+        except Exception as exc:
+            log.debug("selection push unavailable: %s", exc)
+            return False
+
+    def _unregister_selection_callback(self):
+        """注销选中推送回调。HOM 注册表持有回调强引用，不注销会阻止
+        窗口回收，且 Reload 后回调会打进已销毁的控件。"""
+        try:
+            import hou
+            hou.ui.removeSelectionCallback(self._on_selection_changed)
+        except Exception as exc:
+            # 未注册（无头环境）或已注销（OperationFailed）：预期内跳过
+            log.debug("selection push removal skipped: %s", exc)
+
+    def _on_selection_changed(self, selection=None):
+        """全局选中变化推送回调（也可手动调用做初始刷新）。
+
+        selection 是 Houdini 推来的新选中项全集（含 network box 等非节点
+        项，is_light_node 内部会兜底排除），过滤出灯光后按 0/1/N 更新。
+        """
+        try:
+            if selection is None:
+                targets = get_target_nodes()
+            else:
+                targets = [item for item in selection if is_light_node(item)]
+        except Exception as exc:  # 窗口在无场景/非 GUI 环境下静默
+            log.debug("selection update failed: %s", exc)
+            return
         key = tuple(node.path() for node in targets) or None
         if key == self._last_targets:
-            return  # 选择没变就不动 label，避免每 400ms 无谓重绘
+            return  # 显示无变化就不动 label
         self._last_targets = key
         if not targets:
             self.target_label.setText("灯光: (未选中灯光节点)")
@@ -1167,9 +1197,7 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self._fit_timer.stop()
         self._size_timer.stop()
         self._icon_timer.stop()
-        # 选中轮询是关窗（隐藏）后唯一还在跑的定时器：一并停掉，隐藏期
-        # 零轮询开销（不做任何 hou.selectedNodes 探测）；showEvent 里恢复
-        self._timer.stop()
+        self._unregister_selection_callback()
         thread = self._thread
         if thread is not None:
             try:
