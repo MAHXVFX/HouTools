@@ -661,6 +661,10 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         # ---- 缩略图列表 ----
         self.list = QtWidgets.QListWidget()
         self.list.setViewMode(QtWidgets.QListWidget.IconMode)
+        # IconMode 默认 movement=Free（桌面图标语义：条目可被按住拖离
+        # 网格槽位，且不区分左右键），拖过的条目还会记住自定义位置
+        # 不再随网格重排。固定 Static 锁定网格位置
+        self.list.setMovement(QtWidgets.QListWidget.Static)
         self.list.setResizeMode(QtWidgets.QListWidget.Adjust)
         # 性能关键项：Batched 分批重排 + UniformItemSizes，
         # 条目多时拖动面板/滚动不卡顿
