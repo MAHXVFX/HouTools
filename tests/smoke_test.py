@@ -192,6 +192,31 @@ def main():
     w2.deleteLater()
     aw._PANEL_REFS.clear()
 
+    # 新建配置:OK 后立即创建空配置文件并切换当前配置;同名不覆盖仅切换
+    with tempfile.TemporaryDirectory() as tmp:
+        with patch.object(dm.AutomationDataManager, "_hip_base",
+                          return_value=tmp), \
+             patch("PySide6.QtWidgets.QInputDialog.getText",
+                   return_value=("MAtest", True)), \
+             patch("PySide6.QtWidgets.QMessageBox.information",
+                   return_value=None):
+            win._on_new_config()
+            cfg_dir = Path(tmp) / "HouTools_cfg" / "Automation_json"
+            assert (cfg_dir / "MAtest.json").is_file(), "新建配置未立即落盘"
+            assert json.loads((cfg_dir / "MAtest.json").read_text(
+                encoding="utf-8"))["tasks"] == []
+            assert win._current_config_name == "MAtest"
+            # 同名新建:已有文件不被空配置覆盖,仅切换
+            (cfg_dir / "MAtest.json").write_text(
+                json.dumps({"tasks": [{"type": "OPEN_DW", "params": {},
+                                       "enabled": True}]}),
+                encoding="utf-8")
+            win._on_new_config()
+            data = json.loads(
+                (cfg_dir / "MAtest.json").read_text(encoding="utf-8"))
+            assert data["tasks"], "已有配置被空文件覆盖"
+    print("new config creation OK")
+
     win._remove_slot(0)  # 槽管理冒烟
     print("AutomationWindow instantiation OK")
 

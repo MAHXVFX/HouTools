@@ -384,19 +384,30 @@ def open_floating_panel():
         pass  # 命名失败仅影响标题显示,不阻塞打开
 
     # 打开位置对齐 Video to Sequence(QDialog 默认相对主窗口居中):
-    # createFloatingPanel 默认落在屏幕左下角,这里手动移到主窗口中央
+    # createFloatingPanel 默认落在屏幕左下角。Houdini 会在面板首次布局时
+    # 自行覆盖窗口几何,同步 move 会被盖掉 —— 除立即 move 外,还在事件
+    # 循环里(QTimer.singleShot(0))补一次定位,确保盖过 Houdini 的初始摆位。
+    from PySide6.QtCore import QTimer
+
     win = _qt_floating_window(panel)
     if win is not None:
-        try:
-            main = hou.qt.mainWindow()
-            if main is not None:
+        def _center_panel():
+            try:
+                main = hou.qt.mainWindow()
+                if main is None:
+                    return
                 geo = main.geometry()
                 win.move(
                     geo.x() + max(0, (geo.width() - win.width()) // 2),
                     geo.y() + max(0, (geo.height() - win.height()) // 2),
                 )
-        except Exception:
-            pass  # 定位失败仅回落 Houdini 默认位置
+            except RuntimeError:
+                pass  # 面板窗口已销毁(用户秒关),忽略
+            except Exception:
+                pass  # 定位失败仅回落 Houdini 默认位置
+
+        _center_panel()
+        QTimer.singleShot(0, _center_panel)
     return panel
 
 
@@ -1773,19 +1784,15 @@ class AutomationWindow(QWidget):
         self._load_settings()  # 同步加载新配置的设置项
 
     def _on_new_config(self):
-        """新建配置:弹输入对话框取名并切换为当前保存目标。
+        """新建配置:输入名字确认后**立即**落盘一份空配置文件并切换当前配置。
 
-        只切换名字、**不加载** —— 新配置尚无文件,任务槽保持当前编辑
-        内容;点"执行"时 ``_save_data`` 才把任务写入该名(文件不存在
-        则创建)。独立 QInputDialog 而非在 combo 里键入:Houdini 浮动
-        面板会清空部件焦点,内联编辑不可靠。
+        独立 QInputDialog 而非在 combo 里键入 —— Houdini 浮动面板会
+        清空部件焦点,内联编辑不可靠。同名配置已存在时**不覆盖**(否则
+        会把用户任务清成空),仅切换过去。
         """
         from PySide6.QtWidgets import QInputDialog
 
-        name, ok = QInputDialog.getText(
-            self, "新建配置",
-            "配置名称(点\"执行\"后保存到 HouTools_cfg/Automation_json/ 下):",
-        )
+        name, ok = QInputDialog.getText(self, "新建配置", "")
         if not ok:
             return
         sanitized = _sanitize_config_name(name)
@@ -1795,6 +1802,19 @@ class AutomationWindow(QWidget):
                 "配置名不能为空,不能包含路径分隔符,\n"
                 "也不能使用 Windows 保留名(CON/PRN/AUX/NUL/COM1-9/LPT1-9)。",
             )
+            return
+
+        path = AutomationDataManager.get_data_path(sanitized)
+        if os.path.exists(path):
+            QMessageBox.information(
+                self, "配置已存在",
+                f"配置 {sanitized} 已存在,已切换到该配置(内容未改动)。",
+            )
+        elif not AutomationDataManager.save([], filename=sanitized):
+            logger.warning(
+                "Automation: 新建配置落盘失败 filename=%s", sanitized
+            )
+            QMessageBox.warning(self, "创建失败", f"无法创建配置文件:\n{path}")
             return
         self._current_config_name = sanitized
         # _refresh_config_dropdown 内部 blockSignals,不会触发
@@ -1900,7 +1920,8 @@ class AutomationWindow(QWidget):
 
         保存目标由 ``_get_save_target_name()`` 决定(从下拉当前文本提取):
           - 空 / 全空白 / 含路径分隔符 → fall back 到默认 ``Automation.json``
-          - 其它 → 写到该名 .json(**不存在则创建**,这是"新建配置 + Start"的核心)
+          - 其它 → 写到该名 .json(**不存在则创建**)。新配置的空文件由
+            "新建配置"对话框立即落盘;此处负责把当前任务写进当前配置
 
         **失败处理**:``AutomationDataManager.save()`` 返回 ``False``(写盘
         异常:磁盘满 / 权限 / 只读 / OS 拒绝保留名)时,``logger.warning``
