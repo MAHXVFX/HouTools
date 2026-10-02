@@ -211,29 +211,6 @@ def _extract_parm_path(text: str) -> str:
 INTERFACE_NAME = "Automation"
 """Automation.pypanel 中 <interface name> 的名字。"""
 
-_DEBUG_LOG = PROJECT_ROOT / "settings" / "panel_debug.log"
-
-# 诊断日志大小上限:超过后清空重写,避免无限增长
-_DEBUG_LOG_MAX_BYTES = 1_000_000
-
-
-def _debug_log(message):
-    """把运行时诊断信息追加到 settings/panel_debug.log（排查用）。"""
-    try:
-        from datetime import datetime
-
-        _DEBUG_LOG.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            if _DEBUG_LOG.exists() and _DEBUG_LOG.stat().st_size > _DEBUG_LOG_MAX_BYTES:
-                _DEBUG_LOG.write_text("", encoding="utf-8")
-        except OSError:
-            pass
-        stamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        with open(_DEBUG_LOG, "a", encoding="utf-8") as f:
-            f.write(f"[{stamp}] {message}\n")
-    except Exception:
-        pass
-
 
 def create_panel_widget(parent=None):
     """创建 Python Panel 界面部件（.pypanel 的 onCreateInterface 入口）。"""
@@ -443,10 +420,8 @@ def open_floating_panel():
 
     desktop = hou.ui.curDesktop()
     if _activate_existing_panel(desktop):
-        _debug_log("open_floating_panel: activate existing")
         return None
 
-    _debug_log("open_floating_panel: create new")
     panel = desktop.createFloatingPanel(
         hou.paneTabType.PythonPanel,
         size=(620, 540),

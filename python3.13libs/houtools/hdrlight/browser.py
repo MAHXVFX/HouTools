@@ -22,7 +22,7 @@
   滚动条显隐会翻转列数形成重排死循环，表现为缩略图一直闪。
 - 收藏：右键收藏/取消收藏，侧栏"★ 收藏"一键过滤；收藏以 normcase
   后的绝对路径存 settings（Windows 不区分大小写）。
-- 用户设置（库目录/显示大小/置顶/收藏）经 houtools.core.settings.JsonStore
+- 用户设置（库目录/显示大小/全局置顶/收藏）经 houtools.core.settings.JsonStore
   持久化到项目 settings/ 目录（gitignored，随机器各自保存）。
 - 窗口经 houtools.ui.window_manager 单例登记，Reload 热加载时自动关闭。
 - 本机 hoiiotool（OIIO 2.5.18）的坑：--resize 不支持省略高度的
@@ -73,7 +73,7 @@ LIGHT_HINTS = ("light", "env")
 _SETTINGS = JsonStore("hdr_library.json", defaults={
     "lib_dir": "",          # 空 = 用默认库目录
     "thumb_size": DEFAULT_THUMB_SIZE,
-    "pin_on_top": True,
+    "pin_on_top": False,    # 默认不置顶，勾选后按机器各自记住
     "favorites": [],        # 收藏的 HDR 绝对路径（normcase 后）
 })
 
@@ -571,10 +571,10 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self.dir_label = QtWidgets.QLabel()
         self.dir_btn = QtWidgets.QPushButton("更换目录...")
         self.refresh_btn = QtWidgets.QPushButton("刷新")
-        self.pin_chk = QtWidgets.QCheckBox("置顶")
+        self.pin_chk = QtWidgets.QCheckBox("全局置顶")
         self.pin_chk.setChecked(bool(
             self.windowFlags() & QtCore.Qt.WindowStaysOnTopHint))
-        self.pin_chk.setToolTip("勾选后窗口始终浮在 Houdini 之上；"
+        self.pin_chk.setToolTip("勾选后窗口始终浮在所有软件之上；"
                                 "取消勾选或手动最小化则恢复正常")
         self.size_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.size_slider.setRange(64, 256)
