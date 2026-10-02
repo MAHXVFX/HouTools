@@ -238,13 +238,75 @@ def main():
     assert engine._dw_exe_path
     print("ExecutionEngine instantiation OK")
 
-    # Hdr Library 窗口实例化（库目录指向空临时目录，不触发缩略图生成）
+    # Hdr Library:子文件夹分类扫描 + 缩略图相对路径命名
     from houtools.hdrlight import browser as hdr_browser
     with tempfile.TemporaryDirectory() as tmp:
-        hdr_win = hdr_browser._HdrLibraryWindow(tmp)
-        assert hdr_win.list.count() == 0
-        hdr_win.deleteLater()
-    print("HdrLibrary window instantiation OK")
+        Path(tmp, "sunset.hdr").touch()
+        day = Path(tmp, "day"); day.mkdir()
+        (day / "noon.exr").touch()
+        (day / "a.hdr").touch()
+        (day / "nested").mkdir()
+        (day / "nested" / "deep.hdr").touch()  # 嵌套子文件夹归到第一级分类
+        night = Path(tmp, "night"); night.mkdir()
+        (night / "a.hdr").touch()  # 与 day 下同名，验证缩略图命名不冲突
+        (night / ".thumb_cache").mkdir()
+        (night / ".thumb_cache" / "junk.hdr").touch()  # 隐藏目录不扫描
+
+        results = hdr_browser.scan_hdrs(tmp)
+        assert len(results) == 5, results  # 5 个 HDR，隐藏目录里的不算
+        rels_cats = {(os.path.relpath(p, tmp), c) for p, c, _t in results}
+        assert ("sunset.hdr", "") in rels_cats, rels_cats          # 根目录 → 未分类
+        assert (os.path.join("day", "noon.exr"), "day") in rels_cats
+        assert (os.path.join("day", "nested", "deep.hdr"), "day") in rels_cats  # 嵌套归第一级
+        assert not any("thumb_cache" in rp for rp, _c in rels_cats), rels_cats
+        # 两个 a.hdr 缩略图路径必须不同；根目录文件命名与旧版一致
+        assert hdr_browser.thumb_path(tmp, str(day / "a.hdr")) != \
+            hdr_browser.thumb_path(tmp, str(night / "a.hdr"))
+        assert os.path.basename(
+            hdr_browser.thumb_path(tmp, str(Path(tmp) / "sunset.hdr"))) \
+            == "sunset.jpg"
+        print("HdrLibrary subfolder scan OK")
+
+        # 收藏 + 侧栏过滤（用临时 JsonStore，不污染真实 settings/；
+        # defaults 需含窗口构造读取的全部键）
+        from PySide6 import QtCore
+        fav_store = houtools.core.settings.JsonStore(
+            "_smoke_hdr.json",
+            defaults={"favorites": [], "thumb_size": 128, "pin_on_top": True})
+        fav_store.set("favorites", [])  # 上次异常中断可能残留旧收藏
+        with patch.object(hdr_browser, "_SETTINGS", fav_store):
+            assert not hdr_browser.get_favorites()
+            target = str(day / "a.hdr")
+            assert hdr_browser.set_favorite(target, True) is True
+            assert hdr_browser.set_favorite(target, True) is True  # 幂等
+            win = hdr_browser._HdrLibraryWindow(tmp)
+            assert win.list.count() == 5, win.list.count()
+            # 侧栏：全部 / 收藏 / 未分类(根目录文件) / day / night
+            keys = [win.sidebar.item(i).data(QtCore.Qt.UserRole)
+                    for i in range(win.sidebar.count())]
+            assert keys[0] == hdr_browser.KEY_ALL, keys
+            assert keys[1] == hdr_browser.KEY_FAV, keys
+            assert sorted(keys[2:]) == ["", "day", "night"], keys
+            fav_item = next(it for it in (win.list.item(i) for i in range(5))
+                            if it.data(QtCore.Qt.UserRole) == target)
+            assert fav_item.text().startswith("★"), fav_item.text()
+            # 收藏视图过滤：5 个里只有 1 个收藏
+            win._select_category(hdr_browser.KEY_FAV)
+            assert win._visible_count() == 1, win._visible_count()
+            # 取消收藏后从收藏视图消失
+            win._set_favorite(fav_item, False)
+            assert win._visible_count() == 0
+            assert not hdr_browser.get_favorites()
+            # 全部视图恢复
+            win._select_category(hdr_browser.KEY_ALL)
+            assert win._visible_count() == 5
+            # 5 个缺缩略图的 HDR 会启动后台生成线程，销毁前必须停掉
+            if win._thread is not None and win._thread.isRunning():
+                win._thread.requestInterruption()
+                assert win._thread.wait(5000), "thumbnail thread not stopping"
+            win.deleteLater()
+        fav_store.path.unlink(missing_ok=True)
+    print("HdrLibrary window + favorites OK")
 
     summary = reloader.reload_all()
     print("reload_all ->", summary)
