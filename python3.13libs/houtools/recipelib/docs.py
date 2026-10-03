@@ -15,6 +15,7 @@ Houdini 已创建主 QApplication，本仓库已实测确认）。能力边界�
 """
 
 import os
+import re
 from urllib.parse import unquote
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -27,7 +28,6 @@ from houtools.recipelib import metadata
 log = get_logger("recipelib.docs")
 
 PREVIEW_DEBOUNCE_MS = 300
-MEDIA_WIDGET_MAX_W = 420
 
 
 class _DocPreview(QtWidgets.QTextBrowser):
@@ -69,8 +69,8 @@ class _DocPreview(QtWidgets.QTextBrowser):
             QtGui.QDesktopServices.openUrl(url)
 
 
-class _GifLabel(QtWidgets.QLabel):
-    """文档流里的内联动图（QMovie 循环播放）。"""
+class _MovieLabel(QtWidgets.QLabel):
+    """GIF 播放标签（MediaDialog 用，QMovie 循环播放）。"""
 
     def __init__(self, path, max_w, parent=None):
         super().__init__(parent)
@@ -86,16 +86,68 @@ class _GifLabel(QtWidgets.QLabel):
         movie.start()
 
 
-class _VideoButton(QtWidgets.QToolButton):
-    """文档流里的视频占位：点击弹播放器。"""
+class MarkdownMediaView(_DocPreview):
+    """可渲染 markdown + 内联媒体的预览视图（文档编辑器右栏与主面板共用）。
 
-    def __init__(self, path, parent=None):
-        super().__init__(parent)
-        self._path = path
-        self.setText("▶ " + os.path.basename(path))
-        self.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
-        self.clicked.connect(
-            lambda: MediaDialog.open_media(self.window(), self._path))
+    - GIF：QMovie 逐帧同步进文档资源（loadResource 返回当前帧 +
+      frameChanged 时 addResource + viewport 刷新），真正内联动画；
+      超宽的帧按视口宽度等比缩小
+    - 视频：set_markdown_with_media 前把 ![](x.mp4) 预处理成普通链接
+      （QTextCursor 无 insertWidget，Qt 富文本不支持内嵌控件），点击
+      链接由 _DocPreview._on_anchor 弹播放器
+    """
+
+    _VIDEO_IMAGE_RE = re.compile(
+        r"!\[([^\]]*)\]\(([^)]+\.(?:mp4|mov|avi|webm|mkv))\)", re.IGNORECASE)
+
+    def __init__(self, doc_dir, parent=None):
+        super().__init__(doc_dir, parent)
+        self._movies = {}   # 文档里的 url 字符串 -> QMovie
+
+    def set_markdown_with_media(self, text):
+        self.stop_media()
+        text = self._VIDEO_IMAGE_RE.sub(r"[▶ \1](\2)", text)
+        self.setMarkdown(text)
+        # QMovie 在布局首次查询图片资源时经 loadResource 惰性创建并启动
+
+    def stop_media(self):
+        for movie in self._movies.values():
+            movie.stop()
+        self._movies.clear()
+
+    def _on_movie_frame(self, url_str):
+        movie = self._movies.get(url_str)
+        if movie is not None:
+            self.document().addResource(
+                QtGui.QTextDocument.ImageResource, QtCore.QUrl(url_str),
+                self._movie_frame_pixmap(movie))
+            self.viewport().update()
+
+    def _movie_frame_pixmap(self, movie):
+        pm = movie.currentPixmap()
+        max_w = max(120, self.viewport().width() - 12)
+        if not pm.isNull() and pm.width() > max_w:
+            pm = pm.scaledToWidth(max_w, QtCore.Qt.SmoothTransformation)
+        return pm
+
+    def loadResource(self, rtype, url):
+        if rtype == QtGui.QTextDocument.ImageResource:
+            url_str = url.toString()
+            if url_str.lower().split("?", 1)[0].endswith(".gif"):
+                movie = self._movies.get(url_str)
+                if movie is None:
+                    path = self._resolve(url)
+                    if os.path.exists(path):
+                        movie = QtGui.QMovie(self)
+                        movie.setFileName(path)
+                        movie.setCacheMode(QtGui.QMovie.CacheAll)
+                        movie.frameChanged.connect(
+                            lambda _i, u=url_str: self._on_movie_frame(u))
+                        self._movies[url_str] = movie
+                        movie.start()
+                if movie is not None:
+                    return self._movie_frame_pixmap(movie)
+        return super().loadResource(rtype, url)
 
 
 class MediaDialog(QtWidgets.QDialog):
@@ -132,7 +184,7 @@ class MediaDialog(QtWidgets.QDialog):
         lay.setContentsMargins(8, 8, 8, 8)
         ext = os.path.splitext(path)[1].lower()
         if ext == ".gif":
-            label = _GifLabel(path, 640, self)
+            label = _MovieLabel(path, 640, self)
             lay.addWidget(label, 1)
             return
 
@@ -191,24 +243,26 @@ class DocEditorDialog(QtWidgets.QDialog):
 
     - 插入图片/视频把文件复制进配方 assets/，正文插入相对引用
     - 预览自动刷新（防抖）；GIF 原地动、视频渲染成播放按钮
-    - 文本防抖自动保存（800ms）+ 关窗即存
+    - 文本防抖自动保存（800ms）+ 关窗即存；保存后发 docSaved 信号
+      （主面板订阅，同步刷新该配方的文档预览）
     """
 
-    def __init__(self, parent, info):
+    docSaved = QtCore.Signal(str)   # recipe 内部名
+
+    def __init__(self, parent, info, display_label=None):
         super().__init__(parent)
-        self.setWindowTitle("文档 - {}".format(info.display_label))
+        self.setWindowTitle("文档 - {}".format(display_label
+                                              or info.display_label))
         self.setModal(False)
         self.resize(960, 620)
         self._info = info
         self._name = info.name
         self._doc_dir = metadata.doc_dir(self._name)
-        self._widgets = []      # 预览里替换出来的媒体控件（重渲染前清理）
-        self._movie_labels = []
 
         self.editor = QtWidgets.QPlainTextEdit()
         self.editor.setPlainText(
             metadata.ensure_doc(self._name, metadata.doc_template(info)))
-        self.preview = _DocPreview(self._doc_dir)
+        self.preview = MarkdownMediaView(self._doc_dir)
 
         insert_img = QtWidgets.QPushButton("插入图片...")
         insert_media = QtWidgets.QPushButton("插入视频/GIF...")
@@ -259,6 +313,7 @@ class DocEditorDialog(QtWidgets.QDialog):
     def _save(self):
         try:
             metadata.write_doc(self._name, self.editor.toPlainText())
+            self.docSaved.emit(self._name)
         except OSError as exc:
             log.warning("save doc failed for %s: %s", self._name, exc)
 
@@ -288,55 +343,7 @@ class DocEditorDialog(QtWidgets.QDialog):
     # ---------------- 预览渲染 ----------------
 
     def _render_preview(self):
-        view = self.preview
-        # 清掉上一轮替换出的媒体控件（QMovie 必须停掉再销毁）
-        for w in self._widgets:
-            w.hide()
-            w.deleteLater()
-        self._widgets = []
-        view.setUpdatesEnabled(False)
-        try:
-            view.setMarkdown(self.editor.toPlainText())
-            self._replace_media_widgets()
-        finally:
-            view.setUpdatesEnabled(True)
-
-    def _replace_media_widgets(self):
-        """把文档流里的 GIF / 视频占位字符替换成活的控件。
-
-        QTextBrowser 把 ![](x.gif) 渲染成静态首帧（GIF 插件只读首帧）、
-        把 ![](x.mp4) 渲染成裂图占位；统一定位后按文档位置从后往前替换
-        （insertWidget 用选中字符换控件），位置才不会失效。
-        """
-        doc = self.preview.document()
-        targets = []  # (position, resolved_path)
-        block = doc.firstBlock()
-        while block.isValid():
-            it = block.begin()
-            while not it.atEnd():
-                frag = it.fragment()
-                if frag.isValid() and frag.charFormat().isImageFormat():
-                    src = unquote(frag.charFormat().toImageFormat().name())
-                    path = src if os.path.isabs(src) else os.path.join(
-                        self._doc_dir, src)
-                    ext = os.path.splitext(src)[1].lower()
-                    if os.path.exists(path) and (ext in metadata.VIDEO_EXTS
-                                                 or ext == ".gif"):
-                        targets.append((frag.position(), path))
-                it += 1
-            block = block.next()
-        for pos, path in reversed(targets):
-            ext = os.path.splitext(path)[1].lower()
-            if ext == ".gif":
-                widget = _GifLabel(path, MEDIA_WIDGET_MAX_W, self.preview)
-                self._movie_labels.append(widget)
-            else:
-                widget = _VideoButton(path, self.preview)
-            cursor = QtGui.QTextCursor(doc)
-            cursor.setPosition(pos)
-            cursor.setPosition(pos + 1, QtGui.QTextCursor.KeepAnchor)
-            cursor.insertWidget(widget)
-            self._widgets.append(widget)
+        self.preview.set_markdown_with_media(self.editor.toPlainText())
 
     def closeEvent(self, event):
         self._save()

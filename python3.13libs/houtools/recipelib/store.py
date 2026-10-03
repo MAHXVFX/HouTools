@@ -58,7 +58,11 @@ class RecipeInfo:
 
     @property
     def display_label(self):
-        return self.label or self.name
+        """官方显示链：官方 label > 内部名末段（mahx::my_copy_test →
+        my_copy_test）。用户自定义显示名在 browser/metadata 层叠加。"""
+        if self.label:
+            return self.label
+        return self.name.rsplit("::", 1)[-1] or self.name
 
 
 def _norm(path):
@@ -248,7 +252,7 @@ def _read_header(info, hfs):
             if lb:
                 info.label = info.label or str(lb)
                 break
-        info.label = info.label or info.name
+        # 不在此处回退内部名：display_label 属性统一处理"末段"回退
 
         subs = props.get("submenu")
         if not subs:

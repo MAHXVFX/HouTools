@@ -409,6 +409,11 @@ def main():
 
     rl_store_ps = houtools.core.settings.JsonStore(
         "_smoke_recipelib.json", defaults=dict(rl_meta._DEFAULTS))
+    # 上次异常中断可能残留旧状态（文件持久），先清干净
+    rl_store_ps.set("favorites", [])
+    rl_store_ps.set("tags", {})
+    rl_store_ps.set("display_names", {})
+    rl_store_ps.set("thumbs", {})
     with tempfile.TemporaryDirectory() as tmp:
         with patch.object(rl_meta, "_SETTINGS", rl_store_ps), \
              patch.object(rl_meta, "THUMBS_DIR", Path(tmp) / "thumbs"), \
@@ -457,6 +462,23 @@ def main():
             assert "常用" in rl_meta.all_tags()
             rl_meta.set_tags(name, [])
             assert rl_meta.get_tags(name) == []
+
+            # 自定义显示名（支持中文）：设置/覆盖/清除
+            assert rl_meta.get_display_name(name) == ""
+            rl_meta.set_display_name(name, "我的 拷贝工具")
+            assert rl_meta.get_display_name(name) == "我的 拷贝工具"
+            rl_meta.set_display_name(name, "另一个名")
+            assert rl_meta.get_display_name(name) == "另一个名"
+            rl_meta.set_display_name(name, None)
+            assert rl_meta.get_display_name(name) == ""
+
+            # 显示链：官方 label 优先；无 label 回退内部名末段
+            # （官方保存时 label 常为空，如 mahx::my_copy_test → my_copy_test）
+            assert rl_store.RecipeInfo(
+                name="mahx::my_copy_test").display_label == "my_copy_test"
+            assert rl_store.RecipeInfo(
+                name="houtools::a", label="My Label").display_label \
+                == "My Label"
 
             # 缩略图：按原扩展名落盘，get 校验存在性，清除同步删文件
             src = Path(tmp) / "t.gif"
@@ -529,11 +551,60 @@ def main():
                 win.search.setText("")
                 win._apply_filter()
                 assert win.list.count() == 2
-                # 预览面板联动：选中后名称/元信息/按钮就绪
+                # 预览面板联动：选中后名称/元信息/按钮就绪；
+                # 名称走显示链，元信息第一行是内部名称
                 win.list.setCurrentRow(0)
-                assert win.preview_name.text(), "preview name empty"
-                assert win.preview_meta.text(), "preview meta empty"
+                assert win.preview_name.text() == "Pyro A", win.preview_name.text()
+                assert win.preview_meta.text().startswith(
+                    "内部名称: houtools::pyro::a"), win.preview_meta.text()
                 assert win.fav_btn.isEnabled()
+                # 自定义显示名（中文）覆盖网格文本与搜索；
+                # 收藏不再加名字前缀，角标合成在图标里（_icon_for）
+                rl_meta.set_display_name("houtools::pyro::a", "火焰·常用")
+                win._apply_filter()
+                assert win.list.item(0).text() == "火焰·常用", \
+                    win.list.item(0).text()
+                assert not win.list.item(0).text().startswith("★")
+                win.search.setText("火焰")
+                win._apply_filter()
+                assert win.list.count() == 1
+                win.search.setText("")
+                win._apply_filter()
+                # 重命名流程（QInputDialog 打桩）：改名进元数据并刷新预览，
+                # 清空输入恢复默认
+                win.list.setCurrentRow(1)
+                with patch("PySide6.QtWidgets.QInputDialog.getText",
+                           return_value=("拷贝神器", True)):
+                    win._rename_selected()
+                assert rl_meta.get_display_name("houtools::light::b") \
+                    == "拷贝神器"
+                assert win.preview_name.text() == "拷贝神器"
+                with patch("PySide6.QtWidgets.QInputDialog.getText",
+                           return_value=("", True)):
+                    win._rename_selected()
+                assert rl_meta.get_display_name("houtools::light::b") == ""
+                assert win.preview_name.text() == "Light B"
+                # 点空白处取消选中：预览面板复位为空态
+                win.list.setCurrentRow(0)
+                assert win.preview_name.text()
+                win.list.emptyClicked.emit()
+                assert win.preview_name.text() == "", win.preview_name.text()
+                assert not win.place_btn.isEnabled()
+                win.list.setCurrentRow(0)
+                assert win.fav_btn.isEnabled()
+                # 有文档时预览面板直接渲染 markdown 文档内容，
+                # 无文档的配方回退显示官方备注
+                rl_meta.ensure_doc("houtools::pyro::a", "# 标题甲\n\n正文乙\n")
+                win.list.setCurrentRow(-1)  # 行未变化不触发选中信号，先清再选
+                win.list.setCurrentRow(0)
+                assert win.preview_doc.isVisibleTo(win), "doc view hidden"
+                assert "标题甲" in win.preview_doc.toPlainText()
+                assert not win.preview_comment.isVisibleTo(win)
+                win.list.setCurrentRow(1)
+                assert win.preview_comment.isVisibleTo(win)
+                assert not win.preview_doc.isVisibleTo(win)
+                rl_meta.delete_doc_dir("houtools::pyro::a")
+                rl_meta.set_display_name("houtools::pyro::a", None)
                 # 应用分发：node 预设无选中 → 引导文案（不触 hou）
                 with patch.object(rl_browser.store, "selected_nodes",
                                   return_value=[]):

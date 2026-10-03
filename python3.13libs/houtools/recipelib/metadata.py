@@ -29,10 +29,11 @@ from houtools.core.settings import JsonStore
 log = get_logger("recipelib.metadata")
 
 _DEFAULTS = {
-    "lib_dirs": [],    # recipe 库文件夹（可多个；递归扫描其中的 .hda）
-    "favorites": [],   # 收藏的 recipe 内部名列表
-    "tags": {},        # 内部名 -> [标签...]
-    "thumbs": {},      # 内部名 -> 缩略图绝对路径
+    "lib_dirs": [],        # recipe 库文件夹（可多个；递归扫描其中的 .hda）
+    "favorites": [],       # 收藏的 recipe 内部名列表
+    "tags": {},            # 内部名 -> [标签...]
+    "thumbs": {},          # 内部名 -> 缩略图绝对路径
+    "display_names": {},   # 内部名 -> 用户自定义显示名（支持中文）
 }
 
 _SETTINGS = JsonStore("recipelib.json", defaults=_DEFAULTS)
@@ -77,6 +78,30 @@ def set_lib_dirs(dirs):
             clean.append(d)
     _SETTINGS.set("lib_dirs", clean)
     return clean
+
+
+# --------------------------------------------------------------------------
+# 自定义显示名
+# --------------------------------------------------------------------------
+
+def get_display_name(name):
+    """用户自定义的显示名（支持中文）；未设置返回空串。"""
+    return (_SETTINGS.get("display_names") or {}).get(name) or ""
+
+
+def set_display_name(name, title):
+    """写入自定义显示名；传空串/None 清除（恢复默认显示链）。
+
+    只改展示层，recipe 内部名与官方 label 均不动。
+    """
+    all_names = dict(_SETTINGS.get("display_names") or {})
+    title = (str(title) if title is not None else "").strip()
+    if title:
+        all_names[name] = title
+    else:
+        all_names.pop(name, None)
+    _SETTINGS.set("display_names", all_names)
+    return title
 
 
 # --------------------------------------------------------------------------

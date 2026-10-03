@@ -17,18 +17,29 @@ reload() 里经 store.list_recipes()（测试里打补丁替换）。
 """
 
 import os
+from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+try:
+    from PySide6 import QtSvg
+except ImportError:  # QtSvg 缺失时收藏角标降级为不显示（正常环境都有）
+    QtSvg = None
+
 from houtools.core.log import get_logger
 from houtools.recipelib import metadata, store
-from houtools.recipelib.docs import DocEditorDialog, MediaDialog
+from houtools.recipelib.docs import DocEditorDialog, MarkdownMediaView, MediaDialog
 from houtools.ui.taskbar import apply_appwindow_flags
 from houtools.core.settings import JsonStore
 
 log = get_logger("recipelib.browser")
 
 TOOL_ID = "recipe_library"
+
+# 收藏角标（缩略图右上角叠加），SVG 放仓库 icons/，__file__ 解析绝对
+# 路径（Houdini 启动 CWD 不固定，相对路径会失效）
+_ICONS_DIR = Path(__file__).resolve().parent.parent / "icons"
+_FAV_BADGE_SVG = _ICONS_DIR / "favorite_badge.svg"
 
 
 def _push_houdini_error(message):
@@ -59,9 +70,11 @@ _UI_SETTINGS = JsonStore("recipelib_ui.json", defaults={
 
 
 class _Grid(QtWidgets.QListWidget):
-    """缩略图网格：识别"按住左键拖动"手势交给窗口（自研拖拽入网）。"""
+    """缩略图网格：识别"按住左键拖动"手势交给窗口（自研拖拽入网）；
+    左键点在条目外的空白处则取消选中。"""
 
     dragStarted = QtCore.Signal(object)
+    emptyClicked = QtCore.Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -70,6 +83,8 @@ class _Grid(QtWidgets.QListWidget):
     def mousePressEvent(self, event):
         if event.button() == QtCore.Qt.LeftButton:
             self._press_pos = event.position().toPoint()
+            if self.itemAt(self._press_pos) is None:
+                self.emptyClicked.emit()
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
@@ -88,6 +103,16 @@ class _Grid(QtWidgets.QListWidget):
     def mouseReleaseEvent(self, event):
         self._press_pos = None
         super().mouseReleaseEvent(event)
+
+
+class _PreviewNameLabel(QtWidgets.QLabel):
+    """预览面板的名称标签：双击可自定义显示名（支持中文）。"""
+
+    nameDoubleClicked = QtCore.Signal()
+
+    def mouseDoubleClickEvent(self, event):
+        self.nameDoubleClicked.emit()
+        super().mouseDoubleClickEvent(event)
 
 
 class _LibraryDirsDialog(QtWidgets.QDialog):
@@ -217,8 +242,11 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self._thumb_cache = {}      # name -> QIcon（GIF 首帧也在这里）
         self._preview_movie = None
         self._doc_dialog = None
+        self._preview_info = None
         self._drag_state = None     # 拖拽中: {name, ghost}
         self._placeholder = self._placeholder_icon()
+        self._fav_icon_cache = {}   # (name, w, h) -> 合成角标后的 QIcon
+        self._badge_cache = {}      # badge_size -> QPixmap
         self._loaded = False        # 首次 show 时自动枚举（见 showEvent）
 
         # ---- 顶部栏 ----
@@ -268,13 +296,19 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.list.setMovement(QtWidgets.QListWidget.Static)
         self.list.setResizeMode(QtWidgets.QListWidget.Adjust)
         self.list.setLayoutMode(QtWidgets.QListWidget.Batched)
-        self.list.setUniformItemSizes(True)
+        # UniformItemSizes 必须关（离屏渲染实测）：缩略图原图尺寸超过
+        # iconSize 时（竖版 GIF/PNG 很常见），条目 sizeHint 按原图算、
+        # 超出 gridSize，Uniform 模式按首个条目的尺寸强行裁剪——表现为
+        # 该条目文字标签整个不可见、图标比例失真。本工具条目量小（用户
+        # 库），不需要 Uniform 的布局优化
+        self.list.setUniformItemSizes(False)
         self.list.setWordWrap(True)
         self.list.itemDoubleClicked.connect(self._on_double_click)
         self.list.currentItemChanged.connect(self._on_selection_changed)
         self.list.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._on_context_menu)
         self.list.dragStarted.connect(self._start_drag)
+        self.list.emptyClicked.connect(self._clear_selection)
         self._apply_grid_size()
 
         # ---- 右侧预览面板 ----
@@ -285,15 +319,22 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             "background-color: #1D1D20; border: 1px solid #3d3d3d; "
             "border-radius: 6px; color: #666666;")
 
-        self.preview_name = QtWidgets.QLabel()
+        self.preview_name = _PreviewNameLabel()
         self.preview_name.setWordWrap(True)
         self.preview_name.setStyleSheet("font-weight: bold; font-size: 14px;")
+        self.preview_name.setToolTip("双击可自定义显示名称（支持中文）")
+        self.preview_name.nameDoubleClicked.connect(self._rename_selected)
         self.preview_meta = QtWidgets.QLabel()
         self.preview_meta.setWordWrap(True)
         self.preview_meta.setStyleSheet("color: #888888;")
         self.preview_comment = QtWidgets.QLabel()
         self.preview_comment.setWordWrap(True)
         self.preview_comment.setStyleSheet("color: #aaaaaa;")
+        # 有文档时直接渲染 markdown 文档内容（内联 GIF/视频按钮），
+        # 无文档时隐藏、显示官方备注 comment
+        self.preview_doc = MarkdownMediaView("")
+        self.preview_doc.setStyleSheet(
+            "color: #cccccc; background: transparent; border: none;")
 
         self.tags_edit = QtWidgets.QLineEdit()
         self.tags_edit.setPlaceholderText("标签，逗号分隔")
@@ -311,6 +352,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         pv.addWidget(self.preview_name)
         pv.addWidget(self.preview_meta)
         pv.addWidget(self.preview_comment, 1)
+        pv.addWidget(self.preview_doc, 1)
         tag_row = QtWidgets.QHBoxLayout()
         tag_row.addWidget(self.tags_edit, 1)
         tag_row.addWidget(self.tags_apply_btn)
@@ -472,12 +514,21 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
                 break
         self.sidebar.blockSignals(False)
 
+    def _display_label(self, info):
+        """网格/预览用的显示名链：用户自定义名 > 官方 label >
+        内部名末段（自定义名支持中文，存元数据层）。"""
+        custom = metadata.get_display_name(info.name)
+        if custom:
+            return custom
+        return info.display_label
+
     def _match_search(self, info):
         text = self.search.text().strip().lower()
         if not text:
             return True
         tags = " ".join(metadata.get_tags(info.name))
-        hay = " ".join([info.display_label, info.name, info.comment, tags])
+        hay = " ".join([self._display_label(info), info.name,
+                        info.comment, tags])
         return text in hay.lower()
 
     def _match_category(self, info):
@@ -506,10 +557,10 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
                 item = QtWidgets.QListWidgetItem()
                 item.setData(QtCore.Qt.UserRole, info.name)
                 fav = metadata.is_favorite(info.name)
-                item.setText("★ " + info.display_label if fav
-                             else info.display_label)
+                # 收藏不再加名字前缀，角标画在缩略图右上角（见 _icon_for）
+                item.setText(self._display_label(info))
                 item.setToolTip(self._tooltip_for(info))
-                item.setIcon(self._icon_for(info))
+                item.setIcon(self._icon_for(info, fav))
                 self.list.addItem(item)
         finally:
             self.list.setUpdatesEnabled(True)
@@ -532,7 +583,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         return key
 
     def _tooltip_for(self, info):
-        lines = [info.name]
+        lines = [self._display_label(info), "内部名称: " + info.name]
         tags = metadata.get_tags(info.name)
         if tags:
             lines.append("标签: " + ", ".join(tags))
@@ -544,8 +595,23 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
 
     # ---------------- 图标与预览 ----------------
 
-    def _icon_for(self, info):
-        """网格图标：缩略图文件；GIF 取首帧（网格保持静态，预览区才动）。"""
+    def _icon_for(self, info, fav=False):
+        """网格图标：缩略图文件；GIF 取首帧（网格保持静态，预览区才动）。
+        fav=True 时在缩略图右上角合成收藏角标（按当前 iconSize 合成，
+        尺寸变化时缓存整体失效重合成）。"""
+        base = self._base_icon(info)
+        if not fav or base is None:
+            return base
+        isz = self.list.iconSize()
+        key = (info.name, isz.width(), isz.height())
+        icon = self._fav_icon_cache.get(key)
+        if icon is None:
+            icon = self._composite_fav_icon(base)
+            self._fav_icon_cache[key] = icon
+        return icon
+
+    def _base_icon(self, info):
+        """无角标的底图（按内部名缓存）。"""
         icon = self._thumb_cache.get(info.name)
         if icon is not None:
             return icon
@@ -564,11 +630,94 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self._thumb_cache[info.name] = icon
         return icon
 
+    def _fav_badge_pixmap(self, size):
+        """渲染收藏角标（SVG 本体 + 柔和投影）为透明底 QPixmap。
+
+        QPainter 没有内建模糊，投影走 QGraphicsDropShadowEffect 的
+        离屏场景渲染（高斯模糊从源 alpha 生成）。画布四周留 pad 容纳
+        模糊溢出，返回的画布比角标本体大——合成时按 -pad 偏移贴角，
+        角标视觉边缘仍对齐缩略图右上角。按尺寸缓存。
+        """
+        size = max(1, int(size))
+        pm = self._badge_cache.get(size)
+        if pm is not None:
+            return pm
+        blur = max(2, size // 7)
+        offset = max(1, size // 14)
+        pad = blur + offset + 2
+        canvas_w = size + pad * 2
+        pm = QtGui.QPixmap(canvas_w, canvas_w)
+        pm.fill(QtCore.Qt.transparent)
+        renderer = self._badge_renderer()
+        if renderer is not None:
+            badge_src = QtGui.QPixmap(size, size)
+            badge_src.fill(QtCore.Qt.transparent)
+            sp = QtGui.QPainter(badge_src)
+            renderer.render(sp, QtCore.QRectF(0, 0, size, size))
+            sp.end()
+
+            scene = QtWidgets.QGraphicsScene(0, 0, canvas_w, canvas_w)
+            item = scene.addPixmap(badge_src)
+            item.setPos(pad, pad)
+            effect = QtWidgets.QGraphicsDropShadowEffect()
+            effect.setBlurRadius(blur)
+            effect.setOffset(offset, offset)
+            effect.setColor(QtGui.QColor(0, 0, 0, 170))
+            item.setGraphicsEffect(effect)
+            rp = QtGui.QPainter(pm)
+            scene.render(rp, QtCore.QRectF(0, 0, canvas_w, canvas_w),
+                         QtCore.QRectF(0, 0, canvas_w, canvas_w))
+            rp.end()
+        self._badge_cache[size] = pm
+        return pm
+
+    def _badge_renderer(self):
+        if not hasattr(self, "_badge_renderer_cache"):
+            self._badge_renderer_cache = None
+            if QtSvg is None:
+                log.warning("QtSvg unavailable, favorite badge disabled")
+            elif not _FAV_BADGE_SVG.is_file():
+                log.warning("favorite badge svg missing: %s", _FAV_BADGE_SVG)
+            else:
+                renderer = QtSvg.QSvgRenderer(str(_FAV_BADGE_SVG))
+                if not renderer.isValid():
+                    log.warning("favorite badge svg invalid: %s",
+                                _FAV_BADGE_SVG)
+                    renderer = None
+                self._badge_renderer_cache = renderer
+        return self._badge_renderer_cache
+
+    def _composite_fav_icon(self, base):
+        """底图 + 右上角角标合成（画布取底图按 iconSize 等比缩放后的
+        实际尺寸，角标贴缩略图右上角而非网格槽位角）。"""
+        isz = self.list.iconSize()
+        base_pm = base.pixmap(isz)
+        if base_pm.isNull():
+            return base
+        canvas = QtGui.QPixmap(base_pm.size())
+        canvas.fill(QtCore.Qt.transparent)
+        painter = QtGui.QPainter(canvas)
+        painter.drawPixmap(0, 0, base_pm)
+        badge_size = max(14, min(44, int(base_pm.width() * 0.24)))
+        badge = self._fav_badge_pixmap(badge_size)
+        margin = max(3, badge_size // 8)
+        # badge 画布含投影余量（四周 pad），按 -pad 贴回视觉角落
+        pad = (badge.width() - badge_size) // 2
+        painter.drawPixmap(base_pm.width() - badge_size - margin - pad,
+                           margin - pad, badge)
+        painter.end()
+        return QtGui.QIcon(canvas)
+
     def _placeholder_icon(self):
-        pm = QtGui.QPixmap(96, 64)
+        # 256px 档：QIcon 不会把小图放大，占位图太小会在大网格下与真实
+        # 缩略图尺寸不一致；给足尺寸让各档位都由 QIcon 缩小呈现
+        pm = QtGui.QPixmap(256, 168)
         pm.fill(QtGui.QColor("#313136"))
         painter = QtGui.QPainter(pm)
         painter.setPen(QtGui.QColor("#666666"))
+        f = painter.font()
+        f.setPixelSize(22)
+        painter.setFont(f)
         painter.drawText(pm.rect(), QtCore.Qt.AlignCenter, "recipe")
         painter.end()
         return QtGui.QIcon(pm)
@@ -582,6 +731,15 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.list.setIconSize(QtCore.QSize(base, int(base * 0.66)))
         self.list.setGridSize(QtCore.QSize(base + GRID_PADDING_X,
                                            int(base * 0.66) + GRID_PADDING_Y))
+        # 角标按 iconSize 合成，尺寸变了缓存失效并刷新现有条目的图标
+        if self._fav_icon_cache:
+            self._fav_icon_cache.clear()
+            for i in range(self.list.count()):
+                item = self.list.item(i)
+                info = self._info_by_name.get(item.data(QtCore.Qt.UserRole))
+                if info is not None:
+                    item.setIcon(self._icon_for(
+                        info, metadata.is_favorite(info.name)))
 
     def _on_selection_changed(self, current, _previous=None):
         if current is None:
@@ -597,6 +755,10 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             return None
         return self._info_by_name.get(item.data(QtCore.Qt.UserRole))
 
+    def _clear_selection(self):
+        """点空白处取消选中：currentItem 置空，预览面板随之复位。"""
+        self.list.setCurrentRow(-1)
+
     def _clear_preview(self):
         self._stop_preview_movie()
         self.preview_label.setPixmap(QtGui.QPixmap())
@@ -604,6 +766,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.preview_name.setText("")
         self.preview_meta.setText("")
         self.preview_comment.setText("")
+        self.preview_doc.setVisible(False)
         self.tags_edit.setText("")
         for btn in (self.fav_btn, self.doc_btn, self.place_btn,
                     self.thumb_btn, self.tags_apply_btn):
@@ -613,11 +776,13 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         for btn in (self.fav_btn, self.doc_btn, self.place_btn,
                     self.thumb_btn, self.tags_apply_btn):
             btn.setEnabled(True)
+        self._preview_info = info
         fav = metadata.is_favorite(info.name)
         self.fav_btn.setText("★ 已收藏" if fav else "☆ 收藏")
-        self.preview_name.setText(info.display_label)
+        self.preview_name.setText(self._display_label(info))
         lib = os.path.basename(info.library) if info.library else ""
         meta_lines = [
+            "内部名称: " + info.name,
             "类型: " + store.CATEGORY_LABELS.get(info.category, info.category),
             "分类: " + (info.submenu or "（未分类）"),
         ]
@@ -626,10 +791,21 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         if info.patterns:
             meta_lines.append("作用: " + ", ".join(info.patterns))
         self.preview_meta.setText("\n".join(meta_lines))
-        self.preview_comment.setText(
-            info.comment or "（无备注——点「编辑文档」补一篇用法说明）")
+        # 文档区：有文档渲染 markdown（内联 GIF/视频按钮），
+        # 无文档回退显示官方备注
+        if metadata.doc_exists(info.name):
+            self.preview_doc.set_doc_dir(metadata.doc_dir(info.name))
+            self.preview_doc.set_markdown_with_media(
+                metadata.read_doc(info.name))
+            self.preview_doc.setVisible(True)
+            self.preview_doc.setEnabled(True)
+            self.preview_comment.setVisible(False)
+        else:
+            self.preview_doc.setVisible(False)
+            self.preview_comment.setVisible(True)
+            self.preview_comment.setText(
+                info.comment or "（无备注——点「编辑文档」补一篇用法说明）")
         self.tags_edit.setText(", ".join(metadata.get_tags(info.name)))
-        self._preview_name_text = info.display_label
 
         # 大图预览：GIF 动起来，其余静态缩放
         self._stop_preview_movie()
@@ -742,10 +918,10 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         if info.category != "tool":
             self.status.setText(
                 "{} 是 {} 类型：请先选中目标节点后双击应用（拖拽仅支持 Tool）"
-                .format(info.display_label,
+                .format(self._display_label(info),
                         store.CATEGORY_LABELS.get(info.category, info.category)))
             return
-        icon = self._icon_for(info)
+        icon = self._icon_for(info, metadata.is_favorite(info.name))
         pm = icon.pixmap(56, 56)
         ghost = QtWidgets.QLabel(None)
         ghost.setPixmap(pm)
@@ -801,7 +977,8 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         try:
             store.apply_tool_recipe(info.name, pane=pane, position=position,
                                     mode="drag")
-            self.status.setText("已在当前网络中创建 {}".format(info.display_label))
+            self.status.setText("已在当前网络中创建 {}".format(
+                self._display_label(info)))
         except store.ContextMismatch as exc:
             # 预期内的操作反馈（层级点错）：红字提示即可，控制台保持安静
             self.status.setText(str(exc))
@@ -835,8 +1012,13 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         if info is None:
             return
         fav = metadata.is_favorite(info.name)
+        display = self._display_label(info)
         menu = QtWidgets.QMenu(self)
         act_fav = menu.addAction("取消收藏" if fav else "★ 收藏")
+        act_rename = menu.addAction("自定义显示名...")
+        act_rename_reset = None
+        if display:
+            act_rename_reset = menu.addAction("恢复默认显示名")
         act_doc = menu.addAction("编辑文档...")
         act_thumb = menu.addAction("设置缩略图...")
         act_thumb_clear = None
@@ -850,6 +1032,11 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         act = menu.exec_(self.list.mapToGlobal(pos))
         if act is act_fav:
             self._set_favorite(info, not fav)
+        elif act is act_rename:
+            self._rename_selected()
+        elif act is not None and act is act_rename_reset:
+            metadata.set_display_name(info.name, None)
+            self._refresh_current_item()
         elif act is act_doc:
             self._open_doc_for(info)
         elif act is act_thumb:
@@ -857,7 +1044,8 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         elif act is not None and act is act_thumb_clear:
             metadata.clear_thumb(info.name)
             self._thumb_cache.pop(info.name, None)
-            item.setIcon(self._icon_for(info))
+            item.setIcon(self._icon_for(info,
+                                        metadata.is_favorite(info.name)))
             self._refresh_current_item()
         elif act is act_copy:
             QtWidgets.QApplication.clipboard().setText(info.name)
@@ -876,13 +1064,37 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
 
     # ---------------- 元数据操作 ----------------
 
+    def _rename_selected(self):
+        """自定义显示名（支持中文）；清空输入即恢复默认显示链。"""
+        info = self._selected_info() or self._preview_info
+        if info is None:
+            return
+        current = self._display_label(info)
+        title, ok = QtWidgets.QInputDialog.getText(
+            self, "自定义显示名",
+            "显示名称（留空恢复默认，支持中文）：\n内部名称: {}".format(
+                info.name),
+            text=current)
+        if not ok:
+            return
+        metadata.set_display_name(info.name, title)
+        self._rebuild_sidebar()
+        self._apply_filter()
+        if self._preview_info is not None:
+            self._update_preview(self._preview_info)
+        if (title or "").strip():
+            self.status.setText("「{}」显示名已设为「{}」".format(
+                info.name, title.strip()))
+        else:
+            self.status.setText("「{}」已恢复默认显示名".format(info.name))
+
     def _set_favorite(self, info, fav):
         metadata.set_favorite(info.name, fav)
         self._rebuild_sidebar()
         self._apply_filter()
         self._update_preview(info)
         self.status.setText("{}：{}".format(
-            info.display_label, "已收藏" if fav else "已取消收藏"))
+            self._display_label(info), "已收藏" if fav else "已取消收藏"))
 
     def _toggle_fav_selected(self):
         info = self._selected_info()
@@ -898,7 +1110,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self._rebuild_sidebar()
         self._apply_filter()
         self._update_preview(info)
-        self.status.setText("{}：标签已更新".format(info.display_label))
+        self.status.setText("{}：标签已更新".format(self._display_label(info)))
 
     def _set_thumb_selected(self):
         info = self._selected_info()
@@ -907,7 +1119,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
 
     def _set_thumb(self, info):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "设置缩略图 - {}".format(info.display_label), "",
+            self, "设置缩略图 - {}".format(self._display_label(info)), "",
             metadata.MEDIA_FILTER)
         if not path:
             return
@@ -920,7 +1132,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self._apply_filter()
         self._update_preview(info)
         self.status.setText("{}：缩略图已更新（{}）".format(
-            info.display_label, os.path.basename(stored)))
+            self._display_label(info), os.path.basename(stored)))
 
     def _open_doc(self):
         info = self._selected_info()
@@ -934,9 +1146,22 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
                 self._doc_dialog.deleteLater()
             except RuntimeError:
                 pass
-        self._doc_dialog = DocEditorDialog(self, info)
+        self._doc_dialog = DocEditorDialog(self, info,
+                                           display_label=self._display_label(info))
+        self._doc_dialog.docSaved.connect(self._on_doc_saved)
         self._doc_dialog.show()
         self._doc_dialog.raise_()
+
+    def _on_doc_saved(self, name):
+        """文档编辑器保存后，主面板若正显示同一配方则同步刷新文档预览。"""
+        info = self._preview_info
+        if info is not None and info.name == name \
+                and metadata.doc_exists(name):
+            self.preview_doc.set_doc_dir(metadata.doc_dir(name))
+            self.preview_doc.set_markdown_with_media(
+                metadata.read_doc(name))
+            self.preview_doc.setVisible(True)
+            self.preview_comment.setVisible(False)
 
     # ---------------- 删除 ----------------
 
@@ -944,7 +1169,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         answer = QtWidgets.QMessageBox.question(
             self, "删除 Recipe",
             "确定删除「{}」？\n{}\n（缩略图与文档也会一并清理）".format(
-                info.display_label, info.name),
+                self._display_label(info), info.name),
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
         if answer != QtWidgets.QMessageBox.Yes:
             return
@@ -958,6 +1183,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         metadata.clear_thumb(info.name)
         metadata.set_favorite(info.name, False)
         metadata.set_tags(info.name, [])
+        metadata.set_display_name(info.name, None)
         metadata.delete_doc_dir(info.name)
         self._thumb_cache.pop(info.name, None)
         self.reload()
