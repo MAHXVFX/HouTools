@@ -43,7 +43,7 @@ root/
 | JSON 设置 | `houtools/core/settings.py` | `JsonStore(filename, defaults)`，defaults 合并语义，存项目 `settings/` |
 | 自动化任务模型 | `houtools/automation/task_types.py` | TaskType 枚举 + dataclass 参数 + TaskItem.to_dict/from_dict |
 | 自动化持久化 | `houtools/automation/data_manager.py` | 按 `$HIP/HouTools_cfg/Automation_json/` 存取（跟场景走，是有意设计）；多配置文件 |
-| 自动化执行引擎 | `houtools/automation/execution_engine.py` | QThread；Houdini API 经 `hdefereval.executeDeferred` + Event 同步派发主线程；`dl_Submit` 特例：点击前强制 `hipFile.save()`，失败则跳过点击 |
+| 自动化执行引擎 | `houtools/automation/execution_engine.py` | QThread；Houdini API 经 `hdefereval.executeDeferred` + Event 同步派发主线程；**无超时同步等待是有意设计、禁止加超时**（原因与取消语义见 Conventions「Automation 的同步等待」）；`dl_Submit` 特例：点击前强制 `hipFile.save()`，失败则跳过点击 |
 | 界面接入（Python Panel） | `houtools/automation/window.py` | `create_panel_widget` / `open_floating_panel`（`hou.pypanel.installFile` + `createFloatingPanel`）；节点拖放为 Houdini 原生投递（MIME text 是逗号分隔的节点路径） |
 | ffmpeg 查找 | `houtools/videoseq/ffmpeg.py` | 优先级：项目根 `ffmpeg.exe` → `$HFS/bin/hffmpeg` → `$HFS/bin/ffmpeg` → PATH（hffmpeg 优先） |
 | 视频拖放/路径框 | `houtools/videoseq/window.py` | 整窗 + `_VideoSourceGroup` 双层接收拖放；`_load_video` 是浏览/拖放/手输共用入口 |
@@ -57,6 +57,7 @@ root/
 - **Reload 与 pypanel**：Reload Modules 不重建已打开的 Python Panel（避免丢弃未 Start 保存的编辑），由用户点面板工具条自带的刷新按钮重建界面。
 - **`import hou` 只放函数内**或 try/except，保证模块在 Houdini 外可导入（冒烟测试依赖这一点）。
 - **线程**：QThread + Signal；任何回改 Houdini 的调用经 `hdefereval.executeDeferred` 派发主线程（参考 `execution_engine._run_deferred`）。
+- **Automation 的同步等待是有意设计，勿"修复"**：引擎对主线程调用做**无超时**阻塞等待（`execution_engine._run_deferred` 的 `ready.wait()`）。本工具本质是逐个触发 Houdini 按钮，顺序执行的唯一保证是"上一任务的主线程调用返回后再派发下一个"——主线程被解算/缓存阻塞多久就等多久（数小时是正常值），加超时会在任务实际完成前放行下一任务、破坏顺序语义；模态对话框等阻塞在本语义下同样属于"当前任务未完成，继续等"。取消是协作式，仅在任务边界生效、在途任务不可打断；因此 UI（`window._cancel_execution`）**不立即复位**：按钮保持「停止中…」并禁用，直到引擎真正发出 `all_completed` 才回空闲——否则留下"假取消"窗口，期间二次 Start 会被旧引擎迟到的 `all_completed` 打翻新引擎状态。运行中引擎由 `window._LIVE_ENGINES` 模块级留引用（引擎无 parent），防 GC 销毁运行中的 QThread。已知会弹阻塞对话框的按钮逐案消除弹框根源（`dl_Submit` 点击前强制存盘），不改等待机制。
 - **菜单结构改动**（增删菜单项）需重启 Houdini——H22 硬约束，`menurefresh` 只覆盖 OPmenu/PARMmenu 等右键菜单。
 - **reload 语义**：`houtools/dev` 自身永不重载（改 dev 框架需重启）；重载前自动 close 所有登记窗口；状态反馈走 `hou.ui.setStatusMessage`（`houtools.dev.status`）。
 - **二进制不入库**：`*.exe` 已被 .gitignore 排除。
@@ -70,6 +71,7 @@ root/
 - **静默异常**：禁止无日志的 `except: pass`；捕获后至少 `log.warning`。
 - **把业务逻辑写进菜单 scriptCode**：只允许两行分发器；逻辑一律进 `houtools/tools/` 与模块。
 - **在 reload 顺序上做假设**：新增模块间依赖时保持"先被 import 的是依赖"，插入序重载才成立；避免模块级循环依赖。
+- **给 `execution_engine._run_deferred` 的 `ready.wait()` 加超时**：那是顺序执行语义本身，不是缺陷（见 Conventions「Automation 的同步等待」）；"Stop 按了没立刻停"同理——取消只在任务边界生效，UI 会如实显示「停止中…」。
 
 ## Unique Styles
 

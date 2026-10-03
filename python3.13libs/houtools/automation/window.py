@@ -138,6 +138,24 @@ class _LogTee:
         self._original.flush()
 
 
+# ── 运行中引擎留痕 ───────────────────────────────────────────
+
+# 执行中的引擎统一在此持有引用，线程 run() 返回(finished 信号)后才释放。
+# 引擎无 Qt parent，若窗口销毁/字段置空后成为唯一引用之外的孤儿，GC 可能
+# 销毁一个仍在运行的 QThread（"QThread: Destroyed while thread is still
+# running"，可致崩溃）。取消后引擎会一直挂在 _run_deferred 的等待里直到
+# 主线程空闲，这段时间必须留引用。
+_LIVE_ENGINES: list["ExecutionEngine"] = []
+
+
+def _release_engine(engine: "ExecutionEngine"):
+    """线程真正结束后移除留痕。挂在 QThread.finished 上，不依赖窗口存活。"""
+    try:
+        _LIVE_ENGINES.remove(engine)
+    except ValueError:
+        pass
+
+
 # ── Parm Path 编解码 ──────────────────────────────────────────
 
 def _split_parm_path(parm_path: str) -> tuple[str, str]:
@@ -693,6 +711,7 @@ class AutomationWindow(QWidget):
         # (renumber / index_at_global_y) 的 findChild 热路径,O(N×M) → O(N)
         self._slot_handles: list[QLabel] = []
         self._running = False
+        self._cancel_requested = False  # 已请求停止、引擎尚未真正退出
         self._engine: ExecutionEngine | None = None
 
         # 选中 + 拖动状态
@@ -2017,6 +2036,10 @@ class AutomationWindow(QWidget):
 
     def _on_start(self):
         """Start / Cancel 切换按钮。"""
+        if self._cancel_requested:
+            # 已请求停止但引擎还挂在在途任务上（可能数小时），此时绝不能再
+            # Start：旧引擎退出的 all_completed 会把新引擎的状态打翻
+            return
         if self._running:
             self._cancel_execution()
             return
@@ -2046,22 +2069,36 @@ class AutomationWindow(QWidget):
             sys.stderr = _LogTee(self._orig_stderr, self._write_log)
 
         self._engine = ExecutionEngine(task_items)
+        _LIVE_ENGINES.append(self._engine)
+        # 显式 DirectConnection：finished 连普通函数（无 QObject 接收者）时
+        # AutoConnection 在 PySide6 下不会触发；Direct 则在线程收尾时直接执行，
+        # _release_engine 只做 list.remove，跨线程安全，且不依赖窗口存活
+        self._engine.finished.connect(_release_engine, Qt.DirectConnection)
         self._engine.task_started.connect(self._on_task_started)
         self._engine.task_completed.connect(self._on_task_completed)
         self._engine.all_completed.connect(self._on_all_completed)
 
+        self._cancel_requested = False
         self._running = True
         self._start_btn.setText("取消")
         self._engine.start()
 
     def _cancel_execution(self):
-        """取消正在执行的任务。"""
+        """请求取消：协作式，引擎在当前任务完成后才真正停止。
+
+        引擎对主线程的同步等待是有意设计（见 execution_engine 模块文档），
+        在途任务无法被打断，cancel 只在任务边界生效。因此这里不得立即把
+        UI 复位成空闲——按钮保持「停止中」并禁用，直到引擎真正发出
+        all_completed 由 _on_all_completed 复位；否则会留下"看似已取消、
+        实际引擎还在跑"的窗口，期间再次 Start 会造成双引擎状态串扰。
+        stdout 也不在此处恢复，让在途任务的收尾输出继续落进日志。
+        """
         if self._engine is not None:
             self._engine.cancel()
-        print("Automation: 用户取消执行")
-        self._running = False
-        self._start_btn.setText("执行")
-        self._restore_stdout()
+        self._cancel_requested = True
+        self._start_btn.setEnabled(False)
+        self._start_btn.setText("停止中…")
+        print("Automation: 已请求停止，将在当前任务完成后退出")
 
     def _on_task_started(self, idx: int, task_type: str, timestamp: str):
         """单个任务开始时的回调。"""
@@ -2085,6 +2122,8 @@ class AutomationWindow(QWidget):
         print(f"{timestamp} 执行完成 总耗时: {hours:02d}时{minutes:02d}分{seconds:02d}秒 — 成功 {success}, 失败 {failed}")
         print("=" * 80)  # 通过 tee 同时写入控制台和日志文件
         self._running = False
+        self._cancel_requested = False
+        self._start_btn.setEnabled(True)
         self._start_btn.setText("执行")
         self._engine = None
         self._restore_stdout()
@@ -2247,10 +2286,17 @@ class AutomationWindow(QWidget):
     # ── 窗口关闭 ───────────────────────────────────────────
 
     def closeEvent(self, event):
-        """关闭时取消执行中的任务并恢复 stdout 重定向（数据仅在 Start 时落盘）。"""
+        """关闭时取消执行中的任务并恢复 stdout 重定向（数据仅在 Start 时落盘）。
+
+        引擎线程无法被打断（有意设计，见 execution_engine）：关窗只请求取消，
+        线程会继续挂在在途任务的同步等待上，等主线程空闲后在后台自然退出并
+        完成收尾——期间由模块级 _LIVE_ENGINES 持有引用，防止运行中的 QThread
+        被 GC 销毁。其信号随面板销毁自动断开，不会再回调本窗口。
+        """
         if self._running:
             if self._engine is not None:
                 self._engine.cancel()
+            self._cancel_requested = False
             self._running = False
             self._restore_stdout()
         super().closeEvent(event)
