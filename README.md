@@ -159,6 +159,14 @@ HouTools/
     └── Automation_Config.json     # Automation 的 DW 软件路径等配置（缺失时自动补建）
 ```
 
+## 许可
+
+本项目以 [GPL-3.0](LICENSE) 协议开源，Copyright (c) 2026 mahx_vfx。
+任何基于本项目的二次分发须同样以 GPL-3.0 开源并保留版权声明。
+
+> 本项目为个人开发的第三方工具，与 SideFX 无关、非官方产品；Houdini 及相关商标归
+> SideFX Software 所有。运行本项目需要使用者自行持有合法的 Houdini 授权。
+
 ## Stargazers over time
 
 ![Stargazers over time](https://gitcode.com/mahx-vfx/HouTools/starcharts.svg?variant=adaptive)
