@@ -158,3 +158,7 @@ HouTools/
 └── settings/                      # 运行时生成（gitignored）
     └── Automation_Config.json     # Automation 的 DW 软件路径等配置（缺失时自动补建）
 ```
+
+## Stargazers over time
+
+![Stargazers over time](https://gitcode.com/mahx-vfx/HouTools/starcharts.svg?variant=adaptive)
