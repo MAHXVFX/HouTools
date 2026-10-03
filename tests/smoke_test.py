@@ -62,6 +62,11 @@ def main():
     assert 'id="houtools.networkview.hdr_library"' in nv_xml
     print("hdr_library menu wiring: consistent")
 
+    # Recipe Library:两份菜单均注册薄分发器入口
+    assert 'id="houtools.recipe_library"' in main_xml
+    assert 'id="houtools.networkview.recipe_library"' in nv_xml
+    print("recipe_library menu wiring: consistent")
+
     ET.parse(ROOT / "python_panels" / "Automation.pypanel")
     print("Automation.pypanel: well-formed")
 
@@ -391,6 +396,180 @@ def main():
         _FakeNode("pxrstdenvmaplight", ["ri_envlight", "rman__EnvMap"])) \
         == "rman__EnvMap"
     print("HdrLibrary light mapping OK")
+
+    # ------------------------------------------------------------------
+    # Recipe Library：元数据/文档存储闭环 + 打桩浏览器窗口回归
+    # （store 依赖 hou/recipeutils，无头不可调用；窗口 __init__ 不触 hou）
+    # ------------------------------------------------------------------
+    import houtools.recipelib.metadata as rl_meta
+    import houtools.recipelib.store as rl_store
+    import houtools.recipelib.docs as rl_docs  # noqa: F401
+    import houtools.recipelib.browser as rl_browser
+    import houtools.tools.recipe_library  # noqa: F401
+
+    rl_store_ps = houtools.core.settings.JsonStore(
+        "_smoke_recipelib.json", defaults=dict(rl_meta._DEFAULTS))
+    with tempfile.TemporaryDirectory() as tmp:
+        with patch.object(rl_meta, "_SETTINGS", rl_store_ps), \
+             patch.object(rl_meta, "THUMBS_DIR", Path(tmp) / "thumbs"), \
+             patch.object(rl_meta, "DOCS_DIR", Path(tmp) / "docs"):
+            name = "houtools::pyro::my_setup"
+
+            # 库文件夹：绝对路径化、去重、保序
+            assert rl_meta.set_lib_dirs(
+                [" D:/lib_a ", str(Path(tmp) / "lib_b"), "D:/lib_a"]) \
+                == [os.path.abspath("D:/lib_a"),
+                    os.path.abspath(str(Path(tmp) / "lib_b"))], \
+                rl_meta.get_lib_dirs()
+            assert rl_meta.get_lib_dirs()[0] == os.path.abspath("D:/lib_a")
+            rl_meta.set_lib_dirs([])
+            assert rl_meta.get_lib_dirs() == []
+
+            # 库扫描：递归收集 .hda，跳过隐藏目录与 backup 目录、非 .hda
+            libtree = Path(tmp) / "scanlib"
+            (libtree / "sub").mkdir(parents=True)
+            (libtree / "a.hda").touch()
+            (libtree / "note.txt").touch()
+            (libtree / "sub" / "b.hda").touch()
+            (libtree / ".hidden").mkdir()
+            (libtree / ".hidden" / "c.hda").touch()
+            # saveToolRecipe 会在库文件夹里写 backup/HouToolsRecipes_bakN.hda，
+            # 备份里的旧定义不得被加载（已删除的 recipe 会"复活"）
+            (libtree / "backup").mkdir()
+            (libtree / "backup" / "HouToolsRecipes_bak1.hda").touch()
+            found = rl_store.scan_library_files([str(libtree)])
+            assert len(found) == 2, found
+            assert all(f.endswith(".hda") for f in found)
+            assert not any(".hidden" in f or "backup" in f for f in found)
+
+            # 收藏：添加幂等、可移除
+            assert not rl_meta.is_favorite(name)
+            assert rl_meta.set_favorite(name, True) is True
+            assert rl_meta.set_favorite(name, True) is True  # 幂等
+            assert rl_meta.is_favorite(name)
+            rl_meta.set_favorite(name, False)
+            assert not rl_meta.is_favorite(name)
+
+            # 标签：去空白去重，空列表清空条目
+            assert rl_meta.set_tags(name, [" pyro ", "常用", "pyro"]) \
+                == ["pyro", "常用"]
+            assert rl_meta.get_tags(name) == ["pyro", "常用"]
+            assert "常用" in rl_meta.all_tags()
+            rl_meta.set_tags(name, [])
+            assert rl_meta.get_tags(name) == []
+
+            # 缩略图：按原扩展名落盘，get 校验存在性，清除同步删文件
+            src = Path(tmp) / "t.gif"
+            src.write_bytes(b"GIF89a fake bytes")
+            stored = rl_meta.set_thumb_from_file(name, str(src))
+            assert Path(stored).exists() and stored.endswith(".gif")
+            assert rl_meta.get_thumb(name) == stored
+            rl_meta.clear_thumb(name)
+            assert rl_meta.get_thumb(name) == ""
+
+            # 文档：模板创建 + 相对引用素材（同名不覆盖）+ 读写 + 目录清理
+            info = rl_store.RecipeInfo(
+                name=name, label="My Setup", category="tool",
+                submenu="HouTools", author="tester", patterns=["Sop/pyro"])
+            doc = rl_meta.ensure_doc(name, rl_meta.doc_template(info))
+            assert "My Setup" in doc and "用法" in doc and "Sop/pyro" in doc
+            asset_src = Path(tmp) / "pic.png"
+            asset_src.write_bytes(b"png")
+            rel = rl_meta.insert_asset(name, str(asset_src))
+            assert rel.startswith("assets/")
+            assert (Path(rl_meta.doc_dir(name)) / rel).exists()
+            rel2 = rl_meta.insert_asset(name, str(asset_src))
+            assert rel2 != rel, "同名素材被覆盖"
+            rl_meta.write_doc(name, doc + "\nedited")
+            assert rl_meta.read_doc(name).endswith("edited")
+            rl_meta.delete_doc_dir(name)
+            assert not rl_meta.doc_exists(name)
+
+            # 浏览器窗口：list_recipes / selected_nodes / 网络编辑器全部打桩
+            infos = [
+                rl_store.RecipeInfo(name="houtools::pyro::a", label="Pyro A",
+                                    category="tool", submenu="HouTools"),
+                rl_store.RecipeInfo(name="houtools::light::b", label="Light B",
+                                    category="node", submenu="Lighting"),
+            ]
+            with patch.object(rl_meta, "get_lib_dirs",
+                              return_value=[str(Path(tmp) / "scanlib")]), \
+                 patch.object(rl_browser.store, "list_recipes",
+                              side_effect=lambda lib_dirs=None:
+                                  list(infos) if lib_dirs else []):
+                win = rl_browser._RecipeLibraryWindow()
+                win.reload()
+                assert win.list.count() == 2, win.list.count()
+                # 侧栏结构：全部 / ★收藏 / 分类头 / 分类x2 / 标签头
+                keys = [win.sidebar.item(i).data(QtCore.Qt.UserRole)
+                        for i in range(win.sidebar.count())]
+                assert keys[0] == rl_browser.KEY_ALL, keys
+                assert keys[1] == rl_browser.KEY_FAV, keys
+                assert sorted(k for k in keys[2:]
+                              if k and k.startswith("cat::")) \
+                    == ["cat::HouTools", "cat::Lighting"], keys
+                # 分类过滤
+                win._select_category("cat::Lighting")
+                assert win.list.count() == 1
+                assert win.list.item(0).data(QtCore.Qt.UserRole) \
+                    == "houtools::light::b"
+                # 收藏过滤：收藏后 ★ 前缀 + 收藏视图只剩 1 条
+                rl_meta.set_favorite("houtools::pyro::a", True)
+                win._rebuild_sidebar()
+                win._select_category(rl_browser.KEY_FAV)
+                assert win.list.count() == 1, win.list.count()
+                # 搜索命中标签（重建式过滤后须重新取 item）
+                rl_meta.set_tags("houtools::light::b", ["夜灯"])
+                win._select_category(rl_browser.KEY_ALL)
+                win.search.setText("夜灯")
+                win._apply_filter()
+                assert win.list.count() == 1, win.list.count()
+                assert win.list.item(0).data(QtCore.Qt.UserRole) \
+                    == "houtools::light::b"
+                win.search.setText("")
+                win._apply_filter()
+                assert win.list.count() == 2
+                # 预览面板联动：选中后名称/元信息/按钮就绪
+                win.list.setCurrentRow(0)
+                assert win.preview_name.text(), "preview name empty"
+                assert win.preview_meta.text(), "preview meta empty"
+                assert win.fav_btn.isEnabled()
+                # 应用分发：node 预设无选中 → 引导文案（不触 hou）
+                with patch.object(rl_browser.store, "selected_nodes",
+                                  return_value=[]):
+                    win._apply_recipe(infos[1])
+                assert "选中" in win.status.text(), win.status.text()
+                # tool 无网络编辑器 → 引导文案
+                with patch.object(rl_browser.store, "current_network_editor",
+                                  return_value=None):
+                    win._apply_recipe(infos[0])
+                assert "网络编辑器" in win.status.text(), win.status.text()
+                win.deleteLater()
+
+                # 未配置库文件夹：列表为空，状态栏给「库目录」引导
+                # （外层 get_lib_dirs 补丁仍在生效，这里覆盖为空）
+                rl_meta.set_lib_dirs([])
+                with patch.object(rl_meta, "get_lib_dirs", return_value=[]):
+                    win2 = rl_browser._RecipeLibraryWindow()
+                    win2.reload()
+                assert win2.list.count() == 0, win2.list.count()
+                assert "库目录" in win2.status.text(), win2.status.text()
+                win2.deleteLater()
+        rl_store_ps.path.unlink(missing_ok=True)
+    print("RecipeLibrary metadata + window OK")
+
+    # 文档编辑器：实例化 + 实时预览渲染（纯 Qt，不触 hou）
+    with tempfile.TemporaryDirectory() as tmp:
+        with patch.object(rl_meta, "DOCS_DIR", Path(tmp) / "docs"):
+            info = rl_store.RecipeInfo(name="houtools::x::doc_test",
+                                       label="Doc Test", category="tool")
+            dlg = rl_docs.DocEditorDialog(None, info)
+            assert "Doc Test" in dlg.editor.toPlainText()  # 模板已填元信息
+            dlg.editor.setPlainText("# 标题\n\n正文 **粗体**\n")
+            dlg._render_preview()
+            assert "标题" in dlg.preview.toPlainText()
+            dlg.deleteLater()
+    print("RecipeLibrary doc editor OK")
 
     summary = reloader.reload_all()
     print("reload_all ->", summary)

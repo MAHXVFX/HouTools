@@ -18,6 +18,18 @@ try:
 except Exception as e:
     print(f"[HouTools] uiready 安装默认键位失败: {e}")
 
+# Recipe Library 的用户库（settings/recipelib.json 的 lib_dirs）在 UI 启动
+# 时即安装：面板打开前 Tab 菜单里就能出现这些 recipe 的 session tool。
+# 未配置库文件夹时静默跳过；失败只打印不阻塞启动。
+try:
+    from houtools.recipelib import metadata as _rl_meta
+    from houtools.recipelib import store as _rl_store
+    _rl_dirs = _rl_meta.get_lib_dirs()
+    if _rl_dirs:
+        _rl_store.ensure_libraries_installed(_rl_dirs)
+except Exception as e:
+    print(f"[HouTools] uiready 安装 recipe 库失败: {e}")
+
 
 def _run_downstream_uiready():
     """执行路径上下一个 python3.13libs/uiready.py（通常是 $HH 官方那份）。

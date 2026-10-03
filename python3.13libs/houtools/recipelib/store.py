@@ -1,0 +1,493 @@
+"""官方 recipes 的脚本层封装：库安装 / 枚举 / 创建 / 应用 / 删除。
+
+底层是 H22 的公开 API（本仓库做过完整可行性验证，22.0.429 实测）：
+- 枚举:   recipeutils.recipeNames(RecipeCategory.xxx, ...)
+- 元信息: recipe 数据是 data 资产（HDA definition），完整结构存放在
+  该 definition 的 ``data.recipe.json`` section（properties/tool/info），
+  用 hou.nodeType(hou.dataNodeTypeCategory(), name).definition() 直读，
+  不依赖内部包 hrecipes。
+- 创建:   hou.data.saveToolRecipe / saveNodePresetRecipe / ...
+- 应用:   hou.data.applyToolRecipe / applyNodePresetRecipe / ...
+- 删除:   HDADefinition.destroy()
+
+加载模型（面板只管用户自己的库）：
+- 用户在面板配置若干"库文件夹"（settings/recipelib.json 的 lib_dirs，
+  可多个）；文件夹里**任意层级**的 .hda 都会被安装，且只枚举这些文件里
+  的 recipe——出厂（$HFS）/ Labs / 用户偏好默认库里的 recipes 一律不显示。
+- 新建的 recipe 固定落到第一个库文件夹的 ``HouToolsRecipes.hda``
+  （saveToolRecipe 会自动建文件并安装）；文件夹里放别人分享的
+  recipe .hda 同样会被扫描加载。
+- 误装防护：安装后检查 definitionsInFile，没有任何 data 类定义的文件
+  （误放进来的普通 OTL）立即卸载还原，不给会话留副作用。
+- uiready.py 每次启动也调 ensure_libraries_installed，让 Tab 菜单里的
+  session tool 从会话一开始就注册。
+
+约束：import hou / recipeutils 一律在函数内——本模块必须无头可导入
+（smoke test 依赖）；所有函数都只在 Houdini 主线程调用。
+"""
+
+import json
+import os
+import re
+from dataclasses import dataclass, field
+
+from houtools.core.log import get_logger
+
+log = get_logger("recipelib.store")
+
+# 与 docs/metadata 模板一致的类型展示顺序
+CATEGORY_LABELS = {
+    "tool": "Tool（Tab 工具）",
+    "node": "Node Preset（节点预设）",
+    "parm": "Parameter Preset（参数预设）",
+    "decoration": "Decoration（装饰）",
+    "parmTemplate": "Parm Template（参数模板）",
+    "data": "Data（数据）",
+}
+
+LIBRARY_FILENAME = "HouToolsRecipes.hda"  # 每个库文件夹的"新建"落点
+
+
+@dataclass
+class RecipeInfo:
+    name: str            # 内部名（apply/delete 调用名）
+    label: str = ""      # 菜单显示名
+    category: str = "tool"
+    submenu: str = ""    # 官方 submenu / tab_submenu
+    comment: str = ""
+    author: str = ""
+    patterns: list = field(default_factory=list)   # nodetype_patterns
+    library: str = ""    # 所在 .hda 文件路径
+    under_hfs: bool = False  # 出厂 recipe（只读，不可删）
+
+    @property
+    def display_label(self):
+        return self.label or self.name
+
+
+def _norm(path):
+    """路径归一（realpath 解析 8.3 短名；失败退回 abspath+normcase）。"""
+    try:
+        return os.path.normcase(os.path.realpath(path))
+    except (OSError, ValueError):
+        return os.path.normcase(os.path.abspath(path))
+
+
+# --------------------------------------------------------------------------
+# 库文件夹扫描与安装
+# --------------------------------------------------------------------------
+
+def scan_library_files(lib_dirs):
+    """递归收集库文件夹里的 .hda 文件（跳过隐藏目录与 backup 目录，排序稳定）。
+
+    backup 目录必须跳过：saveToolRecipe 每次保存都会在
+    <库文件夹>/backup/ 里写 HouToolsRecipes_bakN.hda，把备份装进来
+    会让已删除的 recipe 随旧定义"复活"，并与现行定义同名冲突。
+    """
+    files = []
+    seen = set()
+    for d in lib_dirs or []:
+        d = os.path.abspath(d)
+        if d in seen:
+            continue
+        seen.add(d)
+        if not os.path.isdir(d):
+            log.warning("recipe library dir missing: %s", d)
+            continue
+        for root, dirs, names in os.walk(d):
+            dirs[:] = sorted(x for x in dirs
+                             if not x.startswith(".") and x.lower() != "backup")
+            for n in sorted(names):
+                if n.lower().endswith(".hda"):
+                    files.append(os.path.join(root, n))
+    return files
+
+
+def ensure_libraries_installed(lib_dirs):
+    """安装库文件夹里的全部 .hda，返回其中确含 recipe 定义的文件集合。
+
+    - 已加载的文件跳过（realpath 比对，重复刷新不重装）；
+    - 新安装后检查 definitionsInFile：没有任何 data 类定义的（误放进
+      来的普通 OTL）立即卸载——安装是读 recipe 的必要手段，不该有副作用。
+    """
+    import hou
+    loaded = {_norm(p) for p in hou.hda.loadedFiles()}
+    data_cat = hou.dataNodeTypeCategory().name()
+    keep = set()
+    for path in scan_library_files(lib_dirs):
+        key = _norm(path)
+        if key not in loaded:
+            try:
+                hou.hda.installFile(path)
+            except Exception:
+                # 装不上的 .hda：极小的是空壳/垃圾（destroy 残留的空库
+                # 连 installFile 都过不去），直接清掉；大文件可能是损坏
+                # 的真资产，保留并告警，交给用户处理。
+                try:
+                    if os.path.getsize(path) < 512:
+                        os.remove(path)
+                        log.debug("removed tiny invalid library %s", path)
+                    else:
+                        log.warning("install recipe library %s failed: "
+                                    "kept for inspection", path)
+                except OSError as exc:
+                    log.warning("cannot inspect invalid library %s: %s",
+                                path, exc)
+                continue
+        try:
+            has_recipe = any(
+                d.nodeTypeCategory() is not None
+                and d.nodeTypeCategory().name() == data_cat
+                for d in hou.hda.definitionsInFile(path))
+        except Exception as exc:
+            log.warning("inspect definitions in %s failed: %s", path, exc)
+            has_recipe = False
+        if has_recipe:
+            keep.add(key)
+        else:
+            try:
+                defs_here = hou.hda.definitionsInFile(path)
+            except Exception:
+                defs_here = []
+            if not defs_here and os.path.isfile(path):
+                # 空壳库文件（0 个定义，历史删除残留）：卸载并删掉，
+                # 免得每次刷新都走一遍安装→卸载
+                try:
+                    hou.hda.uninstallFile(path)
+                except Exception:
+                    pass
+                try:
+                    os.remove(path)
+                    log.debug("removed empty recipe library shell %s", path)
+                except OSError:
+                    pass
+            elif key not in loaded:
+                # 本次会话新装、且与 recipe 无关（误放进来的普通 OTL）：
+                # 卸载还原，不删除文件本身
+                try:
+                    hou.hda.uninstallFile(path)
+                except Exception as exc:
+                    log.warning("uninstall non-recipe library %s failed: %s",
+                                path, exc)
+    return keep
+
+
+# --------------------------------------------------------------------------
+# 枚举
+# --------------------------------------------------------------------------
+
+def list_recipes(lib_dirs=None):
+    """枚举用户库里的 recipe（lib_dirs 空 → 返回空列表）。"""
+    if not lib_dirs:
+        return []
+    import hou
+    import recipeutils as ru
+
+    keep = ensure_libraries_installed(lib_dirs)
+    if not keep:
+        return []
+
+    mapping = [
+        ("tool", ru.RecipeCategory.tool),
+        ("node", ru.RecipeCategory.nodePreset),
+        ("parm", ru.RecipeCategory.parmPreset),
+        ("decoration", ru.RecipeCategory.decoration),
+        ("parmTemplate", ru.RecipeCategory.parmTemplate),
+        ("data", ru.RecipeCategory.data),
+    ]
+    hfs = hou.text.expandString("$HFS")
+    seen = set()
+    out = []
+    for cat_key, cat in mapping:
+        try:
+            names = ru.recipeNames(cat, include_label=False, pad=False)
+        except Exception as exc:
+            log.warning("recipeNames(%s) failed: %s", cat_key, exc)
+            continue
+        for name in names:
+            if name in seen:
+                continue
+            seen.add(name)
+            info = RecipeInfo(name=name, category=cat_key)
+            _read_header(info, hfs)
+            if info.library and _norm(info.library) in keep:
+                out.append(info)
+    order = {k: i for i, k in enumerate(CATEGORY_LABELS)}
+    out.sort(key=lambda r: (order.get(r.category, 99),
+                            r.display_label.lower()))
+    return out
+
+
+def _read_header(info, hfs):
+    """从 definition 的 data.recipe.json section 读头部元信息。"""
+    import hou
+    try:
+        ntype = hou.nodeType(hou.dataNodeTypeCategory(), info.name)
+        defn = ntype.definition() if ntype else None
+        if defn is None:
+            return
+        info.library = defn.libraryFilePath()
+        try:
+            info.under_hfs = os.path.realpath(
+                info.library).lower().startswith(
+                    os.path.realpath(hfs).lower() + os.sep)
+        except (OSError, ValueError):
+            info.under_hfs = False
+        sec = defn.sections().get("data.recipe.json")
+        if sec is None:
+            return
+        data = json.loads(sec.contents())
+        props = data.get("properties") or {}
+        info.patterns = list(props.get("nodetype_patterns") or [])
+        tool = data.get("tool") or {}
+
+        # label 与子菜单的实际存储位置随 recipe_category 不同（22.0.429
+        # 实测，与 recipe_format 文档页有出入）：
+        # - tab_tool_recipe / preset 类: properties.label / properties.submenu
+        # - tool_recipe(shelf 式): label 在 tool.tool_labels[]（[0]=tab 名，
+        #   [1]=shelf 名），子菜单在 tool.tab_submenus[]
+        info.label = props.get("label") or ""
+        labels = tool.get("tool_labels") or []
+        for lb in labels:
+            if lb:
+                info.label = info.label or str(lb)
+                break
+        info.label = info.label or info.name
+
+        subs = props.get("submenu")
+        if not subs:
+            subs = tool.get("tab_submenus") or tool.get("tab_submenu")
+        if isinstance(subs, (list, tuple)):
+            info.submenu = ",".join(str(s) for s in subs if s)
+        elif subs:
+            info.submenu = str(subs)
+
+        header = data.get("info") or {}
+        info.comment = header.get("comment") or ""
+        info.author = header.get("author") or ""
+    except Exception as exc:
+        # 头部信息读不到就用内部名兜底，不隐藏该 recipe
+        log.warning("read recipe header failed for %s: %s", info.name, exc)
+
+
+def get_recipe(name, lib_dirs=None):
+    """按内部名取单个 RecipeInfo（找不到返回 None）。"""
+    for info in list_recipes(lib_dirs):
+        if info.name == name:
+            return info
+    return None
+
+
+# --------------------------------------------------------------------------
+# 创建
+# --------------------------------------------------------------------------
+
+def folder_library_file(lib_dir):
+    """库文件夹的"新建"落点：<文件夹>/HouToolsRecipes.hda。"""
+    return os.path.join(os.path.abspath(lib_dir), LIBRARY_FILENAME)
+
+
+def create_tool_recipe(label, nodes, lib_dir):
+    """把选中的节点集存成 tool recipe（最后一个为 anchor），返回内部名。
+
+    落点固定为库文件夹里的 HouToolsRecipes.hda；内部名自动生成
+    houtools::<label_slug>，重名自动加序号。
+    """
+    import hou
+    import recipeutils as ru
+
+    if not lib_dir:
+        raise RuntimeError("未设置 recipe 库文件夹")
+    if not nodes:
+        raise RuntimeError("没有可保存的节点")
+    slug = re.sub(r"[^0-9a-zA-Z_]+", "_", label).strip("_").lower() or "recipe"
+    existing = set(ru.recipeNames(ru.RecipeCategory.tool,
+                                  include_label=False, pad=False))
+    name = "houtools::{}".format(slug)
+    i = 2
+    while name in existing:
+        name = "houtools::{}_{}".format(slug, i)
+        i += 1
+    lib = folder_library_file(lib_dir)
+    os.makedirs(os.path.dirname(lib), exist_ok=True)
+    hou.data.saveToolRecipe(
+        name, label, lib, nodes[-1],
+        items=list(nodes),
+        tab_submenu="HouTools",
+        frame_nodes=[nodes[-1]],
+        comment="",
+    )
+    return name
+
+
+# --------------------------------------------------------------------------
+# 应用
+# --------------------------------------------------------------------------
+
+def selected_nodes():
+    import hou
+    return list(hou.selectedNodes())
+
+
+def current_network_editor():
+    """当前桌面上的网络编辑器 pane（没有则 None）。"""
+    import hou
+    try:
+        return hou.ui.paneTabOfType(hou.paneTabType.NetworkEditor)
+    except Exception as exc:
+        log.debug("no network editor: %s", exc)
+        return None
+
+
+def network_editor_under_cursor():
+    """鼠标光标下的 pane，是网络编辑器才返回（拖拽落点判定）。"""
+    import hou
+    try:
+        pane = hou.ui.paneTabUnderCursor()
+    except Exception as exc:
+        log.debug("paneTabUnderCursor failed: %s", exc)
+        return None
+    try:
+        if pane is not None and pane.type() == hou.paneTabType.NetworkEditor:
+            return pane
+    except Exception:
+        pass
+    return None
+
+
+# 官方 Tab 菜单调用模板（hrecipes/api/sessiontool.py _tab_tool_script）
+# 的参数原样照搬，只把 click_to_place 变成调用方选择
+_TOOL_APPLY_BASE = dict(
+    tool_inputs=[],
+    tool_outputs=[],
+    drop_on_wire=True,
+    avoid_overlap=False,
+    frame=False,
+    prompt=False,
+    skip_notes=False,
+)
+
+
+def apply_tool_recipe(name, pane=None, position=None, click_to_place=False):
+    """应用 tool recipe。
+
+    click_to_place=True：官方 Tab 菜单流程——进入放置模式，用户在
+    网络编辑器里点一下落位（apply 立即返回，不阻塞）。
+    click_to_place=False：立即放置；给 position（hou.Vector2 网络坐标）
+    时把整组节点平移对齐到该点——apply 在此模式下的落点（视图中心/
+    粘贴位置）官方 API 不保证是鼠标点，所以按返回的 items 锚点平移兜底。
+    """
+    import hou
+    kwargs = dict(_TOOL_APPLY_BASE)
+    kwargs["pane"] = pane
+    kwargs["click_to_place"] = click_to_place
+    result = hou.data.applyToolRecipe(name, **kwargs)
+    if position is not None and not click_to_place:
+        _align_items_to_position(name, result, position)
+    return result
+
+
+def _align_items_to_position(name, result, position):
+    """把 apply 出来的整组节点平移，使 anchor（target_tag 节点）落在
+    position 上；apply 已落准（误差 < 0.01）则跳过。"""
+    import hou
+    items = (result or {}).get("items") or {}
+    if not items:
+        return
+    anchor_name = None
+    try:
+        data = hou.data.dataFromRecipe(name) or {}
+        anchor_name = (data.get("tags") or {}).get("target_tag")
+    except Exception as exc:
+        log.debug("dataFromRecipe for alignment failed: %s", exc)
+    anchor = items.get(anchor_name) or next(iter(items.values()))
+    cur = anchor.position()
+    dx = position.x() - cur.x()
+    dy = position.y() - cur.y()
+    if abs(dx) < 0.01 and abs(dy) < 0.01:
+        return
+    for node in items.values():
+        p = node.position()
+        node.setPosition(hou.Vector2(p.x() + dx, p.y() + dy))
+
+
+def apply_node_preset(name, node):
+    import hou
+    if node is None:
+        raise RuntimeError("请先在场景中选中目标节点")
+    hou.data.applyNodePresetRecipe(name, node)
+
+
+def apply_decoration(name, node):
+    import hou
+    if node is None:
+        raise RuntimeError("请先选中装饰的中心节点")
+    hou.data.applyDecorationRecipe(name, central_node=node)
+
+
+def apply_parm_preset(name, node=None):
+    """参数预设：从保存的数据里取参数名（metadata.path 的末段），
+    在选中节点上找同名参数应用。"""
+    import hou
+    if node is None:
+        raise RuntimeError("请先在场景中选中目标节点")
+    data = hou.data.dataFromRecipe(name) or {}
+    path = (data.get("metadata") or {}).get("path") or ""
+    base = path.rsplit("/", 1)[-1].split("#")[0]
+    parm = node.parmTuple(base) or node.parm(base)
+    if parm is None:
+        raise RuntimeError("节点 {} 上找不到参数 {}".format(node.path(), base))
+    hou.data.applyParmPresetRecipe(name, parm)
+
+
+# --------------------------------------------------------------------------
+# 删除
+# --------------------------------------------------------------------------
+
+def _is_under(path, root):
+    try:
+        return os.path.realpath(path).lower().startswith(
+            os.path.realpath(root).lower() + os.sep)
+    except (OSError, ValueError):
+        return False
+
+
+def delete_recipe(name):
+    """删除 recipe（data 资产 definition）。出厂 recipe（$HFS 下）拒绝。
+
+    所在 .hda 因删除而变空时连文件一起清理（卸载 + 删除），不留空壳；
+    文件里还有别的 recipe（如队友分享的多配方库）则只摘除这一个。
+    """
+    import hou
+    ntype = hou.nodeType(hou.dataNodeTypeCategory(), name)
+    defn = ntype.definition() if ntype else None
+    if defn is None:
+        raise RuntimeError("找不到 recipe 资产: {}".format(name))
+    lib = defn.libraryFilePath()
+    hfs = hou.text.expandString("$HFS")
+    if _is_under(lib, hfs):
+        raise RuntimeError("出厂 recipe（{}）不可删除".format(lib))
+    defn.destroy()
+    # 清理语义（无头实测）：destroy 掉文件里**最后一个**定义时，Houdini
+    # 会自动卸载该库（definitionsInFile 对未加载文件抛 OperationFailed），
+    # 但 83 字节空壳文件留在磁盘；还有幸存定义时文件保持加载、内容完好。
+    # 所以：读不到定义（含 OperationFailed）→ 视为空 → 卸载 + 删空壳；
+    # 有幸存定义 → 不动文件。
+    try:
+        if os.path.isfile(lib) and not _is_under(lib, hfs):
+            try:
+                defs_left = hou.hda.definitionsInFile(lib)
+            except Exception:
+                defs_left = []  # 库已被 Houdini 自动卸载 = 已无定义
+            if not defs_left:
+                try:
+                    hou.hda.uninstallFile(lib)
+                except Exception:
+                    pass  # 未加载的文件卸载会失败，直接删文件即可
+                try:
+                    os.remove(lib)
+                except OSError as exc:
+                    log.warning("cannot remove empty recipe library %s: %s",
+                                lib, exc)
+    except Exception as exc:
+        log.warning("cleanup after delete %s failed: %s", name, exc)
