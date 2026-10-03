@@ -437,6 +437,8 @@ class _ExtractWorker(QThread):
         self._process = None
 
     def cancel(self):
+        # ffmpeg 未启动时（探测阶段）_process 为 None，terminate 无从谈起，
+        # 这里只能置标志——真正的拦截在 _extract 的 Popen 前检查
         self._cancelled = True
         if self._process:
             try:
@@ -452,6 +454,13 @@ class _ExtractWorker(QThread):
                 self.error.emit(str(e))
 
     def _extract(self):
+        # 探测阶段可达数十秒（ffprobe 30s / ffmpeg 回退 120s 超时），期间点过
+        # 停止必须就此打住：此刻 _process 还是 None，cancel() 里的 terminate
+        # 无从谈起，不在这里拦截 ffmpeg 会被照常启动
+        if self._cancelled:
+            self.error.emit("转换已取消")
+            return
+
         os.makedirs(self.output_dir, exist_ok=True)
         startup = _get_startup_kwargs()
 
@@ -488,6 +497,11 @@ class _ExtractWorker(QThread):
             "-y",
             output_pattern,
         ]
+
+        # Popen 前最后一道检查，收窄"探测返回后、进程启动前"的竞态窗口
+        if self._cancelled:
+            self.error.emit("转换已取消")
+            return
 
         self._process = subprocess.Popen(
             cmd,
@@ -526,10 +540,26 @@ class _ExtractWorker(QThread):
             # stdout 管道关闭（进程已终止）
             pass
 
-        # 等待进程结束
-        if self._process:
-            self._process.wait()
-            self._process = None
+        # 收尾必须保证 ffmpeg 真正退出、且等待有界：取消若发生在 Popen 之前，
+        # cancel() 里那次 terminate 被跳过，进程还活着且已无人读 stdout——
+        # 它很快会卡死在 progress 管道写上（缓冲区填满即停），裸 wait() 无超时
+        # 会把线程永久挂起（窗口 closeEvent 靠轮询 isRunning 延迟关闭，
+        # 线程挂起 = 隐藏的窗口永不关闭）
+        proc, self._process = self._process, None
+        if proc is not None:
+            if self._cancelled and proc.poll() is None:
+                try:
+                    proc.terminate()
+                except OSError:
+                    pass
+            try:
+                proc.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+                proc.wait(timeout=5)
 
         if self._cancelled:
             self.error.emit("转换已取消")
