@@ -314,11 +314,15 @@ def main():
             assert keys[0] == hdr_browser.KEY_ALL, keys
             assert keys[1] == hdr_browser.KEY_FAV, keys
             assert sorted(keys[2:]) == ["", "day", "night"], keys
-            # 收藏项有 ★ 前缀（重建式过滤：条目按当前分类重建，
-            # 切换视图后旧 item 对象已失效，须重新获取）
+            # 收藏项无名字前缀，角标合成在图标里（_item_icon）；
+            # 重建式过滤：条目按当前分类重建，切换视图后旧 item 已失效
             fav_item = next(it for it in (win.list.item(i) for i in range(6))
                             if it.data(QtCore.Qt.UserRole) == target)
-            assert fav_item.text().startswith("★"), fav_item.text()
+            assert fav_item.text() == "a.hdr", fav_item.text()
+            base_pm = win._item_icon(target, False).pixmap(1024)
+            fav_pm = fav_item.icon().pixmap(1024)
+            assert fav_pm.toImage() != base_pm.toImage(), \
+                "收藏角标未合成（图标内容与底图一致）"
             # 收藏视图过滤：6 个里只有 1 个收藏
             win._select_category(hdr_browser.KEY_FAV)
             assert win._visible_count() == 1, win._visible_count()

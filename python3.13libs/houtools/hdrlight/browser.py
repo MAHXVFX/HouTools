@@ -45,6 +45,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from houtools.core.log import get_logger
 from houtools.core.settings import JsonStore
+from houtools.ui.badge import FavoriteBadge
 from houtools.ui.taskbar import apply_appwindow_flags
 
 log = get_logger("hdrlight.browser")
@@ -602,6 +603,7 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self._thumbs = {}        # path -> 缩略图路径或 None
         self._item_by_path = {}  # path -> 当前网格里的条目（随过滤重建）
         self._pending_icons = {}  # 待批量应用的缩略图（防每张一重排）
+        self._badge = FavoriteBadge()  # 收藏角标（共享组件，见 ui.badge）
         self._placeholder = self._make_placeholder()
 
         self.setWindowTitle("Hdr Library")
@@ -865,11 +867,12 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
             for path in entries:
                 item = QtWidgets.QListWidgetItem()
                 name = os.path.basename(path)
+                fav = _norm_path(path) in favs
                 item.setData(QtCore.Qt.UserRole, path)
                 item.setToolTip(path)
-                item.setText("★ " + name if _norm_path(path) in favs else name)
-                thumb = self._thumbs.get(path)
-                item.setIcon(QtGui.QIcon(thumb) if thumb else self._placeholder)
+                # 收藏不加名字前缀，角标画在缩略图右上角（见 _item_icon）
+                item.setText(name)
+                item.setIcon(self._item_icon(path, fav))
                 self.list.addItem(item)
                 self._item_by_path[path] = item
         finally:
@@ -882,6 +885,16 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
                    for i in range(self.list.count()))
 
     # ---------------- 收藏 ----------------
+
+    def _item_icon(self, path, fav):
+        """条目图标：缩略图（无则占位图）；收藏项在右上角合成角标。"""
+        thumb = self._thumbs.get(path)
+        base = QtGui.QIcon(thumb) if thumb else self._placeholder
+        if fav:
+            # request_size 给大值拿底图自然尺寸（QIcon 不放大），
+            # 角标大小随缩略图等比；QIcon 在绘制时按 iconSize 缩小
+            return self._badge.composite(base, 1024)
+        return base
 
     def _set_favorite(self, item, fav):
         """收藏/取消收藏一个条目，重建网格与侧栏（更新星标与计数）。"""
@@ -1180,7 +1193,8 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
             for path, thumb in pending.items():
                 item = self._item_by_path.get(path)
                 if item is not None:  # 被过滤掉的条目不在当前网格，跳过
-                    item.setIcon(QtGui.QIcon(thumb))
+                    item.setIcon(self._item_icon(
+                        path, _norm_path(path) in self._favs))
         finally:
             self.list.setUpdatesEnabled(True)
 

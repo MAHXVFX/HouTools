@@ -17,29 +17,19 @@ reload() 里经 store.list_recipes()（测试里打补丁替换）。
 """
 
 import os
-from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
-
-try:
-    from PySide6 import QtSvg
-except ImportError:  # QtSvg 缺失时收藏角标降级为不显示（正常环境都有）
-    QtSvg = None
 
 from houtools.core.log import get_logger
 from houtools.recipelib import metadata, store
 from houtools.recipelib.docs import DocEditorDialog, MarkdownMediaView, MediaDialog
+from houtools.ui.badge import FavoriteBadge
 from houtools.ui.taskbar import apply_appwindow_flags
 from houtools.core.settings import JsonStore
 
 log = get_logger("recipelib.browser")
 
 TOOL_ID = "recipe_library"
-
-# 收藏角标（缩略图右上角叠加），SVG 放仓库 icons/，__file__ 解析绝对
-# 路径（Houdini 启动 CWD 不固定，相对路径会失效）
-_ICONS_DIR = Path(__file__).resolve().parent.parent / "icons"
-_FAV_BADGE_SVG = _ICONS_DIR / "favorite_badge.svg"
 
 
 def _push_houdini_error(message):
@@ -245,8 +235,8 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self._preview_info = None
         self._drag_state = None     # 拖拽中: {name, ghost}
         self._placeholder = self._placeholder_icon()
+        self._badge = FavoriteBadge()   # 收藏角标（共享组件，见 ui.badge）
         self._fav_icon_cache = {}   # (name, w, h) -> 合成角标后的 QIcon
-        self._badge_cache = {}      # badge_size -> QPixmap
         self._loaded = False        # 首次 show 时自动枚举（见 showEvent）
 
         # ---- 顶部栏 ----
@@ -606,7 +596,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         key = (info.name, isz.width(), isz.height())
         icon = self._fav_icon_cache.get(key)
         if icon is None:
-            icon = self._composite_fav_icon(base)
+            icon = self._badge.composite(base, isz.width())
             self._fav_icon_cache[key] = icon
         return icon
 
@@ -629,84 +619,6 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             return self._placeholder
         self._thumb_cache[info.name] = icon
         return icon
-
-    def _fav_badge_pixmap(self, size):
-        """渲染收藏角标（SVG 本体 + 柔和投影）为透明底 QPixmap。
-
-        QPainter 没有内建模糊，投影走 QGraphicsDropShadowEffect 的
-        离屏场景渲染（高斯模糊从源 alpha 生成）。画布四周留 pad 容纳
-        模糊溢出，返回的画布比角标本体大——合成时按 -pad 偏移贴角，
-        角标视觉边缘仍对齐缩略图右上角。按尺寸缓存。
-        """
-        size = max(1, int(size))
-        pm = self._badge_cache.get(size)
-        if pm is not None:
-            return pm
-        blur = max(2, size // 7)
-        offset = max(1, size // 14)
-        pad = blur + offset + 2
-        canvas_w = size + pad * 2
-        pm = QtGui.QPixmap(canvas_w, canvas_w)
-        pm.fill(QtCore.Qt.transparent)
-        renderer = self._badge_renderer()
-        if renderer is not None:
-            badge_src = QtGui.QPixmap(size, size)
-            badge_src.fill(QtCore.Qt.transparent)
-            sp = QtGui.QPainter(badge_src)
-            renderer.render(sp, QtCore.QRectF(0, 0, size, size))
-            sp.end()
-
-            scene = QtWidgets.QGraphicsScene(0, 0, canvas_w, canvas_w)
-            item = scene.addPixmap(badge_src)
-            item.setPos(pad, pad)
-            effect = QtWidgets.QGraphicsDropShadowEffect()
-            effect.setBlurRadius(blur)
-            effect.setOffset(offset, offset)
-            effect.setColor(QtGui.QColor(0, 0, 0, 170))
-            item.setGraphicsEffect(effect)
-            rp = QtGui.QPainter(pm)
-            scene.render(rp, QtCore.QRectF(0, 0, canvas_w, canvas_w),
-                         QtCore.QRectF(0, 0, canvas_w, canvas_w))
-            rp.end()
-        self._badge_cache[size] = pm
-        return pm
-
-    def _badge_renderer(self):
-        if not hasattr(self, "_badge_renderer_cache"):
-            self._badge_renderer_cache = None
-            if QtSvg is None:
-                log.warning("QtSvg unavailable, favorite badge disabled")
-            elif not _FAV_BADGE_SVG.is_file():
-                log.warning("favorite badge svg missing: %s", _FAV_BADGE_SVG)
-            else:
-                renderer = QtSvg.QSvgRenderer(str(_FAV_BADGE_SVG))
-                if not renderer.isValid():
-                    log.warning("favorite badge svg invalid: %s",
-                                _FAV_BADGE_SVG)
-                    renderer = None
-                self._badge_renderer_cache = renderer
-        return self._badge_renderer_cache
-
-    def _composite_fav_icon(self, base):
-        """底图 + 右上角角标合成（画布取底图按 iconSize 等比缩放后的
-        实际尺寸，角标贴缩略图右上角而非网格槽位角）。"""
-        isz = self.list.iconSize()
-        base_pm = base.pixmap(isz)
-        if base_pm.isNull():
-            return base
-        canvas = QtGui.QPixmap(base_pm.size())
-        canvas.fill(QtCore.Qt.transparent)
-        painter = QtGui.QPainter(canvas)
-        painter.drawPixmap(0, 0, base_pm)
-        badge_size = max(14, min(44, int(base_pm.width() * 0.24)))
-        badge = self._fav_badge_pixmap(badge_size)
-        margin = max(3, badge_size // 8)
-        # badge 画布含投影余量（四周 pad），按 -pad 贴回视觉角落
-        pad = (badge.width() - badge_size) // 2
-        painter.drawPixmap(base_pm.width() - badge_size - margin - pad,
-                           margin - pad, badge)
-        painter.end()
-        return QtGui.QIcon(canvas)
 
     def _placeholder_icon(self):
         # 256px 档：QIcon 不会把小图放大，占位图太小会在大网格下与真实
