@@ -1,10 +1,10 @@
 """Recipe Library 主窗口：基于官方 recipes 的资产浏览/应用/文档面板。
 
-布局：顶部工具栏（新建/刷新/搜索/大小）+ 左侧栏（全部/收藏/分类/标签）
+布局：顶部工具栏（刷新/库目录/搜索/大小）+ 左侧栏（全部/收藏/分类/标签）
 + 中部缩略图网格 + 右侧预览面板（动图预览/元信息/标签编辑）+ 底部状态栏。
 
 交互（四类 recipe 语义不同，见 store.apply_*）：
-- 双击卡片：Tool 进入官方"点击放置"流程（在网络编辑器里点一下落位）；
+- 双击卡片：Tool 按官方工具架体验立即在当前网络创建并框选（无二次点击）；
   Node/Param 预设与 Decoration 需要"先选中目标节点"再双击应用。
 - 按住卡片拖到网络编辑器释放：立即在鼠标点创建（自研拖拽，不依赖
   网络编辑器接受任何 MIME——拖动期间装 QApplication 级事件过滤器，
@@ -29,6 +29,20 @@ from houtools.core.settings import JsonStore
 log = get_logger("recipelib.browser")
 
 TOOL_ID = "recipe_library"
+
+
+def _push_houdini_error(message):
+    """把错误推到 Houdini 左下角状态栏（红色 severity=Error）。
+
+    面板自身状态栏也有同款文案；这里保证用户视线留在网络编辑器时
+    也能看到失败原因。无头/旧版签名差异时静默降级。
+    """
+    try:
+        import hou
+        hou.ui.setStatusMessage("Recipe Library: {}".format(message),
+                                severity=hou.severityType.Error)
+    except Exception as exc:
+        log.debug("setStatusMessage failed: %s", exc)
 
 KEY_ALL = "__all__"
 KEY_FAV = "__fav__"
@@ -79,8 +93,8 @@ class _Grid(QtWidgets.QListWidget):
 class _LibraryDirsDialog(QtWidgets.QDialog):
     """库文件夹管理对话框：可配置多个，列表即加载顺序。
 
-    「新建 Recipe」落到第一个文件夹的 HouToolsRecipes.hda；其余文件夹
-    常用来挂共享库（队友/项目的 recipe .hda 直接丢进去就被扫描）。
+    创建 recipe 用 Houdini 官方保存流程（位置指向库文件夹里的 .hda）；
+    其余文件夹常用来挂共享库（队友/项目的 recipe .hda 直接丢进去就被扫描）。
     """
 
     def __init__(self, parent=None):
@@ -98,7 +112,9 @@ class _LibraryDirsDialog(QtWidgets.QDialog):
         buttons.accepted.connect(self.accept)
         hint = QtWidgets.QLabel(
             "每个文件夹里任意层级的 .hda 都会被扫描加载（官方出厂 recipes "
-            "不加载）；「新建 Recipe」存到第一个文件夹的 HouToolsRecipes.hda。")
+            "不加载）。创建 recipe 用 Houdini 官方保存流程（网络编辑器右键 "
+            "▸ Recipes ▸ Save），位置指向库文件夹里的 .hda；"
+            "或直接把 .hda 文件放进文件夹。")
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #888888;")
 
@@ -206,13 +222,11 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self._loaded = False        # 首次 show 时自动枚举（见 showEvent）
 
         # ---- 顶部栏 ----
-        self.new_btn = QtWidgets.QPushButton("新建 Recipe")
-        self.new_btn.setToolTip("把当前选中的节点集保存为 Tool Recipe"
-                                "（存到第一个库文件夹的 HouToolsRecipes.hda）")
         self.refresh_btn = QtWidgets.QPushButton("刷新")
         self.lib_btn = QtWidgets.QPushButton("库目录...")
         self.lib_btn.setToolTip("管理 recipe 库文件夹（可多个，递归扫描其中的"
-                                " .hda；官方出厂 recipes 不加载）")
+                                " .hda；官方出厂 recipes 不加载。创建 recipe "
+                                "请用 Houdini 官方保存流程，把位置指到库文件夹）")
         self.lib_label = QtWidgets.QLabel()
         self.lib_label.setStyleSheet("color: #888888;")
         self.search = QtWidgets.QLineEdit()
@@ -228,8 +242,6 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.size_label = QtWidgets.QLabel("{}px".format(self.size_slider.value()))
 
         top = QtWidgets.QHBoxLayout()
-        top.addWidget(self.new_btn)
-        top.addSpacing(8)
         top.addWidget(self.refresh_btn)
         top.addSpacing(8)
         top.addWidget(self.lib_btn)
@@ -330,7 +342,6 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         lay.addWidget(self.splitter, 1)
         lay.addWidget(self.status)
 
-        self.new_btn.clicked.connect(self._on_new_recipe)
         self.refresh_btn.clicked.connect(self.reload)
         self.lib_btn.clicked.connect(self._manage_lib_dirs)
         self.pin_chk.toggled.connect(self._toggle_pin)
@@ -675,17 +686,20 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             self._apply_recipe(info)
 
     def _apply_recipe(self, info):
-        """按类型分发应用；错误进状态栏不打断窗口。"""
+        """按类型分发应用；错误进状态栏不打断窗口。
+
+        Tool 走官方工具架参数（立即在当前网络创建并 frame 框选），
+        与"点工架按钮"同体验；预设/装饰类需要先选中目标节点。
+        """
         try:
             if info.category == "tool":
                 editor = store.current_network_editor()
                 if editor is None:
                     self.status.setText("找不到网络编辑器面板，请先打开一个网络视图")
                     return
-                store.apply_tool_recipe(info.name, pane=editor,
-                                        click_to_place=True)
-                self.status.setText(
-                    "{}：请在网络编辑器中点击放置（Esc 取消）".format(info.display_label))
+                store.apply_tool_recipe(info.name, pane=editor, mode="shelf")
+                self.status.setText("已把「{}」创建到当前网络".format(
+                    info.display_label))
             elif info.category == "node":
                 nodes = store.selected_nodes()
                 if not nodes:
@@ -710,9 +724,14 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             else:
                 self.status.setText(
                     "类型 {} 暂不支持面板内应用，请用官方菜单".format(info.category))
+        except store.ContextMismatch as exc:
+            # 预期内的操作反馈（层级点错）：红字提示即可，控制台保持安静
+            self.status.setText(str(exc))
+            _push_houdini_error(str(exc))
         except Exception as exc:
             log.warning("apply %s failed: %s", info.name, exc, exc_info=True)
             self.status.setText("应用失败: {}".format(exc))
+            _push_houdini_error(str(exc))
 
     # ---------------- 拖拽进网络编辑器 ----------------
 
@@ -781,11 +800,16 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             log.debug("cursorPosition failed, fallback to apply default: %s", exc)
         try:
             store.apply_tool_recipe(info.name, pane=pane, position=position,
-                                    click_to_place=False)
+                                    mode="drag")
             self.status.setText("已在当前网络中创建 {}".format(info.display_label))
+        except store.ContextMismatch as exc:
+            # 预期内的操作反馈（层级点错）：红字提示即可，控制台保持安静
+            self.status.setText(str(exc))
+            _push_houdini_error(str(exc))
         except Exception as exc:
             log.warning("drag apply %s failed: %s", info.name, exc, exc_info=True)
             self.status.setText("创建失败: {}".format(exc))
+            _push_houdini_error(str(exc))
 
     def _cancel_drag(self):
         self._teardown_drag()
@@ -914,41 +938,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self._doc_dialog.show()
         self._doc_dialog.raise_()
 
-    # ---------------- 新建 / 删除 ----------------
-
-    def _on_new_recipe(self):
-        lib_dirs = metadata.get_lib_dirs()
-        if not lib_dirs:
-            QtWidgets.QMessageBox.information(
-                self, "新建 Recipe",
-                "请先点「库目录...」设置保存位置（recipe 库文件夹）。")
-            return
-        try:
-            nodes = store.selected_nodes()
-        except Exception as exc:
-            log.debug("selected nodes lookup failed: %s", exc)
-            nodes = []
-        if not nodes:
-            QtWidgets.QMessageBox.information(
-                self, "新建 Recipe",
-                "请先在网络编辑器中选中要保存的节点（最后一个作为锚点），"
-                "再点「新建 Recipe」。")
-            return
-        label, ok = QtWidgets.QInputDialog.getText(
-            self, "新建 Tool Recipe", "名称（显示名）：")
-        label = (label or "").strip()
-        if not ok or not label:
-            return
-        try:
-            name = store.create_tool_recipe(label, nodes, lib_dirs[0])
-        except Exception as exc:
-            log.warning("create recipe failed: %s", exc, exc_info=True)
-            QtWidgets.QMessageBox.warning(self, "新建 Recipe",
-                                          "保存失败: {}".format(exc))
-            return
-        self.reload()
-        self.status.setText("已保存 Tool Recipe「{}」（{} 个节点）到 {}".format(
-            name, len(nodes), lib_dirs[0]))
+    # ---------------- 删除 ----------------
 
     def _delete_recipe(self, info):
         answer = QtWidgets.QMessageBox.question(

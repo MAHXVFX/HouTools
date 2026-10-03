@@ -14,9 +14,8 @@
 - 用户在面板配置若干"库文件夹"（settings/recipelib.json 的 lib_dirs，
   可多个）；文件夹里**任意层级**的 .hda 都会被安装，且只枚举这些文件里
   的 recipe——出厂（$HFS）/ Labs / 用户偏好默认库里的 recipes 一律不显示。
-- 新建的 recipe 固定落到第一个库文件夹的 ``HouToolsRecipes.hda``
-  （saveToolRecipe 会自动建文件并安装）；文件夹里放别人分享的
-  recipe .hda 同样会被扫描加载。
+- 面板只做展示与管理，创建 recipe 走 Houdini 官方保存流程；文件夹里放
+  官方保存到库文件夹的 .hda 或别人分享的 recipe .hda，都会被扫描加载。
 - 误装防护：安装后检查 definitionsInFile，没有任何 data 类定义的文件
   （误放进来的普通 OTL）立即卸载还原，不给会话留副作用。
 - uiready.py 每次启动也调 ensure_libraries_installed，让 Tab 菜单里的
@@ -28,7 +27,6 @@
 
 import json
 import os
-import re
 from dataclasses import dataclass, field
 
 from houtools.core.log import get_logger
@@ -44,8 +42,6 @@ CATEGORY_LABELS = {
     "parmTemplate": "Parm Template（参数模板）",
     "data": "Data（数据）",
 }
-
-LIBRARY_FILENAME = "HouToolsRecipes.hda"  # 每个库文件夹的"新建"落点
 
 
 @dataclass
@@ -279,48 +275,6 @@ def get_recipe(name, lib_dirs=None):
 
 
 # --------------------------------------------------------------------------
-# 创建
-# --------------------------------------------------------------------------
-
-def folder_library_file(lib_dir):
-    """库文件夹的"新建"落点：<文件夹>/HouToolsRecipes.hda。"""
-    return os.path.join(os.path.abspath(lib_dir), LIBRARY_FILENAME)
-
-
-def create_tool_recipe(label, nodes, lib_dir):
-    """把选中的节点集存成 tool recipe（最后一个为 anchor），返回内部名。
-
-    落点固定为库文件夹里的 HouToolsRecipes.hda；内部名自动生成
-    houtools::<label_slug>，重名自动加序号。
-    """
-    import hou
-    import recipeutils as ru
-
-    if not lib_dir:
-        raise RuntimeError("未设置 recipe 库文件夹")
-    if not nodes:
-        raise RuntimeError("没有可保存的节点")
-    slug = re.sub(r"[^0-9a-zA-Z_]+", "_", label).strip("_").lower() or "recipe"
-    existing = set(ru.recipeNames(ru.RecipeCategory.tool,
-                                  include_label=False, pad=False))
-    name = "houtools::{}".format(slug)
-    i = 2
-    while name in existing:
-        name = "houtools::{}_{}".format(slug, i)
-        i += 1
-    lib = folder_library_file(lib_dir)
-    os.makedirs(os.path.dirname(lib), exist_ok=True)
-    hou.data.saveToolRecipe(
-        name, label, lib, nodes[-1],
-        items=list(nodes),
-        tab_submenu="HouTools",
-        frame_nodes=[nodes[-1]],
-        comment="",
-    )
-    return name
-
-
-# --------------------------------------------------------------------------
 # 应用
 # --------------------------------------------------------------------------
 
@@ -355,12 +309,24 @@ def network_editor_under_cursor():
     return None
 
 
-# 官方 Tab 菜单调用模板（hrecipes/api/sessiontool.py _tab_tool_script）
-# 的参数原样照搬，只把 click_to_place 变成调用方选择
-_TOOL_APPLY_BASE = dict(
+# 官方两套调用模板（hrecipes/api/sessiontool.py），照抄参数只改调用方式：
+# shelf = 工具体验（双击/应用按钮）：立即放置 + 框选 + 启用提示
+# drag  = 拖拽落点（松手即建）：接入落点导线、不框选、不带提示
+_SHELF_OPTS = dict(
+    tool_inputs=[],
+    tool_outputs=[],
+    drop_on_wire=False,
+    click_to_place=False,
+    avoid_overlap=False,
+    frame=False,   # 官方默认 True 会把视图拉得极近；改由 ensure_items_visible
+    prompt=True,   # 只保证"创建物可见"，不动缩放
+    skip_notes=True,
+)
+_DRAG_OPTS = dict(
     tool_inputs=[],
     tool_outputs=[],
     drop_on_wire=True,
+    click_to_place=False,
     avoid_overlap=False,
     frame=False,
     prompt=False,
@@ -368,21 +334,114 @@ _TOOL_APPLY_BASE = dict(
 )
 
 
-def apply_tool_recipe(name, pane=None, position=None, click_to_place=False):
+# 网络层级展示名（层级不匹配提示用）
+_CONTEXT_HINTS = {
+    "Object": "OBJ（/obj 层级）",
+    "Sop": "SOP（geo 内部）",
+    "Lop": "LOP（Solaris）",
+    "Dop": "DOP",
+    "Cop": "COP",
+    "Cop2": "COP2",
+    "Chop": "CHOP",
+}
+
+
+def _read_tool_network_categories(name):
+    """tool recipe 声明的可用网络类别（tool.network_categories），无则 []。"""
+    import hou
+    try:
+        ntype = hou.nodeType(hou.dataNodeTypeCategory(), name)
+        defn = ntype.definition() if ntype else None
+        sec = defn.sections().get("data.recipe.json") if defn else None
+        if sec is None:
+            return []
+        data = json.loads(sec.contents())
+        return [str(c) for c in
+                (data.get("tool") or {}).get("network_categories") or []]
+    except Exception as exc:
+        log.debug("read network_categories for %s failed: %s", name, exc)
+        return []
+
+
+class ContextMismatch(RuntimeError):
+    """recipe 与目标网络层级不匹配。
+
+    这是预期内的用户操作反馈（层级点错了），UI 红字提示即可——
+    调用方不得把它当程序错误打日志/堆栈。
+    """
+
+
+def _check_tool_context(name, pane):
+    """tool recipe 与目标网络层级的匹配检查（官方 Tab 菜单按
+    network_categories 过滤，面板直连应用绕过了这层，须自己补上），
+    不匹配抛 RuntimeError。声明缺失/上下文读不到时放行。"""
+    import hou
+    if pane is None:
+        return
+    cats = _read_tool_network_categories(name)
+    if not cats:
+        return
+    try:
+        # ⚠ pwd() 是"容纳当前网络的节点"（geo1 内部时 pwd=/obj/geo1），
+        # 它的 type().category() 是 Object（geo 本身是 OBJ 节点）；
+        # 编辑器显示的网络类别必须用 childTypeCategory()——
+        # /obj→Object、/obj/geo1→Sop、/obj/geo1/dopnet1→Dop（实测）。
+        pwd_cat = pane.pwd().childTypeCategory().name()
+    except Exception as exc:
+        log.debug("read editor pwd category failed: %s", exc)
+        return
+    if pwd_cat not in cats:
+        need = " / ".join(_CONTEXT_HINTS.get(c, c) for c in cats)
+        have = _CONTEXT_HINTS.get(pwd_cat, pwd_cat)
+        raise ContextMismatch(
+            "层级不匹配：该 recipe 需要 {} 网络，当前是 {} 网络".format(need, have))
+
+
+def ensure_items_visible(name, result, editor):
+    """frame=False 创建后保证创建物可见：锚点落在视图外时把整组节点
+    平移到视图中心（只平移、不改缩放）。已可见则不动。"""
+    import hou
+    items = (result or {}).get("items") or {}
+    if not items or editor is None:
+        return
+    try:
+        anchor_name = None
+        try:
+            data = hou.data.dataFromRecipe(name) or {}
+            anchor_name = (data.get("tags") or {}).get("target_tag")
+        except Exception:
+            pass
+        anchor = items.get(anchor_name) or next(iter(items.values()))
+        bounds = editor.visibleBounds()
+        lo = bounds.min()
+        hi = bounds.max()
+        pos = anchor.position()
+        if lo.x() <= pos.x() <= hi.x() and lo.y() <= pos.y() <= hi.y():
+            return  # 已在视野内
+        _align_items_to_position(name, result, bounds.center())
+    except Exception as exc:
+        log.debug("ensure items visible failed: %s", exc)
+
+
+def apply_tool_recipe(name, pane=None, position=None, mode="shelf"):
     """应用 tool recipe。
 
-    click_to_place=True：官方 Tab 菜单流程——进入放置模式，用户在
-    网络编辑器里点一下落位（apply 立即返回，不阻塞）。
-    click_to_place=False：立即放置；给 position（hou.Vector2 网络坐标）
-    时把整组节点平移对齐到该点——apply 在此模式下的落点（视图中心/
+    mode="shelf"：官方工具架体验——立即在 pane 的当前网络里创建
+    （参数照抄官方 _shelf_tool_script，仅 frame 改 False 避免视角
+    拉近），创建后由 ensure_items_visible 保证可见。
+    mode="drag"：拖拽松手即建；给 position（hou.Vector2 网络坐标）时
+    把整组节点平移对齐到该点——apply 在此模式下的落点（视图中心/
     粘贴位置）官方 API 不保证是鼠标点，所以按返回的 items 锚点平移兜底。
+    两者都会先做网络层级匹配检查，不匹配抛 RuntimeError（含中文提示）。
     """
     import hou
-    kwargs = dict(_TOOL_APPLY_BASE)
+    _check_tool_context(name, pane)
+    kwargs = dict(_SHELF_OPTS if mode == "shelf" else _DRAG_OPTS)
     kwargs["pane"] = pane
-    kwargs["click_to_place"] = click_to_place
     result = hou.data.applyToolRecipe(name, **kwargs)
-    if position is not None and not click_to_place:
+    if mode == "shelf":
+        ensure_items_visible(name, result, pane)
+    elif position is not None and mode == "drag":
         _align_items_to_position(name, result, position)
     return result
 
