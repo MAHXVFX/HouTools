@@ -807,7 +807,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             "QFrame#tagsPanel { background-color: #1D1D20; "
             "border: 1px solid #3d3d3d; border-radius: 6px; }")
         tags_lay = QtWidgets.QVBoxLayout(self.tags_panel)
-        tags_lay.setContentsMargins(8, 6, 8, 6)
+        tags_lay.setContentsMargins(8, 3, 8, 3)   # 压低内边距与按钮等高
         tags_lay.addWidget(self.tags_view)
         self.tags_apply_btn = QtWidgets.QPushButton("标签设置")
         self.tags_apply_btn.setToolTip("在弹窗中修改标签（逗号分隔）")
