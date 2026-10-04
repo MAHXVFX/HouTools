@@ -103,7 +103,7 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
     def text_block_height(cls):
         """缩略图以下文字区的总高度（与 paint 的行序严格一致）。"""
         name_h = cls._font_metrics(13, True).height()
-        line_h = cls._font_metrics(12, False).height()
+        line_h = cls._font_metrics(12, True).height()   # 三行小字也加粗
         return (cls.TEXT_TOP_GAP + name_h + cls.LINE_GAP
                 + (line_h + cls.LINE_GAP) * 3 + cls.MARGIN)
 
@@ -153,7 +153,8 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
         y = card.top() + m
 
         # 缩略图区（clip 进卡片圆角）比文字区更暗一档，再 contain 居中画
-        # 缩略图（icon 已含收藏角标合成，QIcon 内部按尺寸缓存缩放结果）
+        # 缩略图；收藏角标单独贴在缩略图区（卡片内容区）右上角——合成进
+        # 图标的话位置随图片留白漂移，贴不到卡片角
         painter.save()
         painter.setClipPath(path)
         painter.fillRect(QtCore.QRectF(card.left() + m, y, text_w, thumb_h),
@@ -166,6 +167,14 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
                 painter.drawPixmap(
                     card.left() + m + (text_w - pm.width()) // 2,
                     y + (thumb_h - pm.height()) // 2, pm)
+        if info is not None and metadata.is_favorite(info.name):
+            badge_size = max(12, min(24, int(text_w * 0.12)))
+            badge = self._win._badge.badge_pixmap(badge_size)
+            margin = max(3, badge_size // 8)
+            pad = (badge.width() - badge_size) // 2  # 画布含投影余量
+            painter.drawPixmap(
+                int(card.left() + m + text_w - badge_size - margin - pad),
+                int(card.top() + m + margin - pad), badge)
         y += thumb_h + self.TEXT_TOP_GAP
 
         border = theme if custom else QtGui.QColor(
@@ -179,6 +188,7 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
 
         # 行1：颜色竖条 + 名字（粗体白，超长省略）
         nfm = self._font_metrics(13, True)
+        painter.setFont(self._font(13, True))   # 度量之外必须真正设置字体
         bar_h = nfm.height()
         painter.setPen(QtCore.Qt.NoPen)
         painter.setBrush(bar)
@@ -193,8 +203,8 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
                          QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, name)
         y += bar_h + self.LINE_GAP
 
-        # 行2-4：类型·节点数 / 版本 / 标签
-        painter.setFont(self._font(12, False))
+        # 行2-4：类型·节点数 / 版本 / 标签（全部加粗）
+        painter.setFont(self._font(12, True))
         line_h = painter.fontMetrics().height()
 
         def _line(text, color):
@@ -413,8 +423,8 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self._preview_info = None
         self._drag_state = None     # 拖拽中: {name, ghost}
         self._placeholder = self._placeholder_icon()
-        self._badge = FavoriteBadge()   # 收藏角标（共享组件，见 ui.badge）
-        self._fav_icon_cache = {}   # (name, w, h) -> 合成角标后的 QIcon
+        self._badge = FavoriteBadge()   # 收藏角标（共享组件，见 ui.badge；
+                                        # delegate 画在卡片右上角，非合成进图标）
         self._loaded = False        # 首次 show 时自动枚举（见 showEvent）
 
         # ---- 顶部栏 ----
@@ -727,11 +737,10 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             for info in entries:
                 item = QtWidgets.QListWidgetItem()
                 item.setData(QtCore.Qt.UserRole, info.name)
-                fav = metadata.is_favorite(info.name)
-                # 收藏不再加名字前缀，角标画在缩略图右上角（见 _icon_for）
+                # 收藏不加名字前缀，角标由卡片 delegate 画在卡片右上角
                 item.setText(self._display_label(info))
                 item.setToolTip(self._tooltip_for(info))
-                item.setIcon(self._icon_for(info, fav))
+                item.setIcon(self._base_icon(info))
                 self.list.addItem(item)
         finally:
             self.list.setUpdatesEnabled(True)
@@ -776,21 +785,6 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         return "\n".join(lines)
 
     # ---------------- 图标与预览 ----------------
-
-    def _icon_for(self, info, fav=False):
-        """网格图标：缩略图文件；GIF 取首帧（网格保持静态，预览区才动）。
-        fav=True 时在缩略图右上角合成收藏角标（按当前 iconSize 合成，
-        尺寸变化时缓存整体失效重合成）。"""
-        base = self._base_icon(info)
-        if not fav or base is None:
-            return base
-        isz = self.list.iconSize()
-        key = (info.name, isz.width(), isz.height())
-        icon = self._fav_icon_cache.get(key)
-        if icon is None:
-            icon = self._badge.composite(base, isz.width())
-            self._fav_icon_cache[key] = icon
-        return icon
 
     def _base_icon(self, info):
         """无角标的底图（按内部名缓存）。"""
@@ -843,15 +837,6 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
                   + _CardDelegate.text_block_height() + GRID_CARD_GAP)
         self.list.setGridSize(QtCore.QSize(
             card_w + GRID_CARD_GAP * 2, grid_h))
-        # 角标按 iconSize 合成，尺寸变了缓存失效并刷新现有条目的图标
-        if self._fav_icon_cache:
-            self._fav_icon_cache.clear()
-            for i in range(self.list.count()):
-                item = self.list.item(i)
-                info = self._info_by_name.get(item.data(QtCore.Qt.UserRole))
-                if info is not None:
-                    item.setIcon(self._icon_for(
-                        info, metadata.is_favorite(info.name)))
 
     def _on_selection_changed(self, current, _previous=None):
         if current is None:
@@ -1041,7 +1026,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
                 .format(self._display_label(info),
                         store.CATEGORY_LABELS.get(info.category, info.category)))
             return
-        icon = self._icon_for(info, metadata.is_favorite(info.name))
+        icon = self._base_icon(info)
         pm = icon.pixmap(56, 56)
         ghost = QtWidgets.QLabel(None)
         ghost.setPixmap(pm)
@@ -1168,8 +1153,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         elif act is not None and act is act_thumb_clear:
             metadata.clear_thumb(info.name)
             self._thumb_cache.pop(info.name, None)
-            item.setIcon(self._icon_for(info,
-                                        metadata.is_favorite(info.name)))
+            item.setIcon(self._base_icon(info))
             self._refresh_current_item()
         elif act is act_color:
             self._set_color(info)
