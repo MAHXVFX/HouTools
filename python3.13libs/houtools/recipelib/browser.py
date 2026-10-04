@@ -742,8 +742,9 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.preview_name.setStyleSheet("font-weight: bold; font-size: 14px;")
         self.preview_name.setToolTip("双击可自定义显示名称（支持中文）")
         self.preview_name.nameDoubleClicked.connect(self._rename_selected)
-        # 元信息卡片：前三行纵排 + 两列网格（中缝竖直分割线，跨两行），
-        # 装进圆角卡片容器与下方文档区区分；格子缺信息留空、行列对齐
+        # 元信息卡片：前三行纵排 + 两列信息（左：分类/版本，右：层级/焦点，
+        # 中缝竖线分隔）。不用 QGridLayout rowSpan——其 Expanding 分隔线
+        # 会拉伸行距留空隙；改左右双列 VBox 紧凑堆叠
         self.preview_meta = QtWidgets.QLabel()
         self.preview_meta.setWordWrap(True)
         self.preview_meta.setStyleSheet("color: #9a9aa2;")
@@ -755,22 +756,22 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
                      self.meta_cell_version, self.meta_cell_targets):
             cell.setWordWrap(True)
             cell.setStyleSheet("color: #9a9aa2;")
-        meta_grid = QtWidgets.QGridLayout()
-        meta_grid.setContentsMargins(0, 4, 0, 0)
-        meta_grid.setHorizontalSpacing(10)
-        meta_grid.setVerticalSpacing(4)
-        meta_grid.addWidget(self.meta_cell_category, 0, 0)
-        meta_grid.addWidget(self.meta_cell_network, 0, 2)
-        meta_grid.addWidget(self.meta_cell_version, 1, 0)
-        meta_grid.addWidget(self.meta_cell_targets, 1, 2)
+        meta_left = QtWidgets.QVBoxLayout()
+        meta_left.setSpacing(4)
+        meta_left.addWidget(self.meta_cell_category)
+        meta_left.addWidget(self.meta_cell_version)
+        meta_right = QtWidgets.QVBoxLayout()
+        meta_right.setSpacing(4)
+        meta_right.addWidget(self.meta_cell_network)
+        meta_right.addWidget(self.meta_cell_targets)
         sep = QtWidgets.QFrame()
         sep.setFixedWidth(1)
-        sep.setSizePolicy(QtWidgets.QSizePolicy.Fixed,
-                          QtWidgets.QSizePolicy.Expanding)
         sep.setStyleSheet("background-color: #3d3d3d;")
-        meta_grid.addWidget(sep, 0, 1, 2, 1)
-        meta_grid.setColumnStretch(0, 2)
-        meta_grid.setColumnStretch(2, 3)
+        meta_row = QtWidgets.QHBoxLayout()
+        meta_row.setSpacing(10)
+        meta_row.addLayout(meta_left, 2)
+        meta_row.addWidget(sep)
+        meta_row.addLayout(meta_right, 3)
 
         self.meta_panel = QtWidgets.QFrame()
         self.meta_panel.setObjectName("metaPanel")
@@ -779,10 +780,15 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             "border: 1px solid #3d3d3d; border-radius: 6px; }")
         meta_lay = QtWidgets.QVBoxLayout(self.meta_panel)
         meta_lay.setContentsMargins(10, 8, 10, 8)
+        meta_lay.setSpacing(4)
         meta_lay.addWidget(self.preview_meta)
-        meta_lay.addLayout(meta_grid)
+        meta_lay.addLayout(meta_row)
         self.preview_comment = QtWidgets.QLabel()
         self.preview_comment.setWordWrap(True)
+        # 贴顶：comment 拉伸占据 meta 卡片与文档之间的富余空间，
+        # 垂直居中会让文字悬在半空
+        self.preview_comment.setAlignment(QtCore.Qt.AlignLeft
+                                          | QtCore.Qt.AlignTop)
         self.preview_comment.setStyleSheet("color: #aaaaaa;")
         # 有文档时直接渲染 markdown 文档内容（内联 GIF/视频按钮），
         # 无文档时隐藏、显示官方备注 comment
@@ -825,7 +831,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
 
         preview_panel = QtWidgets.QWidget()
         preview_panel.setLayout(pv)
-        preview_panel.setFixedWidth(self.PREVIEW_W + 24)
+        preview_panel.setFixedWidth(self.PREVIEW_W)
 
         self.splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
         self.splitter.setHandleWidth(4)
