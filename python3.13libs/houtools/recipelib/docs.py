@@ -24,6 +24,7 @@ from PySide6.QtMultimediaWidgets import QVideoWidget
 
 from houtools.core.log import get_logger
 from houtools.recipelib import metadata
+from houtools.ui.dialogs import warn
 
 log = get_logger("recipelib.docs")
 
@@ -331,7 +332,7 @@ class DocEditorDialog(QtWidgets.QDialog):
         try:
             rel = metadata.insert_asset(self._name, path)
         except (OSError, RuntimeError) as exc:
-            QtWidgets.QMessageBox.warning(self, "插入失败", str(exc))
+            warn(self, "插入失败", str(exc))
             return
         alt = os.path.basename(path)
         self.editor.insertPlainText("![{}]({})".format(alt, rel))

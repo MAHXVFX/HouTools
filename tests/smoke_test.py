@@ -406,6 +406,7 @@ def main():
     # Recipe Library：元数据/文档存储闭环 + 打桩浏览器窗口回归
     # （store 依赖 hou/recipeutils，无头不可调用；窗口 __init__ 不触 hou）
     # ------------------------------------------------------------------
+    from PySide6 import QtWidgets
     import houtools.recipelib.metadata as rl_meta
     import houtools.recipelib.store as rl_store
     import houtools.recipelib.docs as rl_docs  # noqa: F401
@@ -599,17 +600,22 @@ def main():
                 assert win.list.count() == 1
                 win.search.setText("")
                 win._apply_filter()
-                # 重命名流程（QInputDialog 打桩）：改名进元数据并刷新预览，
-                # 清空输入恢复默认
+                # 重命名流程（QInputDialog 实例打桩——面板已改为实例化调用
+                # 以便中文化按钮，静态 getText 不再使用）：改名进元数据并
+                # 刷新预览，清空输入恢复默认
                 win.list.setCurrentRow(1)
-                with patch("PySide6.QtWidgets.QInputDialog.getText",
-                           return_value=("拷贝神器", True)):
+                with patch("PySide6.QtWidgets.QInputDialog.exec_",
+                           return_value=QtWidgets.QDialog.Accepted), \
+                     patch("PySide6.QtWidgets.QInputDialog.textValue",
+                           return_value="拷贝神器"):
                     win._rename_selected()
                 assert rl_meta.get_display_name("houtools::light::b") \
                     == "拷贝神器"
                 assert win.preview_name.text() == "拷贝神器"
-                with patch("PySide6.QtWidgets.QInputDialog.getText",
-                           return_value=("", True)):
+                with patch("PySide6.QtWidgets.QInputDialog.exec_",
+                           return_value=QtWidgets.QDialog.Accepted), \
+                     patch("PySide6.QtWidgets.QInputDialog.textValue",
+                           return_value=""):
                     win._rename_selected()
                 assert rl_meta.get_display_name("houtools::light::b") == ""
                 assert win.preview_name.text() == "Light B"

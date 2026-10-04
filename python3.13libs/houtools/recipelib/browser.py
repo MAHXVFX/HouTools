@@ -24,6 +24,7 @@ from houtools.core.log import get_logger
 from houtools.recipelib import metadata, store
 from houtools.recipelib.docs import DocEditorDialog, MarkdownMediaView, MediaDialog
 from houtools.ui.badge import FavoriteBadge
+from houtools.ui.dialogs import localize_buttons, warn
 from houtools.ui.taskbar import apply_appwindow_flags
 from houtools.core.settings import JsonStore
 
@@ -67,6 +68,7 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
     LINE_GAP = 3      # 文字行间距
     TEXT_BOTTOM_PAD = 3  # 标签行到底边的留白（比 MARGIN 紧，底部不空）
     BAR_W = 3         # 名字旁颜色竖条宽度
+    DEFAULT_THEME = "#9a9aa2"  # 未设置自定义颜色时的默认主题（灰）
 
     def __init__(self, window, parent=None):
         super().__init__(parent)
@@ -136,7 +138,7 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
             bar = QtGui.QColor(theme)
             tag_color = self._readable(theme)
         else:
-            theme = QtGui.QColor("#9a9aa2")
+            theme = QtGui.QColor(self.DEFAULT_THEME)
             bar = QtGui.QColor("#e8e8ec")
             tag_color = QtGui.QColor("#c0c0c8")
         bg = self._tint(theme, 0.35)
@@ -338,6 +340,7 @@ class _LibraryDirsDialog(QtWidgets.QDialog):
 
         add_btn.clicked.connect(self._add_dir)
         rm_btn.clicked.connect(self._remove_dir)
+        localize_buttons(self)   # Ok → 确认
 
     def _add_dir(self):
         start = self.list.currentItem().text() if self.list.currentItem() \
@@ -1119,22 +1122,19 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         if info is None:
             return
         fav = metadata.is_favorite(info.name)
-        display = self._display_label(info)
         menu = QtWidgets.QMenu(self)
         act_fav = menu.addAction("取消收藏" if fav else "★ 收藏")
+        menu.addSeparator()
+        # 恢复默认显示名不进菜单：自定义显示名留空确认即恢复
         act_rename = menu.addAction("自定义显示名...")
-        act_rename_reset = None
-        if display:
-            act_rename_reset = menu.addAction("恢复默认显示名")
+        menu.addSeparator()
         act_doc = menu.addAction("编辑文档...")
         act_thumb = menu.addAction("设置缩略图...")
         act_thumb_clear = None
         if metadata.get_thumb(info.name):
             act_thumb_clear = menu.addAction("清除缩略图")
+        # 清除颜色不进菜单：颜色对话框里「恢复默认」+ 确认
         act_color = menu.addAction("自定义颜色...")
-        act_color_clear = None
-        if metadata.get_color(info.name):
-            act_color_clear = menu.addAction("清除颜色")
         act_copy = menu.addAction("复制内部名")
         menu.addSeparator()
         act_del = None
@@ -1145,9 +1145,6 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             self._set_favorite(info, not fav)
         elif act is act_rename:
             self._rename_selected()
-        elif act is not None and act is act_rename_reset:
-            metadata.set_display_name(info.name, None)
-            self._refresh_current_item()
         elif act is act_doc:
             self._open_doc_for(info)
         elif act is act_thumb:
@@ -1159,26 +1156,54 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             self._refresh_current_item()
         elif act is act_color:
             self._set_color(info)
-        elif act is not None and act is act_color_clear:
-            metadata.set_color(info.name, None)
-            self._refresh_current_item()
         elif act is act_copy:
             QtWidgets.QApplication.clipboard().setText(info.name)
         elif act is not None and act is act_del:
             self._delete_recipe(info)
 
     def _set_color(self, info):
-        """卡片颜色框取色（QColorDialog），写元数据层并重刷网格/预览。"""
-        current = metadata.get_color(info.name) or "#8a5cf5"
-        color = QtWidgets.QColorDialog.getColor(
-            QtGui.QColor(current), self,
-            "自定义颜色 - {}".format(self._display_label(info)))
-        if not color.isValid():
+        """卡片颜色框取色（非原生 QColorDialog，中文按钮）。
+
+        「恢复默认」= 清除自定义色（卡片回默认灰主题）：点击后预览色切到
+        默认主题色并置清除标志，用户点「确认」才生效；期间再选其他颜色
+        自动撤销标志。清除靠标志而非色值判断——用户如果本来就设的是
+        默认主题色，点恢复默认 + 确认也能清除。
+        """
+        current = metadata.get_color(info.name) or _CardDelegate.DEFAULT_THEME
+        dlg = QtWidgets.QColorDialog(QtGui.QColor(current), self)
+        dlg.setWindowTitle("自定义颜色 - {}".format(self._display_label(info)))
+        dlg.setOption(QtWidgets.QColorDialog.DontUseNativeDialog, True)
+        localize_buttons(dlg)
+        state = {"clear": False}
+        hint = QtGui.QColor(_CardDelegate.DEFAULT_THEME)
+
+        def _on_changed(color):
+            if state["clear"] and color.name().lower() \
+                    != _CardDelegate.DEFAULT_THEME:
+                state["clear"] = False   # 用户又选了其他颜色
+
+        def _reset_default():
+            state["clear"] = True
+            dlg.setCurrentColor(hint)    # 视觉提示：默认主题色
+
+        # QColorDialog 没有 QMessageBox 式 addButton：往内部按钮条插按钮
+        bbox = dlg.findChild(QtWidgets.QDialogButtonBox)
+        reset_btn = QtWidgets.QPushButton("恢复默认")
+        if bbox is not None:
+            bbox.addButton(reset_btn, QtWidgets.QDialogButtonBox.ActionRole)
+            reset_btn.clicked.connect(_reset_default)
+            dlg.currentColorChanged.connect(_on_changed)
+        if dlg.exec_() != QtWidgets.QDialog.Accepted:
             return
-        metadata.set_color(info.name, color.name())
+        if state["clear"]:
+            metadata.set_color(info.name, None)
+            self.status.setText("{}：颜色已恢复默认".format(
+                self._display_label(info)))
+        else:
+            metadata.set_color(info.name, dlg.currentColor().name())
+            self.status.setText("{}：颜色已更新（{}）".format(
+                self._display_label(info), dlg.currentColor().name()))
         self._refresh_current_item()
-        self.status.setText("{}：颜色已更新（{}）".format(
-            self._display_label(info), color.name()))
 
     def _refresh_current_item(self):
         """当前条目按最新元数据重刷（收藏星标/图标/提示）。"""
@@ -1198,13 +1223,14 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         if info is None:
             return
         current = self._display_label(info)
-        title, ok = QtWidgets.QInputDialog.getText(
-            self, "自定义显示名",
-            "显示名称（留空恢复默认，支持中文）：\n内部名称: {}".format(
-                info.name),
-            text=current)
-        if not ok:
+        dlg = QtWidgets.QInputDialog(self)
+        dlg.setWindowTitle("自定义显示名")
+        dlg.setLabelText("显示名称（留空恢复默认，支持中文）：")
+        dlg.setTextValue(current)
+        localize_buttons(dlg)
+        if dlg.exec_() != QtWidgets.QDialog.Accepted:
             return
+        title = dlg.textValue()
         metadata.set_display_name(info.name, title)
         self._rebuild_sidebar()
         self._apply_filter()
@@ -1294,12 +1320,14 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
     # ---------------- 删除 ----------------
 
     def _delete_recipe(self, info):
-        answer = QtWidgets.QMessageBox.question(
-            self, "删除 Recipe",
-            "确定删除「{}」？\n{}\n（缩略图与文档也会一并清理）".format(
-                self._display_label(info), info.name),
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
-        if answer != QtWidgets.QMessageBox.Yes:
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("删除 Recipe")
+        box.setText("确定删除「{}」？\n{}\n（缩略图与文档也会一并清理）".format(
+            self._display_label(info), info.name))
+        box.setStandardButtons(QtWidgets.QMessageBox.Yes
+                               | QtWidgets.QMessageBox.No)
+        localize_buttons(box)   # Yes → 确认、No → 取消
+        if box.exec_() != QtWidgets.QMessageBox.Yes:
             return
         try:
             store.delete_recipe(info.name)
