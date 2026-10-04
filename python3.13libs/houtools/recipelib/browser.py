@@ -319,13 +319,58 @@ class _ClickableImage(QtWidgets.QLabel):
 
 
 class _ZoomScrollArea(QtWidgets.QScrollArea):
-    """滚轮即缩放：拦截 wheel 转发缩放步进（平移仍可用滚动条拖拽）。"""
+    """滚轮即缩放（拦截 wheel 转发步进）；中键按住拖动平移视框——
+    与 Houdini 网络编辑器中键拖动同手感：内容跟随抓取移动、光标
+    变闭合手掌。平移经滚动条实现，内容小于视口时无可平移量。"""
 
     zoomStepped = QtCore.Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._panning = False
+        self._pan_press = None    # 按下时鼠标位置（viewport 坐标）
+        self._pan_scroll = None   # 按下时滚动条值 (h, v)
 
     def wheelEvent(self, event):
         self.zoomStepped.emit(1 if event.angleDelta().y() > 0 else -1)
         event.accept()
+
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.MiddleButton:
+            self._panning = True
+            self._pan_press = event.position().toPoint()
+            self._pan_scroll = (self.horizontalScrollBar().value(),
+                                self.verticalScrollBar().value())
+            self.setCursor(QtCore.Qt.ClosedHandCursor)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        # 第二次中键按下同样进入平移（QAbstractScrollArea 不派发 press）
+        if event.button() == QtCore.Qt.MiddleButton:
+            self.mousePressEvent(event)
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._panning:
+            d = event.position().toPoint() - self._pan_press
+            self.horizontalScrollBar().setValue(
+                self._pan_scroll[0] - d.x())
+            self.verticalScrollBar().setValue(
+                self._pan_scroll[1] - d.y())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == QtCore.Qt.MiddleButton and self._panning:
+            self._panning = False
+            self.setCursor(QtCore.Qt.ArrowCursor)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
 
 class _ImageViewerDialog(QtWidgets.QDialog):
@@ -379,7 +424,7 @@ class _ImageViewerDialog(QtWidgets.QDialog):
         self._scroll.viewport().setStyleSheet("background-color: #18181b;")
         self._scroll.zoomStepped.connect(self._zoom)
 
-        hint = QtWidgets.QLabel("滚轮缩放 · 拖动滚动条平移 · Esc 或双击关闭")
+        hint = QtWidgets.QLabel("滚轮缩放 · 按住中键拖动平移 · Esc 或双击关闭")
         hint.setAlignment(QtCore.Qt.AlignCenter)
 
         lay = QtWidgets.QVBoxLayout(self)
