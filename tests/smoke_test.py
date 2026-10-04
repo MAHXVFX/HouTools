@@ -516,6 +516,18 @@ def main():
                 assert rl_meta.get_thumb("legacy")
                 rl_meta.clear_thumb("legacy")
                 assert not legacy.exists()
+                # 裁剪流程：QPixmap 落盘为 PNG（相对路径存储；比例由
+                # crop 对话框锁定，存储层只管收图）
+                from PySide6 import QtGui
+                pm = QtGui.QPixmap(150, 99)
+                pm.fill(QtGui.QColor("#36c8b7"))
+                stored_pm = rl_meta.set_thumb_from_pixmap(name, pm)
+                raw_pm = rl_meta._SETTINGS.get("thumbs")[name]
+                assert not os.path.isabs(raw_pm) \
+                    and raw_pm.endswith(".png"), raw_pm
+                assert Path(stored_pm).exists()
+                rl_meta.clear_thumb(name)
+                assert not Path(stored_pm).exists()
             rl_meta.clear_thumb(name)
             assert rl_meta.get_thumb(name) == ""
 

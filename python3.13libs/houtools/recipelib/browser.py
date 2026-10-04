@@ -22,6 +22,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from houtools.core.log import get_logger
 from houtools.recipelib import metadata, store
+from houtools.recipelib.crop import ThumbCropDialog
 from houtools.recipelib.docs import DocEditorDialog, MarkdownMediaView, MediaDialog
 from houtools.ui.badge import FavoriteBadge
 from houtools.ui.dialogs import localize_buttons, localize_color_dialog, warn
@@ -45,6 +46,21 @@ def _push_houdini_error(message):
                                 severity=hou.severityType.Error)
     except Exception as exc:
         log.debug("setStatusMessage failed: %s", exc)
+
+
+def _cover_crop(src, w, h):
+    """等比缩放铺满 (w, h) 后裁中心区域（QPixmap）；空图返回 None。
+
+    contain 会在图片比例与卡片不符时留灰边；cover 裁中心，配合设置
+    缩略图时的框选（选框锁同一比例）实现"所选即显示"。
+    """
+    if src.isNull():
+        return None
+    scaled = src.scaled(w, h, QtCore.Qt.KeepAspectRatioByExpanding,
+                        QtCore.Qt.SmoothTransformation)
+    x = (scaled.width() - w) // 2
+    y = (scaled.height() - h) // 2
+    return scaled.copy(x, y, w, h)
 
 KEY_ALL = "__all__"
 KEY_FAV = "__fav__"
@@ -155,21 +171,16 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
         text_w = card.width() - m * 2
         y = card.top() + m
 
-        # 缩略图区（clip 进卡片圆角）比文字区更暗一档，再 contain 居中画
-        # 缩略图；收藏角标单独贴在缩略图区（卡片内容区）右上角——合成进
-        # 图标的话位置随图片留白漂移，贴不到卡片角
+        # 缩略图区（clip 进卡片圆角）比文字区更暗一档；缩略图 cover
+        # 裁剪铺满（设置缩略图时的框选锁同一比例，无灰边）
         painter.save()
         painter.setClipPath(path)
         painter.fillRect(QtCore.QRectF(card.left() + m, y, text_w, thumb_h),
                          self._tint(theme, 0.12))
         painter.restore()
-        icon = index.data(QtCore.Qt.DecorationRole)
-        if icon is not None:
-            pm = icon.pixmap(text_w, thumb_h)
-            if not pm.isNull():
-                painter.drawPixmap(
-                    card.left() + m + (text_w - pm.width()) // 2,
-                    y + (thumb_h - pm.height()) // 2, pm)
+        pm = self._win.thumb_pixmap(info, text_w, thumb_h)
+        if pm is not None:
+            painter.drawPixmap(card.left() + m, y, pm)
         if info is not None and metadata.is_favorite(info.name):
             badge_size = max(12, min(24, int(text_w * 0.12)))
             badge = self._win._badge.badge_pixmap(badge_size)
@@ -456,6 +467,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self._placeholder = self._placeholder_icon()
         self._badge = FavoriteBadge()   # 收藏角标（共享组件，见 ui.badge；
                                         # delegate 画在卡片右上角，非合成进图标）
+        self._cover_cache = {}      # (name, w, h) -> cover 裁剪后的 QPixmap
         self._loaded = False        # 首次 show 时自动枚举（见 showEvent）
 
         # ---- 顶部栏 ----
@@ -818,6 +830,24 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
 
     # ---------------- 图标与预览 ----------------
 
+    def thumb_pixmap(self, info, w, h):
+        """卡片缩略图：cover 裁剪铺满 (w, h)，按 (名,宽,高) 缓存。
+
+        GIF 取首帧同样 cover（GIF 无裁剪流程，中心裁剪兜底）；
+        无缩略图时占位图走同一 cover 路径。
+        """
+        key = (info.name, w, h)
+        pm = self._cover_cache.get(key)
+        if pm is not None:
+            return pm
+        # QIcon 不放大：请求大尺寸取到最接近原图的 pixmap，cover 精度足够
+        src = self._base_icon(info).pixmap(1024, 1024)
+        pm = _cover_crop(src, w, h)
+        if pm is None:
+            pm = self._placeholder.pixmap(w, h)
+        self._cover_cache[key] = pm
+        return pm
+
     def _base_icon(self, info):
         """无角标的底图（按内部名缓存）。"""
         icon = self._thumb_cache.get(info.name)
@@ -869,6 +899,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
                   + _CardDelegate.text_block_height() + GRID_CARD_GAP)
         self.list.setGridSize(QtCore.QSize(
             card_w + GRID_CARD_GAP * 2, grid_h))
+        self._cover_cache.clear()   # 缩略图显示尺寸变了，cover 缓存失效
 
     def _on_selection_changed(self, current, _previous=None):
         if current is None:
@@ -1179,6 +1210,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         elif act is not None and act is act_thumb_clear:
             metadata.clear_thumb(info.name)
             self._thumb_cache.pop(info.name, None)
+            self._cover_cache.clear()
             item.setIcon(self._base_icon(info))
             self._refresh_current_item()
         elif act is act_color:
@@ -1303,11 +1335,21 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         if not path:
             return
         try:
-            stored = metadata.set_thumb_from_file(info.name, path)
+            if path.lower().endswith(".gif"):
+                # GIF 动图：Qt 无 GIF 编码器，裁剪存不回动图——原样复制，
+                # 卡片显示端按 cover 中心裁剪兜底
+                stored = metadata.set_thumb_from_file(info.name, path)
+            else:
+                dlg = ThumbCropDialog(self, path, self._display_label(info))
+                if dlg.exec_() != QtWidgets.QDialog.Accepted:
+                    return
+                stored = metadata.set_thumb_from_pixmap(
+                    info.name, dlg.result_pixmap())
         except (OSError, RuntimeError) as exc:
             QtWidgets.QMessageBox.warning(self, "设置缩略图", str(exc))
             return
         self._thumb_cache.pop(info.name, None)
+        self._cover_cache.clear()
         self._apply_filter()
         self._update_preview(info)
         self.status.setText("{}：缩略图已更新（{}）".format(
@@ -1368,6 +1410,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         metadata.set_color(info.name, None)
         metadata.delete_doc_dir(info.name)
         self._thumb_cache.pop(info.name, None)
+        self._cover_cache.clear()
         self.reload()
         self.status.setText("已删除 {}".format(info.display_label))
 

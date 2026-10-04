@@ -255,6 +255,24 @@ def set_thumb_from_file(name, src):
     return dst
 
 
+def set_thumb_from_pixmap(name, pixmap):
+    """把裁剪结果（QPixmap）存为缩略图（PNG 无损），返回绝对路径。
+
+    裁剪比例与卡片缩略图区一致（crop.TARGET_RATIO），铺满显示无灰边；
+    GIF 动图不经此路径（Qt 无 GIF 编码器，走 set_thumb_from_file 原样复制）。
+    """
+    if pixmap is None or pixmap.isNull():
+        raise RuntimeError("缩略图内容为空")
+    THUMBS_DIR.mkdir(parents=True, exist_ok=True)
+    dst = str(THUMBS_DIR / (safe_name(name) + ".png"))
+    if not pixmap.save(dst, "PNG"):
+        raise RuntimeError("缩略图保存失败: {}".format(dst))
+    thumbs = dict(_SETTINGS.get("thumbs") or {})
+    thumbs[name] = _to_stored(dst)
+    _SETTINGS.set("thumbs", thumbs)
+    return dst
+
+
 def clear_thumb(name):
     thumbs = dict(_SETTINGS.get("thumbs") or {})
     old = thumbs.pop(name, None)
