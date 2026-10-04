@@ -963,7 +963,11 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         for cell in (self.meta_cell_category, self.meta_cell_network,
                      self.meta_cell_version, self.meta_cell_targets):
             cell.setText("")
+        self.meta_panel.setVisible(False)   # 空卡片不展示
         self.preview_comment.setText("")
+        # doc 分支会把 comment 藏起来——必须恢复，否则布局里没有任何
+        # stretch 项，剩余空间会把空的名字标签/卡片拉伸推挤（空态错乱）
+        self.preview_comment.setVisible(True)
         self.preview_doc.setVisible(False)
         self.tags_edit.setText("")
         for btn in (self.fav_btn, self.doc_btn, self.place_btn,
@@ -995,6 +999,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.meta_cell_version.setText("版本: " + info.houdini_version)
         self.meta_cell_targets.setText(
             "焦点: " + (", ".join(info.patterns) if info.patterns else ""))
+        self.meta_panel.setVisible(True)
         # 文档区：有文档渲染 markdown（内联 GIF/视频按钮），
         # 无文档回退显示官方备注
         if metadata.doc_exists(info.name):

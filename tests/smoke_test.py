@@ -637,11 +637,14 @@ def main():
                     win._rename_selected()
                 assert rl_meta.get_display_name("houtools::light::b") == ""
                 assert win.preview_name.text() == "Light B"
-                # 点空白处取消选中：预览面板复位为空态
+                # 点空白处取消选中：预览面板复位为空态（meta 卡片隐藏、
+                # comment 恢复显示——否则布局无 stretch 项、控件被拉伸错位）
                 win.list.setCurrentRow(0)
                 assert win.preview_name.text()
                 win.list.emptyClicked.emit()
                 assert win.preview_name.text() == "", win.preview_name.text()
+                assert not win.meta_panel.isVisibleTo(win)
+                assert win.preview_comment.isVisibleTo(win)
                 assert not win.place_btn.isEnabled()
                 win.list.setCurrentRow(0)
                 assert win.fav_btn.isEnabled()
