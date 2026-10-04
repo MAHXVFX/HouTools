@@ -548,11 +548,11 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.preview_name.setStyleSheet("font-weight: bold; font-size: 14px;")
         self.preview_name.setToolTip("双击可自定义显示名称（支持中文）")
         self.preview_name.nameDoubleClicked.connect(self._rename_selected)
-        # 元信息：前三行纵排（内部名称/类型/来源），后四格两列网格
-        # （分类|网络 / 版本|作用，格子缺信息就留空，行列保持对齐）
+        # 元信息卡片：前三行纵排 + 两列网格（中缝竖直分割线，跨两行），
+        # 装进圆角卡片容器与下方文档区区分；格子缺信息留空、行列对齐
         self.preview_meta = QtWidgets.QLabel()
         self.preview_meta.setWordWrap(True)
-        self.preview_meta.setStyleSheet("color: #888888;")
+        self.preview_meta.setStyleSheet("color: #9a9aa2;")
         self.meta_cell_category = QtWidgets.QLabel()
         self.meta_cell_network = QtWidgets.QLabel()
         self.meta_cell_version = QtWidgets.QLabel()
@@ -560,17 +560,33 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         for cell in (self.meta_cell_category, self.meta_cell_network,
                      self.meta_cell_version, self.meta_cell_targets):
             cell.setWordWrap(True)
-            cell.setStyleSheet("color: #888888;")
+            cell.setStyleSheet("color: #9a9aa2;")
         meta_grid = QtWidgets.QGridLayout()
-        meta_grid.setContentsMargins(0, 0, 0, 0)
+        meta_grid.setContentsMargins(0, 4, 0, 0)
         meta_grid.setHorizontalSpacing(10)
-        meta_grid.setVerticalSpacing(0)
+        meta_grid.setVerticalSpacing(4)
         meta_grid.addWidget(self.meta_cell_category, 0, 0)
-        meta_grid.addWidget(self.meta_cell_network, 0, 1)
+        meta_grid.addWidget(self.meta_cell_network, 0, 2)
         meta_grid.addWidget(self.meta_cell_version, 1, 0)
-        meta_grid.addWidget(self.meta_cell_targets, 1, 1)
-        meta_grid.setColumnStretch(0, 1)
-        meta_grid.setColumnStretch(1, 2)
+        meta_grid.addWidget(self.meta_cell_targets, 1, 2)
+        sep = QtWidgets.QFrame()
+        sep.setFixedWidth(1)
+        sep.setSizePolicy(QtWidgets.QSizePolicy.Fixed,
+                          QtWidgets.QSizePolicy.Expanding)
+        sep.setStyleSheet("background-color: #3d3d3d;")
+        meta_grid.addWidget(sep, 0, 1, 2, 1)
+        meta_grid.setColumnStretch(0, 2)
+        meta_grid.setColumnStretch(2, 3)
+
+        self.meta_panel = QtWidgets.QFrame()
+        self.meta_panel.setObjectName("metaPanel")
+        self.meta_panel.setStyleSheet(
+            "QFrame#metaPanel { background-color: #1D1D20; "
+            "border: 1px solid #3d3d3d; border-radius: 6px; }")
+        meta_lay = QtWidgets.QVBoxLayout(self.meta_panel)
+        meta_lay.setContentsMargins(10, 8, 10, 8)
+        meta_lay.addWidget(self.preview_meta)
+        meta_lay.addLayout(meta_grid)
         self.preview_comment = QtWidgets.QLabel()
         self.preview_comment.setWordWrap(True)
         self.preview_comment.setStyleSheet("color: #aaaaaa;")
@@ -594,8 +610,8 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         pv.setContentsMargins(0, 0, 0, 0)
         pv.addWidget(self.preview_label)
         pv.addWidget(self.preview_name)
-        pv.addWidget(self.preview_meta)
-        pv.addLayout(meta_grid)
+        pv.addWidget(self.meta_panel)
+        pv.addSpacing(8)
         pv.addWidget(self.preview_comment, 1)
         pv.addWidget(self.preview_doc, 1)
         tag_row = QtWidgets.QHBoxLayout()
@@ -844,7 +860,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         if info.comment:
             lines.append(info.comment)
         if info.patterns:
-            lines.append("作用: " + ", ".join(info.patterns))
+            lines.append("焦点: " + ", ".join(info.patterns))
         return "\n".join(lines)
 
     # ---------------- 图标与预览 ----------------
@@ -975,10 +991,10 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             net_meta.append("{} 节点".format(info.node_count))
         self.meta_cell_category.setText(
             "分类: " + (info.submenu or "（未分类）"))
-        self.meta_cell_network.setText("网络: " + " • ".join(net_meta))
+        self.meta_cell_network.setText("层级: " + " • ".join(net_meta))
         self.meta_cell_version.setText("版本: " + info.houdini_version)
         self.meta_cell_targets.setText(
-            "作用: " + (", ".join(info.patterns) if info.patterns else ""))
+            "焦点: " + (", ".join(info.patterns) if info.patterns else ""))
         # 文档区：有文档渲染 markdown（内联 GIF/视频按钮），
         # 无文档回退显示官方备注
         if metadata.doc_exists(info.name):
