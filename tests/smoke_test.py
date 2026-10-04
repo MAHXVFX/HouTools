@@ -410,6 +410,7 @@ def main():
     import houtools.recipelib.metadata as rl_meta
     import houtools.recipelib.store as rl_store
     import houtools.recipelib.docs as rl_docs  # noqa: F401
+    import houtools.recipelib.crop as rl_crop
     import houtools.recipelib.browser as rl_browser
     import houtools.tools.recipe_library  # noqa: F401
 
@@ -688,6 +689,37 @@ def main():
             assert "标题" in dlg.preview.toPlainText()
             dlg.deleteLater()
     print("RecipeLibrary doc editor OK")
+
+    # 裁剪框四角拖动方向（模拟鼠标事件）：往外拉变宽、往里推变窄，
+    # 宽高比始终锁定卡片缩略图区比例——方向符号曾整体写反，固化回归
+    pm = QtGui.QPixmap(800, 600)
+    pm.fill(QtGui.QColor("#204060"))
+    canvas = rl_crop._CropCanvas(pm, rl_crop.TARGET_RATIO)
+    canvas._sel = QtCore.QRect(150, 100, 300, 198)
+
+    def _drag(corner, to):
+        canvas.mousePressEvent(QtGui.QMouseEvent(
+            QtCore.QEvent.MouseButtonPress, QtCore.QPointF(corner),
+            QtCore.Qt.LeftButton, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier))
+        canvas.mouseMoveEvent(QtGui.QMouseEvent(
+            QtCore.QEvent.MouseMove, QtCore.QPointF(to),
+            QtCore.Qt.NoButton, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier))
+        canvas.mouseReleaseEvent(QtGui.QMouseEvent(
+            QtCore.QEvent.MouseButtonRelease, QtCore.QPointF(to),
+            QtCore.Qt.LeftButton, QtCore.Qt.NoButton, QtCore.Qt.NoModifier))
+
+    s = canvas._sel.normalized()
+    _drag(QtCore.QPoint(s.left(), s.top()),
+          QtCore.QPoint(s.left() - 40, s.top() - 40))
+    assert canvas._sel.normalized().width() > s.width(), "tl 往外拉应变宽"
+    s = canvas._sel.normalized()
+    _drag(QtCore.QPoint(s.right(), s.bottom()),
+          QtCore.QPoint(s.right() - 50, s.bottom() - 50))
+    assert canvas._sel.normalized().width() < s.width(), "br 往里推应变窄"
+    ratio = canvas._sel.normalized().width() / canvas._sel.normalized().height()
+    assert abs(ratio - rl_crop.TARGET_RATIO) < 0.02, ratio
+    canvas.deleteLater()
+    print("RecipeLibrary crop resize direction OK")
 
     summary = reloader.reload_all()
     print("reload_all ->", summary)

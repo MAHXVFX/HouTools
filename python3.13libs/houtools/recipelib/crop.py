@@ -130,12 +130,14 @@ class _CropCanvas(QtWidgets.QWidget):
             self._sel = self._fit_ratio_rect(
                 self._press, abs(pos.x() - self._press.x()), sign_x, sign_y)
         elif self._mode == "resize":
-            anchor_sign = {"tl": (1, 1), "tr": (-1, 1),
-                           "bl": (1, -1), "br": (-1, -1)}[self._handle]
-            grow = d.x() * anchor_sign[0]
-            self._sel = self._fit_ratio_rect(
-                self._anchor_point(), self._sel_start.width() + grow,
-                anchor_sign[0], anchor_sign[1])
+            # sign = 框相对锚点的方向：tl 角的框在锚（右下）的左上方
+            anchor = self._anchor_point()
+            sign_x, sign_y = {"tl": (-1, -1), "tr": (1, -1),
+                              "bl": (-1, 1), "br": (1, 1)}[self._handle]
+            # 宽度取两轴中更大的需求（拖横/拖竖都有反馈），高按比例
+            w = max(abs(pos.x() - anchor.x()),
+                    int(abs(pos.y() - anchor.y()) * self._ratio))
+            self._sel = self._fit_ratio_rect(anchor, w, sign_x, sign_y)
         self.update()
         self.selectionChanged.emit()
 
