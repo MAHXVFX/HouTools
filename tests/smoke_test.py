@@ -536,6 +536,13 @@ def main():
             # 不覆盖）+ 保存读取 + 目录清理
             assert rl_meta.read_doc(name) == ""
             assert not rl_meta.doc_exists(name)
+            # 空白编辑器保存落 0 字节文件：按"没写内容=没文档"处理，
+            # 主面板回退官方备注
+            rl_meta.write_doc(name, "")
+            assert os.path.exists(rl_meta.doc_path(name))
+            assert not rl_meta.doc_exists(name)
+            rl_meta.write_doc(name, "   \n")
+            assert not rl_meta.doc_exists(name)
             asset_src = Path(tmp) / "pic.png"
             asset_src.write_bytes(b"png")
             rel = rl_meta.insert_asset(name, str(asset_src))
@@ -675,16 +682,27 @@ def main():
         rl_store_ps.path.unlink(missing_ok=True)
     print("RecipeLibrary metadata + window OK")
 
-    # 文档编辑器：实例化（无文档=空白）+ 实时预览渲染（纯 Qt，不触 hou）
+    # 文档编辑器：实例化（无文档=空白）+ 确认/取消模式 + 实时预览渲染
+    # （纯 Qt，不触 hou）
     with tempfile.TemporaryDirectory() as tmp:
         with patch.object(rl_meta, "DOCS_DIR", Path(tmp) / "docs"):
             info = rl_store.RecipeInfo(name="houtools::x::doc_test",
                                        label="Doc Test", category="tool")
             dlg = rl_docs.DocEditorDialog(None, info)
             assert dlg.editor.toPlainText() == ""  # 无文档 → 空白编辑器
+            # 确认/取消按钮中文化（新加按钮条曾漏 localize，固化回归）
+            from PySide6 import QtWidgets as _qw
+            bb = dlg.findChild(_qw.QDialogButtonBox)
+            assert bb.button(_qw.QDialogButtonBox.Ok).text() == "确认", \
+                bb.button(_qw.QDialogButtonBox.Ok).text()
+            assert bb.button(_qw.QDialogButtonBox.Cancel).text() == "取消"
             dlg.editor.setPlainText("# 标题\n\n正文 **粗体**\n")
             dlg._render_preview()
             assert "标题" in dlg.preview.toPlainText()
+            # 确认/取消模式：编辑期间不落盘，确认才写 doc.md
+            assert not rl_meta.doc_exists(info.name)
+            dlg._confirm_save()
+            assert rl_meta.read_doc(info.name) == "# 标题\n\n正文 **粗体**\n"
             dlg.deleteLater()
     print("RecipeLibrary doc editor OK")
 

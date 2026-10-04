@@ -299,7 +299,19 @@ def doc_path(name):
 
 
 def doc_exists(name):
-    return os.path.exists(doc_path(name))
+    """文档存在且有正文；空文件视为无文档（主面板回退官方备注）。
+
+    空白编辑器直接保存会落一个 0 字节 doc.md——按"没写内容=没文档"处理。
+    """
+    path = doc_path(name)
+    if not os.path.exists(path):
+        return False
+    try:
+        with open(path, encoding="utf-8") as f:
+            return bool(f.read().strip())
+    except OSError as exc:
+        log.warning("cannot read doc %s: %s", path, exc)
+        return False
 
 
 def read_doc(name):

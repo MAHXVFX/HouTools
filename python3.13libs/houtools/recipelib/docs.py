@@ -24,7 +24,7 @@ from PySide6.QtMultimediaWidgets import QVideoWidget
 
 from houtools.core.log import get_logger
 from houtools.recipelib import metadata
-from houtools.ui.dialogs import warn
+from houtools.ui.dialogs import localize_buttons, warn
 
 log = get_logger("recipelib.docs")
 
@@ -244,8 +244,9 @@ class DocEditorDialog(QtWidgets.QDialog):
 
     - 插入图片/视频把文件复制进配方 assets/，正文插入相对引用
     - 预览自动刷新（防抖）；GIF 原地动、视频渲染成播放按钮
-    - 文本防抖自动保存（800ms）+ 关窗即存；保存后发 docSaved 信号
-      （主面板订阅，同步刷新该配方的文档预览）
+    - 确认/取消模式：编辑期间不落盘，点「确认」才保存并关窗（发
+      docSaved 信号，主面板同步刷新文档预览）；「取消」/关窗丢弃改动
+      （有未保存修改先确认），本次会话插入的 assets 一并清理
     """
 
     docSaved = QtCore.Signal(str)   # recipe 内部名
@@ -259,11 +260,13 @@ class DocEditorDialog(QtWidgets.QDialog):
         self._info = info
         self._name = info.name
         self._doc_dir = metadata.doc_dir(self._name)
+        self._inserted_assets = []   # 本次会话新插入的 assets 相对路径
 
         self.editor = QtWidgets.QPlainTextEdit()
-        # 没有文档就是空白（不自动建模板文件）——保存后 doc.md 才存在，
+        # 没有文档就是空白（不自动建模板文件）——确认保存后 doc.md 才存在，
         # 主面板的"有文档渲染 markdown / 无文档显示备注"随之切换
         self.editor.setPlainText(metadata.read_doc(self._name))
+        self.editor.document().setModified(False)
         self.preview = MarkdownMediaView(self._doc_dir)
 
         insert_img = QtWidgets.QPushButton("插入图片...")
@@ -285,9 +288,16 @@ class DocEditorDialog(QtWidgets.QDialog):
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([480, 470])
 
+        bbox = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        bbox.accepted.connect(self._confirm_save)
+        bbox.rejected.connect(self._cancel)
+
         lay = QtWidgets.QVBoxLayout(self)
         lay.addLayout(btns)
         lay.addWidget(splitter, 1)
+        lay.addWidget(bbox)
+        localize_buttons(self)   # 布局收养后才有父子关系，Ok → 确认、Cancel → 取消
 
         insert_img.clicked.connect(lambda: self._insert_asset(False))
         insert_media.clicked.connect(lambda: self._insert_asset(True))
@@ -297,10 +307,6 @@ class DocEditorDialog(QtWidgets.QDialog):
         self._render_timer.setSingleShot(True)
         self._render_timer.setInterval(PREVIEW_DEBOUNCE_MS)
         self._render_timer.timeout.connect(self._render_preview)
-        self._save_timer = QtCore.QTimer(self)
-        self._save_timer.setSingleShot(True)
-        self._save_timer.setInterval(800)
-        self._save_timer.timeout.connect(self._save)
         self.editor.textChanged.connect(self._on_text_changed)
         self.editor.setTabChangesFocus(False)
 
@@ -309,15 +315,44 @@ class DocEditorDialog(QtWidgets.QDialog):
     # ---------------- 编辑 / 保存 ----------------
 
     def _on_text_changed(self):
-        self._render_timer.start()
-        self._save_timer.start()
+        self._render_timer.start()   # 只刷新右侧预览；落盘等「确认」
 
-    def _save(self):
+    def _confirm_save(self):
         try:
             metadata.write_doc(self._name, self.editor.toPlainText())
-            self.docSaved.emit(self._name)
         except OSError as exc:
             log.warning("save doc failed for %s: %s", self._name, exc)
+            warn(self, "保存失败", str(exc))
+            return   # 保存失败不关窗，内容留在编辑器里
+        self.docSaved.emit(self._name)
+        self.accept()
+
+    def _cancel(self):
+        if self._confirm_discard():
+            self._discard_inserted_assets()
+            self.reject()
+
+    def _confirm_discard(self):
+        """有未保存修改时确认丢弃；返回 True=继续关闭。"""
+        if not self.editor.document().isModified():
+            return True
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("放弃修改")
+        box.setText("有未保存的修改，确定丢弃？")
+        box.setStandardButtons(QtWidgets.QMessageBox.Yes
+                               | QtWidgets.QMessageBox.No)
+        localize_buttons(box)   # Yes → 确认、No → 取消
+        return box.exec_() == QtWidgets.QMessageBox.Yes
+
+    def _discard_inserted_assets(self):
+        """取消时清理本次会话插入的 assets（正文已丢弃，引用不存在）。"""
+        for rel in self._inserted_assets:
+            path = os.path.join(self._doc_dir, rel.replace("/", os.sep))
+            try:
+                os.remove(path)
+            except OSError as exc:
+                log.debug("cleanup asset %s failed: %s", path, exc)
+        self._inserted_assets = []
 
     def _insert_asset(self, media):
         start = self._doc_dir
@@ -336,6 +371,7 @@ class DocEditorDialog(QtWidgets.QDialog):
             warn(self, "插入失败", str(exc))
             return
         alt = os.path.basename(path)
+        self._inserted_assets.append(rel)
         self.editor.insertPlainText("![{}]({})".format(alt, rel))
 
     def _open_dir(self):
@@ -348,5 +384,9 @@ class DocEditorDialog(QtWidgets.QDialog):
         self.preview.set_markdown_with_media(self.editor.toPlainText())
 
     def closeEvent(self, event):
-        self._save()
-        super().closeEvent(event)
+        # X 关闭等同取消：有未保存修改先确认丢弃（拒绝则不关窗）
+        if self._confirm_discard():
+            self._discard_inserted_assets()
+            super().closeEvent(event)
+        else:
+            event.ignore()
