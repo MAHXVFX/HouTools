@@ -673,8 +673,6 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.lib_btn.setToolTip("管理 recipe 库文件夹（可多个，递归扫描其中的"
                                 " .hda；官方出厂 recipes 不加载。创建 recipe "
                                 "请用 Houdini 官方保存流程，把位置指到库文件夹）")
-        self.lib_label = QtWidgets.QLabel()
-        self.lib_label.setStyleSheet("color: #888888;")
         self.search = QtWidgets.QLineEdit()
         self.search.setPlaceholderText("搜索 名称 / 标签 / 备注...（#前缀 仅搜标签）")
         self.search.setClearButtonEnabled(True)
@@ -692,8 +690,6 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         top.addSpacing(8)
         top.addWidget(self.lib_btn)
         top.addSpacing(4)
-        top.addWidget(self.lib_label)
-        top.addSpacing(12)
         top.addWidget(self.search, 1)
         top.addSpacing(12)
         top.addWidget(self.pin_chk)
@@ -867,7 +863,6 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         """枚举用户库里的 recipe 并重建侧栏/网格（保留分类与搜索词）。"""
         metadata.migrate_legacy_thumb_paths()  # 旧版绝对路径 → 相对插件根
         lib_dirs = metadata.get_lib_dirs()
-        self._update_lib_label()
         if not lib_dirs:
             self._recipes = []
             self._info_by_name = {}
@@ -885,21 +880,6 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self._rebuild_sidebar()
         self._apply_filter(
             note="，共 {} 个".format(len(self._recipes)))
-
-    def _update_lib_label(self):
-        dirs = metadata.get_lib_dirs()
-        if not dirs:
-            self.lib_label.setText("（未设置库文件夹）")
-            self.lib_label.setToolTip("")
-            return
-        if len(dirs) == 1:
-            text = dirs[0]
-        else:
-            text = "{} | 等 {} 个".format(dirs[0], len(dirs))
-        fm = self.lib_label.fontMetrics()
-        self.lib_label.setText("库: " + fm.elidedText(
-            text, QtCore.Qt.ElideMiddle, 260))
-        self.lib_label.setToolTip("\n".join(dirs))
 
     def _manage_lib_dirs(self):
         dlg = _LibraryDirsDialog(self)
