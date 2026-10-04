@@ -307,6 +307,139 @@ class _PreviewNameLabel(QtWidgets.QLabel):
         super().mouseDoubleClickEvent(event)
 
 
+class _ClickableImage(QtWidgets.QLabel):
+    """可点击的图片标签（预览缩略图 → 大图查看器）。"""
+
+    clicked = QtCore.Signal()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
+
+
+class _ZoomScrollArea(QtWidgets.QScrollArea):
+    """滚轮即缩放：拦截 wheel 转发缩放步进（平移仍可用滚动条拖拽）。"""
+
+    zoomStepped = QtCore.Signal(int)
+
+    def wheelEvent(self, event):
+        self.zoomStepped.emit(1 if event.angleDelta().y() > 0 else -1)
+        event.accept()
+
+
+class _ImageViewerDialog(QtWidgets.QDialog):
+    """大图查看器：滚轮缩放（适配尺寸的 0.2~8 倍）、滚动条平移、
+    双击或 Esc 关闭；GIF 缩放后保持播放。缩放从原图重采样（平滑）。"""
+
+    ZOOM_MIN = 0.2
+    ZOOM_MAX = 8.0
+    ZOOM_STEP = 1.15
+
+    def __init__(self, parent, image_path, title):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setModal(True)
+        self.setStyleSheet(
+            "QDialog { background-color: #18181b; }"
+            "QLabel { color: #777777; background: transparent; }")
+        self._movie = None
+        self._factor = 1.0
+        self._is_gif = image_path.lower().endswith(".gif")
+
+        avail = QtGui.QGuiApplication.primaryScreen().availableGeometry()
+        self._base = QtCore.QSize(int(avail.width() * 0.85),
+                                  int(avail.height() * 0.85))
+        if self._is_gif:
+            self._movie = QtGui.QMovie(image_path)
+            self._movie.setCacheMode(QtGui.QMovie.CacheAll)
+            self._movie.jumpToFrame(0)
+            self._fit = self._movie.currentPixmap().size().scaled(
+                self._base, QtCore.Qt.KeepAspectRatio)
+            self._label = QtWidgets.QLabel()
+            self._label.setAlignment(QtCore.Qt.AlignCenter)
+            self._label.setMovie(self._movie)
+        else:
+            self._src = QtGui.QPixmap(image_path)
+            self._fit = self._src.size().scaled(
+                self._base, QtCore.Qt.KeepAspectRatio)
+            self._label = QtWidgets.QLabel()
+            self._label.setAlignment(QtCore.Qt.AlignCenter)
+        self._label.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+
+        self._scroll = _ZoomScrollArea()
+        self._scroll.setWidget(self._label)
+        self._scroll.setWidgetResizable(False)
+        self._scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        # 滚动条常驻占位：视口尺寸恒定，缩放锚定不因滚动条出现/消失跳变
+        self._scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOn)
+        self._scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOn)
+        # 内容缩小到小于视口时居中摆放（否则贴左上，下方露大片底色）
+        self._scroll.setAlignment(QtCore.Qt.AlignCenter)
+        self._scroll.viewport().setStyleSheet("background-color: #18181b;")
+        self._scroll.zoomStepped.connect(self._zoom)
+
+        hint = QtWidgets.QLabel("滚轮缩放 · 拖动滚动条平移 · Esc 或双击关闭")
+        hint.setAlignment(QtCore.Qt.AlignCenter)
+
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        lay.addWidget(self._scroll, 1)
+        lay.addWidget(hint)
+        self._apply()
+        self.resize(self._fit.width() + 4, self._fit.height() + 26)
+
+    def _apply(self):
+        """按当前倍率重绘（显示尺寸 = 适配尺寸 × factor）。"""
+        w = int(self._fit.width() * self._factor)
+        h = int(self._fit.height() * self._factor)
+        if self._is_gif:
+            self._movie.setScaledSize(QtCore.QSize(w, h))
+        else:
+            self._label.setPixmap(self._src.scaled(
+                w, h, QtCore.Qt.KeepAspectRatio,
+                QtCore.Qt.SmoothTransformation))
+        self._label.setFixedSize(w, h)
+        # 立即生效几何：否则滚动条范围要等布局事件，锚定 setValue 会被
+        # 旧范围 clamp 掉
+        self._label.adjustSize()
+        # 内容小于视口时手动居中（QScrollArea.alignment 在宽高超一方向
+        # 不足时摆放不可靠）；超出视口时贴 (0,0) 由滚动条接管平移
+        vp = self._scroll.viewport().size()
+        self._label.move(max(0, (vp.width() - w) // 2),
+                         max(0, (vp.height() - h) // 2))
+
+    def _zoom(self, steps):
+        old = self._factor
+        self._factor = max(self.ZOOM_MIN, min(
+            self.ZOOM_MAX, self._factor * self.ZOOM_STEP ** steps))
+        if abs(self._factor - old) < 1e-9:
+            return
+        # 视口中心锚定：内容点（label 坐标）= 视口中心 − label.pos——
+        # pos 已含滚动偏移与居中偏移，滚动条 value 不进公式（会双重计算）。
+        # 缩放后同一内容点的新坐标 = 原坐标 × 倍率比，再转回视口中心
+        vp = self._scroll.viewport().size()
+        pos = self._label.pos()
+        cx = vp.width() / 2 - pos.x()
+        cy = vp.height() / 2 - pos.y()
+        self._apply()
+        k = self._factor / old
+        # 同一内容点的新显示坐标 = 旧坐标 × k；让它落回视口中心。
+        # 滚动条范围要等布局事件才重算——手动设范围再锚定，否则 setValue
+        # 会被旧范围 clamp 掉
+        hbar = self._scroll.horizontalScrollBar()
+        vbar = self._scroll.verticalScrollBar()
+        new_pos = self._label.pos()
+        hbar.setRange(0, max(0, self._label.width() - vp.width()))
+        vbar.setRange(0, max(0, self._label.height() - vp.height()))
+        hbar.setValue(round(cx * k - (vp.width() / 2 - new_pos.x())))
+        vbar.setValue(round(cy * k - (vp.height() / 2 - new_pos.y())))
+
+    def mouseDoubleClickEvent(self, _event):
+        self.accept()
+
+
 class _NameDialog(QtWidgets.QDialog):
     """自定义显示名输入框。
 
@@ -536,12 +669,13 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self._apply_grid_size()
 
         # ---- 右侧预览面板 ----
-        self.preview_label = QtWidgets.QLabel()
+        self.preview_label = _ClickableImage()
         self.preview_label.setFixedSize(self.PREVIEW_W, self.PREVIEW_H)
         self.preview_label.setAlignment(QtCore.Qt.AlignCenter)
         self.preview_label.setStyleSheet(
             "background-color: #1D1D20; border: 1px solid #3d3d3d; "
             "border-radius: 6px; color: #666666;")
+        self.preview_label.clicked.connect(self._view_image)
 
         self.preview_name = _PreviewNameLabel()
         self.preview_name.setWordWrap(True)
@@ -958,6 +1092,8 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self._stop_preview_movie()
         self.preview_label.setPixmap(QtGui.QPixmap())
         self.preview_label.setText("未选中")
+        self.preview_label.setCursor(QtCore.Qt.ArrowCursor)
+        self.preview_label.setToolTip("")
         self.preview_name.setText("")
         self.preview_meta.setText("")
         for cell in (self.meta_cell_category, self.meta_cell_network,
@@ -973,6 +1109,19 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         for btn in (self.fav_btn, self.doc_btn, self.place_btn,
                     self.thumb_btn, self.tags_apply_btn):
             btn.setEnabled(False)
+
+    def _view_image(self):
+        """点击预览缩略图：弹大图查看器（原图分辨率，GIF 播放动画）。"""
+        info = self._preview_info
+        if info is None:
+            return
+        thumb = metadata.get_thumb(info.name)
+        if not thumb:
+            return
+        dlg = _ImageViewerDialog(self, thumb,
+                                 "大图 - {}".format(
+                                     self._display_label(info)))
+        dlg.exec_()
 
     def _update_preview(self, info):
         for btn in (self.fav_btn, self.doc_btn, self.place_btn,
@@ -1016,10 +1165,16 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
                 info.comment or "（无备注——点「编辑文档」补一篇用法说明）")
         self.tags_edit.setText(", ".join(metadata.get_tags(info.name)))
 
-        # 大图预览：GIF 动起来，其余静态缩放
+        # 大图预览：GIF 动起来，其余静态缩放；有图时光标手形提示可点
         self._stop_preview_movie()
         self.preview_label.setText("")
         thumb = metadata.get_thumb(info.name)
+        if thumb:
+            self.preview_label.setCursor(QtCore.Qt.PointingHandCursor)
+            self.preview_label.setToolTip("点击查看大图")
+        else:
+            self.preview_label.setCursor(QtCore.Qt.ArrowCursor)
+            self.preview_label.setToolTip("")
         if thumb and thumb.lower().endswith(".gif"):
             movie = QtGui.QMovie(self.preview_label)
             movie.setFileName(thumb)
@@ -1047,6 +1202,8 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
 
     def _clear_preview_image(self):
         self.preview_label.setText("无缩略图\n（右键卡片 → 设置缩略图）")
+        self.preview_label.setCursor(QtCore.Qt.ArrowCursor)
+        self.preview_label.setToolTip("")
 
     def _stop_preview_movie(self):
         movie = self._preview_movie
