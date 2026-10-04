@@ -1078,7 +1078,9 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         if info.comment:
             lines.append(info.comment)
         if info.patterns:
-            lines.append("焦点: " + ", ".join(info.patterns))
+            # 焦点只显示节点名末段（"Sop/attribwrangle" → "attribwrangle"）
+            lines.append("焦点: " + ", ".join(
+                p.rsplit("/", 1)[-1] for p in info.patterns))
         return "\n".join(lines)
 
     # ---------------- 图标与预览 ----------------
@@ -1229,7 +1231,9 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.meta_cell_network.setText("层级: " + " • ".join(net_meta))
         self.meta_cell_version.setText("版本: " + info.houdini_version)
         self.meta_cell_targets.setText(
-            "焦点: " + (", ".join(info.patterns) if info.patterns else ""))
+            "焦点: " + (", ".join(
+                p.rsplit("/", 1)[-1] for p in info.patterns)
+                if info.patterns else ""))
         self.meta_panel.setVisible(True)
         # 文档区：有文档渲染 markdown（内联 GIF/视频按钮），
         # 无文档回退显示官方备注
