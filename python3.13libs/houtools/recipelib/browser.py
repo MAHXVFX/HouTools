@@ -24,7 +24,7 @@ from houtools.core.log import get_logger
 from houtools.recipelib import metadata, store
 from houtools.recipelib.docs import DocEditorDialog, MarkdownMediaView, MediaDialog
 from houtools.ui.badge import FavoriteBadge
-from houtools.ui.dialogs import localize_buttons, warn
+from houtools.ui.dialogs import localize_buttons, localize_color_dialog, warn
 from houtools.ui.taskbar import apply_appwindow_flags
 from houtools.core.settings import JsonStore
 
@@ -294,6 +294,33 @@ class _PreviewNameLabel(QtWidgets.QLabel):
     def mouseDoubleClickEvent(self, event):
         self.nameDoubleClicked.emit()
         super().mouseDoubleClickEvent(event)
+
+
+class _NameDialog(QtWidgets.QDialog):
+    """自定义显示名输入框。
+
+    不用 QInputDialog：它会在显示时用平台文字重置 OK/Cancel 按钮（英文
+    系统 localize 后仍变回英文），自建按钮条文字完全可控。
+    """
+
+    def __init__(self, parent, title, label, text=""):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.addWidget(QtWidgets.QLabel(label))
+        self.edit = QtWidgets.QLineEdit(text)
+        lay.addWidget(self.edit)
+        bbox = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        bbox.accepted.connect(self.accept)
+        bbox.rejected.connect(self.reject)
+        lay.addWidget(bbox)
+        localize_buttons(self)   # Ok → 确认、Cancel → 取消
+        self.edit.setFocus()
+        self.edit.selectAll()
+
+    def text_value(self):
+        return self.edit.text()
 
 
 class _LibraryDirsDialog(QtWidgets.QDialog):
@@ -1174,6 +1201,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         dlg.setWindowTitle("自定义颜色 - {}".format(self._display_label(info)))
         dlg.setOption(QtWidgets.QColorDialog.DontUseNativeDialog, True)
         localize_buttons(dlg)
+        localize_color_dialog(dlg)   # Pick Screen Color 等内部英文 → 中文
         state = {"clear": False}
         hint = QtGui.QColor(_CardDelegate.DEFAULT_THEME)
 
@@ -1223,14 +1251,11 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         if info is None:
             return
         current = self._display_label(info)
-        dlg = QtWidgets.QInputDialog(self)
-        dlg.setWindowTitle("自定义显示名")
-        dlg.setLabelText("显示名称（留空恢复默认，支持中文）：")
-        dlg.setTextValue(current)
-        localize_buttons(dlg)
+        dlg = _NameDialog(self, "自定义显示名",
+                          "显示名称（留空恢复默认，支持中文）：", current)
         if dlg.exec_() != QtWidgets.QDialog.Accepted:
             return
-        title = dlg.textValue()
+        title = dlg.text_value()
         metadata.set_display_name(info.name, title)
         self._rebuild_sidebar()
         self._apply_filter()

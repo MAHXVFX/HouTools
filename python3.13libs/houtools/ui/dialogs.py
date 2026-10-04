@@ -42,3 +42,33 @@ def warn(parent, title, text):
     box.setStandardButtons(QtWidgets.QMessageBox.Ok)
     localize_buttons(box)
     box.exec_()
+
+
+# QColorDialog（DontUseNativeDialog）内部的英文部件文本 → 中文。
+# 按原文匹配改写（去助记符 & 后精确匹配，冒号保留），找不到的部件
+# 原样保留（Qt 版本间文案可能变化）。
+_COLOR_TEXTS = {
+    "Pick Screen Color": "选取屏幕颜色",
+    "Basic colors": "基本颜色",
+    "Custom colors": "自定义颜色",
+    "Add to Custom Colors": "添加到自定义颜色",
+    "Hue:": "色调:",
+    "Sat:": "饱和:",
+    "Val:": "明度:",
+    "Red:": "红:",
+    "Green:": "绿:",
+    "Blue:": "蓝:",
+    "Alpha channel:": "透明通道:",
+}
+
+
+def localize_color_dialog(dlg):
+    """把非原生 QColorDialog 里的英文部件标签/按钮改成中文。"""
+    for w in dlg.findChildren(QtWidgets.QWidget):
+        if not isinstance(w, (QtWidgets.QLabel, QtWidgets.QPushButton,
+                              QtWidgets.QToolButton)):
+            continue
+        text = w.text().replace("&", "")
+        cn = _COLOR_TEXTS.get(text)
+        if cn:
+            w.setText(cn)

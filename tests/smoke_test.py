@@ -600,21 +600,21 @@ def main():
                 assert win.list.count() == 1
                 win.search.setText("")
                 win._apply_filter()
-                # 重命名流程（QInputDialog 实例打桩——面板已改为实例化调用
-                # 以便中文化按钮，静态 getText 不再使用）：改名进元数据并
-                # 刷新预览，清空输入恢复默认
+                # 重命名流程（_NameDialog 打桩——面板用自建输入框以便
+                # 按钮中文化，QInputDialog 会在显示时重置按钮文字）：
+                # 改名进元数据并刷新预览，清空输入恢复默认
                 win.list.setCurrentRow(1)
-                with patch("PySide6.QtWidgets.QInputDialog.exec_",
+                with patch("houtools.recipelib.browser._NameDialog.exec_",
                            return_value=QtWidgets.QDialog.Accepted), \
-                     patch("PySide6.QtWidgets.QInputDialog.textValue",
+                     patch("houtools.recipelib.browser._NameDialog.text_value",
                            return_value="拷贝神器"):
                     win._rename_selected()
                 assert rl_meta.get_display_name("houtools::light::b") \
                     == "拷贝神器"
                 assert win.preview_name.text() == "拷贝神器"
-                with patch("PySide6.QtWidgets.QInputDialog.exec_",
+                with patch("houtools.recipelib.browser._NameDialog.exec_",
                            return_value=QtWidgets.QDialog.Accepted), \
-                     patch("PySide6.QtWidgets.QInputDialog.textValue",
+                     patch("houtools.recipelib.browser._NameDialog.text_value",
                            return_value=""):
                     win._rename_selected()
                 assert rl_meta.get_display_name("houtools::light::b") == ""
