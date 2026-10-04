@@ -605,7 +605,7 @@ def main():
                 assert win.preview_name.text() == "Pyro A", win.preview_name.text()
                 assert win.preview_meta.text().startswith(
                     "内部名称: houtools::pyro::a"), win.preview_meta.text()
-                assert win.fav_btn.isEnabled()
+                assert win.tags_apply_btn.isEnabled()
                 # 自定义显示名（中文）覆盖网格文本与搜索；
                 # 收藏不再加名字前缀，角标合成在图标里（_icon_for）
                 rl_meta.set_display_name("houtools::pyro::a", "火焰·常用")
@@ -622,17 +622,17 @@ def main():
                 # 按钮中文化，QInputDialog 会在显示时重置按钮文字）：
                 # 改名进元数据并刷新预览，清空输入恢复默认
                 win.list.setCurrentRow(1)
-                with patch("houtools.recipelib.browser._NameDialog.exec_",
+                with patch("houtools.recipelib.browser._PromptDialog.exec_",
                            return_value=QtWidgets.QDialog.Accepted), \
-                     patch("houtools.recipelib.browser._NameDialog.text_value",
+                     patch("houtools.recipelib.browser._PromptDialog.text_value",
                            return_value="拷贝神器"):
                     win._rename_selected()
                 assert rl_meta.get_display_name("houtools::light::b") \
                     == "拷贝神器"
                 assert win.preview_name.text() == "拷贝神器"
-                with patch("houtools.recipelib.browser._NameDialog.exec_",
+                with patch("houtools.recipelib.browser._PromptDialog.exec_",
                            return_value=QtWidgets.QDialog.Accepted), \
-                     patch("houtools.recipelib.browser._NameDialog.text_value",
+                     patch("houtools.recipelib.browser._PromptDialog.text_value",
                            return_value=""):
                     win._rename_selected()
                 assert rl_meta.get_display_name("houtools::light::b") == ""
@@ -645,20 +645,33 @@ def main():
                 assert win.preview_name.text() == "", win.preview_name.text()
                 assert not win.meta_panel.isVisibleTo(win)
                 assert win.preview_comment.isVisibleTo(win)
-                assert not win.place_btn.isEnabled()
+                assert not win.tags_apply_btn.isEnabled()
                 win.list.setCurrentRow(0)
-                assert win.fav_btn.isEnabled()
-                # 有文档时预览面板直接渲染 markdown 文档内容，
-                # 无文档的配方回退显示官方备注
+                assert win.tags_apply_btn.isEnabled()
                 rl_meta.write_doc("houtools::pyro::a", "# 标题甲\n\n正文乙\n")
                 win.list.setCurrentRow(-1)  # 行未变化不触发选中信号，先清再选
                 win.list.setCurrentRow(0)
                 assert win.preview_doc.isVisibleTo(win), "doc view hidden"
                 assert "标题甲" in win.preview_doc.toPlainText()
                 assert not win.preview_comment.isVisibleTo(win)
+                # 标签设置弹窗：确认后 _apply_filter 须恢复选中态——
+                # 否则 _selected_info() 变 None，按钮第二次点击"失灵"
+                with patch("houtools.recipelib.browser._PromptDialog.exec_",
+                           side_effect=lambda *_a, **_k:
+                               QtWidgets.QDialog.Accepted), \
+                     patch("houtools.recipelib.browser._PromptDialog.text_value",
+                           return_value="夜灯, 常用"):
+                    win.tags_apply_btn.click()
+                    assert rl_meta.get_tags("houtools::pyro::a") \
+                        == ["夜灯", "常用"]
+                    win.tags_apply_btn.click()   # 第二次须仍能打开
+                assert rl_meta.get_tags("houtools::pyro::a") == ["夜灯", "常用"]
+                assert win.tags_view.text() == "#夜灯 #常用"
+                assert win.list.currentItem() is not None, "选中态须保留"
                 win.list.setCurrentRow(1)
                 assert win.preview_comment.isVisibleTo(win)
                 assert not win.preview_doc.isVisibleTo(win)
+                rl_meta.set_tags("houtools::pyro::a", [])
                 rl_meta.delete_doc_dir("houtools::pyro::a")
                 rl_meta.set_display_name("houtools::pyro::a", None)
                 # 应用分发：node 预设无选中 → 引导文案（不触 hou）

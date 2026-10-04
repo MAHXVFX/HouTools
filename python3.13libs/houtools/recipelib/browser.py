@@ -507,12 +507,9 @@ class _ImageViewerDialog(QtWidgets.QDialog):
         self.accept()
 
 
-class _NameDialog(QtWidgets.QDialog):
-    """自定义显示名输入框。
-
-    不用 QInputDialog：它会在显示时用平台文字重置 OK/Cancel 按钮（英文
-    系统 localize 后仍变回英文），自建按钮条文字完全可控。
-    """
+class _PromptDialog(QtWidgets.QDialog):
+    """单行文本输入对话框（自建按钮条：QInputDialog 会在显示时用平台
+    文字重置按钮，英文系统上 localize 后仍变回英文）。"""
 
     def __init__(self, parent, title, label, text=""):
         super().__init__(parent)
@@ -797,15 +794,11 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.preview_doc.setStyleSheet(
             "color: #cccccc; background: transparent; border: none;")
 
-        self.tags_edit = QtWidgets.QLineEdit()
-        self.tags_edit.setPlaceholderText("标签，逗号分隔")
-        self.tags_apply_btn = QtWidgets.QPushButton("更新标签")
-
-        self.fav_btn = QtWidgets.QPushButton("☆ 收藏")
-        self.doc_btn = QtWidgets.QPushButton("编辑文档...")
-        self.doc_btn.setToolTip("Markdown 编辑 + 实时预览，可插入图片和视频")
-        self.place_btn = QtWidgets.QPushButton("应用 / 放置")
-        self.thumb_btn = QtWidgets.QPushButton("设置缩略图...")
+        self.tags_view = QtWidgets.QLabel()
+        self.tags_view.setWordWrap(True)
+        self.tags_view.setStyleSheet("color: #9a9aa2;")
+        self.tags_apply_btn = QtWidgets.QPushButton("标签设置")
+        self.tags_apply_btn.setToolTip("在弹窗中修改标签（逗号分隔）")
 
         pv = QtWidgets.QVBoxLayout()
         pv.setContentsMargins(0, 0, 0, 0)
@@ -816,15 +809,11 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         pv.addWidget(self.preview_comment, 1)
         pv.addWidget(self.preview_doc, 1)
         tag_row = QtWidgets.QHBoxLayout()
-        tag_row.addWidget(self.tags_edit, 1)
+        tag_row.addWidget(self.tags_view, 1)
         tag_row.addWidget(self.tags_apply_btn)
         pv.addLayout(tag_row)
-        btn_grid = QtWidgets.QGridLayout()
-        btn_grid.addWidget(self.fav_btn, 0, 0)
-        btn_grid.addWidget(self.doc_btn, 0, 1)
-        btn_grid.addWidget(self.place_btn, 1, 0)
-        btn_grid.addWidget(self.thumb_btn, 1, 1)
-        pv.addLayout(btn_grid)
+        # 收藏/编辑文档/设置缩略图走右键菜单，应用走双击/拖拽卡片——
+        # 面板底部只保留标签设置，不放重复入口
 
         preview_panel = QtWidgets.QWidget()
         preview_panel.setLayout(pv)
@@ -850,11 +839,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.lib_btn.clicked.connect(self._manage_lib_dirs)
         self.pin_chk.toggled.connect(self._toggle_pin)
         self.size_slider.valueChanged.connect(self._on_size_changed)
-        self.place_btn.clicked.connect(self._apply_selected)
-        self.fav_btn.clicked.connect(self._toggle_fav_selected)
-        self.doc_btn.clicked.connect(self._open_doc)
-        self.thumb_btn.clicked.connect(self._set_thumb_selected)
-        self.tags_apply_btn.clicked.connect(self._apply_tags)
+        self.tags_apply_btn.clicked.connect(self._edit_tags)
 
         self._search_timer = QtCore.QTimer(self)
         self._search_timer.setSingleShot(True)
@@ -1010,7 +995,13 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
 
     def _apply_filter(self, note=""):
         """重建网格条目（hdrlight 同款结论：IconMode+gridSize 下
-        setHidden 的条目仍占槽位，必须重建式过滤）。"""
+        setHidden 的条目仍占槽位，必须重建式过滤）。重建会丢选中态——
+        按内部名恢复，否则元数据操作（改标签/收藏等）之后
+        _selected_info() 变 None，面板按钮会"失灵"。"""
+        keep_name = None
+        current = self.list.currentItem()
+        if current is not None:
+            keep_name = current.data(QtCore.Qt.UserRole)
         entries = [r for r in self._recipes
                    if self._match_category(r) and self._match_search(r)]
         self.list.setUpdatesEnabled(False)
@@ -1026,6 +1017,14 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
                 self.list.addItem(item)
         finally:
             self.list.setUpdatesEnabled(True)
+        if keep_name:
+            for i in range(self.list.count()):
+                if self.list.item(i).data(QtCore.Qt.UserRole) == keep_name:
+                    # blockSignals：预览刷新由调用方负责，避免双重刷新
+                    self.list.blockSignals(True)
+                    self.list.setCurrentRow(i)
+                    self.list.blockSignals(False)
+                    break
         self.status.setText("{}：{}/{} 个 recipe{}。{}".format(
             self._category_label(), len(entries), len(self._recipes), note,
             "双击应用；或按住拖入网络编辑器。"))
@@ -1172,9 +1171,8 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         # stretch 项，剩余空间会把空的名字标签/卡片拉伸推挤（空态错乱）
         self.preview_comment.setVisible(True)
         self.preview_doc.setVisible(False)
-        self.tags_edit.setText("")
-        for btn in (self.fav_btn, self.doc_btn, self.place_btn,
-                    self.thumb_btn, self.tags_apply_btn):
+        self.tags_view.setText("（无标签）")
+        for btn in (self.tags_apply_btn,):
             btn.setEnabled(False)
 
     def _view_image(self):
@@ -1191,12 +1189,10 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         dlg.exec_()
 
     def _update_preview(self, info):
-        for btn in (self.fav_btn, self.doc_btn, self.place_btn,
-                    self.thumb_btn, self.tags_apply_btn):
+        for btn in (self.tags_apply_btn,):
             btn.setEnabled(True)
         self._preview_info = info
         fav = metadata.is_favorite(info.name)
-        self.fav_btn.setText("★ 已收藏" if fav else "☆ 收藏")
         self.preview_name.setText(self._display_label(info))
         lib = os.path.basename(info.library) if info.library else ""
         self.preview_meta.setText("\n".join([
@@ -1230,7 +1226,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             self.preview_comment.setVisible(True)
             self.preview_comment.setText(
                 info.comment or "（无备注——点「编辑文档」补一篇用法说明）")
-        self.tags_edit.setText(", ".join(metadata.get_tags(info.name)))
+        self._show_tags(metadata.get_tags(info.name))
 
         # 大图预览：GIF 动起来，其余静态缩放；有图时光标手形提示可点
         self._stop_preview_movie()
@@ -1286,11 +1282,6 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
 
     def _on_double_click(self, item):
         info = self._info_by_name.get(item.data(QtCore.Qt.UserRole))
-        if info is not None:
-            self._apply_recipe(info)
-
-    def _apply_selected(self):
-        info = self._selected_info()
         if info is not None:
             self._apply_recipe(info)
 
@@ -1548,8 +1539,8 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         if info is None:
             return
         current = self._display_label(info)
-        dlg = _NameDialog(self, "自定义显示名",
-                          "显示名称（留空恢复默认，支持中文）：", current)
+        dlg = _PromptDialog(self, "自定义显示名",
+                            "显示名称（留空恢复默认，支持中文）：", current)
         if dlg.exec_() != QtWidgets.QDialog.Accepted:
             return
         title = dlg.text_value()
@@ -1572,26 +1563,29 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.status.setText("{}：{}".format(
             self._display_label(info), "已收藏" if fav else "已取消收藏"))
 
-    def _toggle_fav_selected(self):
-        info = self._selected_info()
-        if info is not None:
-            self._set_favorite(info, not metadata.is_favorite(info.name))
+    def _show_tags(self, tags):
+        """预览面板标签展示（# 前缀，与卡片标签行同款；只读不可编辑）。"""
+        self.tags_view.setText(
+            " ".join("#" + t for t in tags) if tags else "（无标签）")
 
-    def _apply_tags(self):
+    def _edit_tags(self):
+        """「标签设置」弹窗：确认后才写入（展示区保持只读）。"""
         info = self._selected_info()
         if info is None:
             return
-        tags = [t.strip() for t in self.tags_edit.text().split(",") if t.strip()]
+        dlg = _PromptDialog(
+            self, "标签设置 - {}".format(self._display_label(info)),
+            "标签（多个用逗号分隔，留空清除全部标签）：",
+            ", ".join(metadata.get_tags(info.name)))
+        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+            return
+        tags = [t.strip() for t in dlg.text_value().split(",") if t.strip()]
         metadata.set_tags(info.name, tags)
+        self._show_tags(tags)
         self._rebuild_sidebar()
         self._apply_filter()
         self._update_preview(info)
         self.status.setText("{}：标签已更新".format(self._display_label(info)))
-
-    def _set_thumb_selected(self):
-        info = self._selected_info()
-        if info is not None:
-            self._set_thumb(info)
 
     def _set_thumb(self, info):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
@@ -1619,11 +1613,6 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self._update_preview(info)
         self.status.setText("{}：缩略图已更新（{}）".format(
             self._display_label(info), os.path.basename(stored)))
-
-    def _open_doc(self):
-        info = self._selected_info()
-        if info is not None:
-            self._open_doc_for(info)
 
     def _open_doc_for(self, info):
         if self._doc_dialog is not None:
