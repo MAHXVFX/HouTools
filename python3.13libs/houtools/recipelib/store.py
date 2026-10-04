@@ -55,6 +55,9 @@ class RecipeInfo:
     patterns: list = field(default_factory=list)   # nodetype_patterns
     library: str = ""    # 所在 .hda 文件路径
     under_hfs: bool = False  # 出厂 recipe（只读，不可删）
+    houdini_version: str = ""  # 保存该 recipe 时的 Houdini 版本（info 块）
+    net_category: str = ""     # 目标网络类别（"Sop"/"Lop"/...，卡片展示用）
+    node_count: int = -1       # 内含节点总数；-1 = 不适用（参数预设等）
 
     @property
     def display_label(self):
@@ -63,6 +66,42 @@ class RecipeInfo:
         if self.label:
             return self.label
         return self.name.rsplit("::", 1)[-1] or self.name
+
+
+def version_label(houdini_version):
+    """22.0.429 → "H22.0"（官方卡片同款 major.minor 格式）；
+    解析不了就 H+原文，空串原样返回。"""
+    hv = (houdini_version or "").strip()
+    if not hv:
+        return ""
+    parts = hv.split(".")
+    if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+        return "H{}.{}".format(parts[0], parts[1])
+    return "H" + hv
+
+
+def _count_network_items(item_data):
+    """递归数一个网络条目树里的节点总数。
+
+    照官方 hrecipes.utils.countContentsOfItem 的语义实现（公开数据格式，
+    不依赖内部包）：children / editable_nodes 递归累计，
+    subnetindirectinput 只是连线占位不计。
+    """
+    if str(item_data.get("type", "")).lower() == "subnetindirectinput":
+        return 0
+    count = 1
+    children = item_data.get("children")
+    if isinstance(children, dict):
+        sub_items = children.values()
+    elif isinstance(children, (list, tuple)):
+        sub_items = children
+    else:
+        sub_items = ()
+    for sub in sub_items:
+        count += _count_network_items(sub or {})
+    for eable in (item_data.get("editable_nodes") or {}).values():
+        count += _count_network_items(eable or {})
+    return count
 
 
 def _norm(path):
@@ -262,9 +301,29 @@ def _read_header(info, hfs):
         elif subs:
             info.submenu = str(subs)
 
+        # 卡片展示三项：目标网络类别、内含节点数、制作版本。
+        # data 键不总是 dict（ramp 类是 list、recipebuilder 是字符串等），
+        # 节点数只对"网络条目集合"形态的 recipe 有意义，其余一律 -1
+        rdata = data.get("data")
+        if isinstance(rdata, dict):
+            children = rdata.get("children")
+            if isinstance(children, dict) and children:
+                info.node_count = sum(_count_network_items(it)
+                                      for it in children.values())
+            elif isinstance(children, (list, tuple)) and children:
+                info.node_count = sum(_count_network_items(it or {})
+                                      for it in children)
+            elif rdata.get("type"):
+                # node/parm/decoration 预设：data 本身就是单个节点的描述
+                info.node_count = 1
+        cats = tool.get("network_categories") or []
+        info.net_category = (str(cats[0]) if cats
+                             else str(props.get("nodetype_category") or ""))
+
         header = data.get("info") or {}
         info.comment = header.get("comment") or ""
         info.author = header.get("author") or ""
+        info.houdini_version = header.get("houdini_version") or ""
     except Exception as exc:
         # 头部信息读不到就用内部名兜底，不隐藏该 recipe
         log.warning("read recipe header failed for %s: %s", info.name, exc)

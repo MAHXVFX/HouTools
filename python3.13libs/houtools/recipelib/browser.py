@@ -50,8 +50,135 @@ KEY_FAV = "__fav__"
 CAT_PREFIX = "cat::"
 TAG_PREFIX = "tag::"
 
-GRID_PADDING_X = 24
-GRID_PADDING_Y = 46
+GRID_PADDING_X = 24   # 格子水平留白（卡片左右各 7 + 空隙）
+GRID_CARD_GAP = 7     # 格子边缘到卡片的留白
+
+
+class _CardDelegate(QtWidgets.QStyledItemDelegate):
+    """网格卡片：缩略图 + 名字（颜色竖条）/ 类型·节点数 / 版本 / 标签。
+
+    参考官方 Recipe Manager 卡片布局，去掉"使用次数"，且类型只在第二行
+    出现一次（标签行不再重复网络类别）。整体自绘（不调父类 paint），
+    选中态画高亮边框。行高公式与 text_block_height 必须保持一致。
+    """
+
+    MARGIN = 8        # 卡片内边距（缩略图/文字与卡边距离）
+    TEXT_TOP_GAP = 5  # 缩略图与名字行间距
+    LINE_GAP = 3      # 文字行间距
+    BAR_W = 3         # 名字旁颜色竖条宽度
+
+    def __init__(self, window, parent=None):
+        super().__init__(parent)
+        self._win = window
+
+    @staticmethod
+    def _font_metrics(pixel_size, bold):
+        f = QtWidgets.QApplication.font()
+        f.setPixelSize(pixel_size)
+        f.setBold(bold)
+        return QtGui.QFontMetrics(f)
+
+    @classmethod
+    def text_block_height(cls):
+        """缩略图以下文字区的总高度（与 paint 的行序严格一致）。"""
+        name_h = cls._font_metrics(13, True).height()
+        line_h = cls._font_metrics(12, False).height()
+        return (cls.TEXT_TOP_GAP + name_h + cls.LINE_GAP
+                + (line_h + cls.LINE_GAP) * 3 + cls.MARGIN)
+
+    def sizeHint(self, option, index):
+        return self._win.list.gridSize()
+
+    def paint(self, painter, option, index):
+        info = self._win._info_by_name.get(index.data(QtCore.Qt.UserRole))
+        thumb_h = self._win.thumb_height()
+        selected = bool(option.state & QtWidgets.QStyle.State_Selected)
+
+        painter.save()
+        painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+
+        # 卡片底：圆角矩形（选中亮边框 + 微亮底色）
+        card = option.rect.adjusted(GRID_CARD_GAP, GRID_CARD_GAP,
+                                    -GRID_CARD_GAP, -GRID_CARD_GAP)
+        path = QtGui.QPainterPath()
+        path.addRoundedRect(QtCore.QRectF(card), 8, 8)
+        painter.fillPath(path, QtGui.QColor(
+            "#232329" if selected else "#1D1D20"))
+        painter.setPen(QtGui.QPen(QtGui.QColor(
+            "#0d6399" if selected else "#2d2d2d"), 1))
+        painter.drawPath(path)
+
+        m = self.MARGIN
+        text_w = card.width() - m * 2
+        y = card.top() + m
+
+        # 缩略图（icon 已含收藏角标合成，QIcon 内部按尺寸缓存缩放结果）
+        icon = index.data(QtCore.Qt.DecorationRole)
+        if icon is not None:
+            pm = icon.pixmap(text_w, thumb_h)
+            if not pm.isNull():
+                painter.drawPixmap(
+                    card.left() + m + (text_w - pm.width()) // 2,
+                    y + (thumb_h - pm.height()) // 2, pm)
+        y += thumb_h + self.TEXT_TOP_GAP
+
+        if info is None:  # 理论不达（条目都带 UserRole）；兜底不画文字
+            painter.restore()
+            return
+
+        # 行1：颜色竖条 + 名字（粗体白，超长省略）
+        nfm = self._font_metrics(13, True)
+        bar_h = nfm.height()
+        painter.setPen(QtCore.Qt.NoPen)
+        painter.setBrush(QtGui.QColor(
+            metadata.get_color(info.name) or "#3f3f46"))
+        painter.drawRoundedRect(QtCore.QRectF(card.left() + m, y + 1,
+                                              self.BAR_W, bar_h - 2),
+                                1.5, 1.5)
+        name = nfm.elidedText(self._win._display_label(info),
+                              QtCore.Qt.ElideRight, text_w - self.BAR_W - 6)
+        painter.setPen(QtGui.QColor("#eeeeee"))
+        painter.drawText(QtCore.QRect(card.left() + m + self.BAR_W + 6, y,
+                                      text_w - self.BAR_W - 6, bar_h),
+                         QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, name)
+        y += bar_h + self.LINE_GAP
+
+        # 行2-4：类型·节点数 / 版本 / 标签
+        painter.setFont(self._font(12, False))
+        line_h = painter.fontMetrics().height()
+
+        def _line(text, color):
+            painter.setPen(QtGui.QColor(color))
+            painter.drawText(QtCore.QRect(card.left() + m, y, text_w, line_h),
+                             QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter,
+                             text)
+            return y + line_h + self.LINE_GAP
+
+        y = _line(self._type_line(info), "#9a9aa2")
+        y = _line(store.version_label(info.houdini_version), "#9a9aa2")
+        _line(" • ".join(metadata.get_tags(info.name)), "#6f6f78")
+        painter.restore()
+
+    @staticmethod
+    def _font(pixel_size, bold):
+        f = QtWidgets.QApplication.font()
+        f.setPixelSize(pixel_size)
+        f.setBold(bold)
+        return f
+
+    @staticmethod
+    def _type_line(info):
+        """第二行：网络类别（缺省用类别短名）+ 节点数。"""
+        parts = []
+        cat = info.net_category or {
+            "tool": "Tool", "node": "Node", "parm": "Parm",
+            "decoration": "Deco", "parmTemplate": "ParmTpl",
+            "data": "Data"}.get(info.category, "")
+        if cat:
+            parts.append(cat)
+        if info.node_count >= 0:
+            parts.append("{} 节点".format(info.node_count))
+        return " • ".join(parts)
 
 _UI_SETTINGS = JsonStore("recipelib_ui.json", defaults={
     "grid_size": 112,     # 缩略图基准大小（滑条 64-256）
@@ -293,6 +420,9 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         # 库），不需要 Uniform 的布局优化
         self.list.setUniformItemSizes(False)
         self.list.setWordWrap(True)
+        # 卡片式条目：缩略图 + 名字/类型/版本/标签（自绘 delegate，见下）
+        self._thumb_h = 0
+        self.list.setItemDelegate(_CardDelegate(self))
         self.list.itemDoubleClicked.connect(self._on_double_click)
         self.list.currentItemChanged.connect(self._on_selection_changed)
         self.list.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
@@ -574,6 +704,17 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
 
     def _tooltip_for(self, info):
         lines = [self._display_label(info), "内部名称: " + info.name]
+        meta = []
+        if info.net_category:
+            meta.append(info.net_category)
+        if info.node_count >= 0:
+            meta.append("{} 个节点".format(info.node_count))
+        if meta:
+            lines.insert(2, " • ".join(meta))
+        if info.houdini_version:
+            lines.append("版本: {}（{}）".format(
+                info.houdini_version,
+                store.version_label(info.houdini_version)))
         tags = metadata.get_tags(info.name)
         if tags:
             lines.append("标签: " + ", ".join(tags))
@@ -638,11 +779,19 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.size_label.setText("{}px".format(val))
         self._apply_grid_size()
 
+    def thumb_height(self):
+        """当前卡片缩略图区高度（delegate paint 与 gridSize 共用）。"""
+        return self._thumb_h
+
     def _apply_grid_size(self):
-        base = int(self.size_slider.value())
-        self.list.setIconSize(QtCore.QSize(base, int(base * 0.66)))
-        self.list.setGridSize(QtCore.QSize(base + GRID_PADDING_X,
-                                           int(base * 0.66) + GRID_PADDING_Y))
+        base = int(self.size_slider.value())   # 缩略图宽度基准
+        self._thumb_h = int(base * 0.66)
+        self.list.setIconSize(QtCore.QSize(base, self._thumb_h))
+        card_w = base + _CardDelegate.MARGIN * 2
+        grid_h = (GRID_CARD_GAP + _CardDelegate.MARGIN + self._thumb_h
+                  + _CardDelegate.text_block_height() + GRID_CARD_GAP)
+        self.list.setGridSize(QtCore.QSize(
+            card_w + GRID_CARD_GAP * 2, grid_h))
         # 角标按 iconSize 合成，尺寸变了缓存失效并刷新现有条目的图标
         if self._fav_icon_cache:
             self._fav_icon_cache.clear()
@@ -700,6 +849,14 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         ]
         if lib:
             meta_lines.append("来源: " + lib)
+        if info.net_category:
+            meta_lines.append("网络: " + info.net_category)
+        if info.node_count >= 0:
+            meta_lines.append("节点数: {}".format(info.node_count))
+        if info.houdini_version:
+            meta_lines.append("版本: {}（{}）".format(
+                info.houdini_version,
+                store.version_label(info.houdini_version)))
         if info.patterns:
             meta_lines.append("作用: " + ", ".join(info.patterns))
         self.preview_meta.setText("\n".join(meta_lines))
@@ -936,6 +1093,10 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         act_thumb_clear = None
         if metadata.get_thumb(info.name):
             act_thumb_clear = menu.addAction("清除缩略图")
+        act_color = menu.addAction("自定义颜色...")
+        act_color_clear = None
+        if metadata.get_color(info.name):
+            act_color_clear = menu.addAction("清除颜色")
         act_copy = menu.addAction("复制内部名")
         menu.addSeparator()
         act_del = None
@@ -959,10 +1120,28 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             item.setIcon(self._icon_for(info,
                                         metadata.is_favorite(info.name)))
             self._refresh_current_item()
+        elif act is act_color:
+            self._set_color(info)
+        elif act is not None and act is act_color_clear:
+            metadata.set_color(info.name, None)
+            self._refresh_current_item()
         elif act is act_copy:
             QtWidgets.QApplication.clipboard().setText(info.name)
         elif act is not None and act is act_del:
             self._delete_recipe(info)
+
+    def _set_color(self, info):
+        """卡片颜色框取色（QColorDialog），写元数据层并重刷网格/预览。"""
+        current = metadata.get_color(info.name) or "#8a5cf5"
+        color = QtWidgets.QColorDialog.getColor(
+            QtGui.QColor(current), self,
+            "自定义颜色 - {}".format(self._display_label(info)))
+        if not color.isValid():
+            return
+        metadata.set_color(info.name, color.name())
+        self._refresh_current_item()
+        self.status.setText("{}：颜色已更新（{}）".format(
+            self._display_label(info), color.name()))
 
     def _refresh_current_item(self):
         """当前条目按最新元数据重刷（收藏星标/图标/提示）。"""
@@ -1096,6 +1275,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         metadata.set_favorite(info.name, False)
         metadata.set_tags(info.name, [])
         metadata.set_display_name(info.name, None)
+        metadata.set_color(info.name, None)
         metadata.delete_doc_dir(info.name)
         self._thumb_cache.pop(info.name, None)
         self.reload()

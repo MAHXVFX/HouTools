@@ -34,6 +34,7 @@ _DEFAULTS = {
     "tags": {},            # 内部名 -> [标签...]
     "thumbs": {},          # 内部名 -> 缩略图绝对路径
     "display_names": {},   # 内部名 -> 用户自定义显示名（支持中文）
+    "colors": {},          # 内部名 -> "#rrggbb"（卡片名字旁的颜色框）
 }
 
 _SETTINGS = JsonStore("recipelib.json", defaults=_DEFAULTS)
@@ -102,6 +103,31 @@ def set_display_name(name, title):
         all_names.pop(name, None)
     _SETTINGS.set("display_names", all_names)
     return title
+
+
+# --------------------------------------------------------------------------
+# 卡片颜色框
+# --------------------------------------------------------------------------
+
+def get_color(name):
+    """用户自定义的卡片颜色（"#rrggbb"）；未设置返回空串。"""
+    return (_SETTINGS.get("colors") or {}).get(name) or ""
+
+
+def set_color(name, color):
+    """写入卡片颜色；传空串/None 清除（恢复默认灰条）。
+
+    只接受 #rrggbb 形式的值（QColorDialog 产出），其余一律视为清除。
+    """
+    all_colors = dict(_SETTINGS.get("colors") or {})
+    color = (str(color).strip() if color else "")
+    if re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+        all_colors[name] = color
+    else:
+        color = ""
+        all_colors.pop(name, None)
+    _SETTINGS.set("colors", all_colors)
+    return color
 
 
 # --------------------------------------------------------------------------
