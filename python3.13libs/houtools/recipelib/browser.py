@@ -676,7 +676,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.lib_label = QtWidgets.QLabel()
         self.lib_label.setStyleSheet("color: #888888;")
         self.search = QtWidgets.QLineEdit()
-        self.search.setPlaceholderText("搜索 名称 / 标签 / 备注...")
+        self.search.setPlaceholderText("搜索 名称 / 标签 / 备注...（#前缀 仅搜标签）")
         self.search.setClearButtonEnabled(True)
         self.pin_chk = QtWidgets.QCheckBox("全局置顶")
         self.pin_chk.setChecked(bool(_UI_SETTINGS.get("pin_on_top")))
@@ -983,13 +983,33 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         return info.display_label
 
     def _match_search(self, info):
+        """搜索：普通词做全字段子串匹配；# 开头的词只匹配标签（多个
+        词之间 AND，如 "#生成 vex" = 标签含"生成"且全字段含"vex"）。
+        比较 # 词时忽略 # 前缀。"""
         text = self.search.text().strip().lower()
         if not text:
             return True
-        tags = " ".join(metadata.get_tags(info.name))
-        hay = " ".join([self._display_label(info), info.name,
-                        info.comment, tags])
-        return text in hay.lower()
+        tag_terms, plain_terms = [], []
+        for word in text.split():
+            if word.startswith("#"):
+                word = word[1:].strip()
+                if word:
+                    tag_terms.append(word)
+            else:
+                plain_terms.append(word)
+        if tag_terms:
+            tags = [t.lower() for t in metadata.get_tags(info.name)]
+            for term in tag_terms:
+                if not any(term in t for t in tags):
+                    return False
+        if plain_terms:
+            hay = " ".join([self._display_label(info), info.name,
+                            info.comment,
+                            " ".join(metadata.get_tags(info.name))]).lower()
+            for term in plain_terms:
+                if term not in hay:
+                    return False
+        return True
 
     def _match_category(self, info):
         key = self._category_key

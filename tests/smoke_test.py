@@ -599,6 +599,28 @@ def main():
                 win.search.setText("")
                 win._apply_filter()
                 assert win.list.count() == 2
+                # 搜索：# 前缀只搜标签（按内容点命中，名称含该词也不算）；
+                # 普通词全字段子串；混合词 AND
+                rl_meta.set_tags("houtools::light::b", [])   # 清掉旧测试标签
+                rl_meta.set_tags("houtools::pyro::a", ["夜灯"])
+                win.search.setText("#夜灯")
+                win._apply_filter()
+                assert win.list.count() == 1, win.list.count()
+                assert win.list.item(0).data(QtCore.Qt.UserRole) \
+                    == "houtools::pyro::a"
+                win.search.setText("#pyro")   # 名称含 pyro，但不是标签
+                win._apply_filter()
+                assert win.list.count() == 0, win.list.count()
+                win.search.setText("pyro #夜灯")   # 混合：全字段 AND 标签
+                win._apply_filter()
+                assert win.list.count() == 1, win.list.count()
+                win.search.setText("#夜灯 常用")   # 标签 AND 全字段（无匹配）
+                win._apply_filter()
+                assert win.list.count() == 0, win.list.count()
+                rl_meta.set_tags("houtools::pyro::a", [])
+                win.search.setText("")
+                win._apply_filter()
+                assert win.list.count() == 2
                 # 预览面板联动：选中后名称/元信息/按钮就绪；
                 # 名称走显示链，元信息第一行是内部名称
                 win.list.setCurrentRow(0)
