@@ -920,7 +920,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
 
         _add(KEY_ALL, "全部", len(self._recipes))
         _add(KEY_FAV, "★ 收藏", fav_count)
-        _add(None, "── 分类 ──", 0, header=True)
+        _add(None, "── 子菜单 ──", 0, header=True)
         for sub in sorted(cat_counts, key=str.lower):
             _add(CAT_PREFIX + sub, sub or "未分类", cat_counts[sub])
         _add(None, "── 标签 ──", 0, header=True)
@@ -1219,7 +1219,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         if info.node_count >= 0:
             net_meta.append("{} 节点".format(info.node_count))
         self.meta_cell_category.setText(
-            "分类: " + (info.submenu or "（未分类）"))
+            "子菜单: " + (info.submenu or "无"))
         self.meta_cell_network.setText("层级: " + " • ".join(net_meta))
         self.meta_cell_version.setText("版本: " + info.houdini_version)
         self.meta_cell_targets.setText(
