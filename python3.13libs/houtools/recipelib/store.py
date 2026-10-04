@@ -68,18 +68,6 @@ class RecipeInfo:
         return self.name.rsplit("::", 1)[-1] or self.name
 
 
-def version_label(houdini_version):
-    """22.0.429 → "H22.0"（官方卡片同款 major.minor 格式）；
-    解析不了就 H+原文，空串原样返回。"""
-    hv = (houdini_version or "").strip()
-    if not hv:
-        return ""
-    parts = hv.split(".")
-    if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
-        return "H{}.{}".format(parts[0], parts[1])
-    return "H" + hv
-
-
 def _count_network_items(item_data):
     """递归数一个网络条目树里的节点总数。
 

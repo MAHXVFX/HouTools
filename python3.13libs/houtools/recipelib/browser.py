@@ -229,7 +229,7 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
             return y + line_h + self.LINE_GAP
 
         y = _line(self._type_line(info), "#a8a8b0")
-        y = _line(store.version_label(info.houdini_version), "#a8a8b0")
+        y = _line(info.houdini_version, "#a8a8b0")
         _line(" ".join("#" + t for t in metadata.get_tags(info.name)),
               tag_color)
         painter.restore()
@@ -548,9 +548,29 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.preview_name.setStyleSheet("font-weight: bold; font-size: 14px;")
         self.preview_name.setToolTip("双击可自定义显示名称（支持中文）")
         self.preview_name.nameDoubleClicked.connect(self._rename_selected)
+        # 元信息：前三行纵排（内部名称/类型/来源），后四格两列网格
+        # （分类|网络 / 版本|作用，格子缺信息就留空，行列保持对齐）
         self.preview_meta = QtWidgets.QLabel()
         self.preview_meta.setWordWrap(True)
         self.preview_meta.setStyleSheet("color: #888888;")
+        self.meta_cell_category = QtWidgets.QLabel()
+        self.meta_cell_network = QtWidgets.QLabel()
+        self.meta_cell_version = QtWidgets.QLabel()
+        self.meta_cell_targets = QtWidgets.QLabel()
+        for cell in (self.meta_cell_category, self.meta_cell_network,
+                     self.meta_cell_version, self.meta_cell_targets):
+            cell.setWordWrap(True)
+            cell.setStyleSheet("color: #888888;")
+        meta_grid = QtWidgets.QGridLayout()
+        meta_grid.setContentsMargins(0, 0, 0, 0)
+        meta_grid.setHorizontalSpacing(10)
+        meta_grid.setVerticalSpacing(0)
+        meta_grid.addWidget(self.meta_cell_category, 0, 0)
+        meta_grid.addWidget(self.meta_cell_network, 0, 1)
+        meta_grid.addWidget(self.meta_cell_version, 1, 0)
+        meta_grid.addWidget(self.meta_cell_targets, 1, 1)
+        meta_grid.setColumnStretch(0, 1)
+        meta_grid.setColumnStretch(1, 2)
         self.preview_comment = QtWidgets.QLabel()
         self.preview_comment.setWordWrap(True)
         self.preview_comment.setStyleSheet("color: #aaaaaa;")
@@ -575,6 +595,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         pv.addWidget(self.preview_label)
         pv.addWidget(self.preview_name)
         pv.addWidget(self.preview_meta)
+        pv.addLayout(meta_grid)
         pv.addWidget(self.preview_comment, 1)
         pv.addWidget(self.preview_doc, 1)
         tag_row = QtWidgets.QHBoxLayout()
@@ -816,9 +837,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         if meta:
             lines.insert(2, " • ".join(meta))
         if info.houdini_version:
-            lines.append("版本: {}（{}）".format(
-                info.houdini_version,
-                store.version_label(info.houdini_version)))
+            lines.append("版本: " + info.houdini_version)
         tags = metadata.get_tags(info.name)
         if tags:
             lines.append("标签: " + ", ".join(tags))
@@ -925,6 +944,9 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.preview_label.setText("未选中")
         self.preview_name.setText("")
         self.preview_meta.setText("")
+        for cell in (self.meta_cell_category, self.meta_cell_network,
+                     self.meta_cell_version, self.meta_cell_targets):
+            cell.setText("")
         self.preview_comment.setText("")
         self.preview_doc.setVisible(False)
         self.tags_edit.setText("")
@@ -941,24 +963,22 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.fav_btn.setText("★ 已收藏" if fav else "☆ 收藏")
         self.preview_name.setText(self._display_label(info))
         lib = os.path.basename(info.library) if info.library else ""
-        meta_lines = [
+        self.preview_meta.setText("\n".join([
             "内部名称: " + info.name,
             "类型: " + store.CATEGORY_LABELS.get(info.category, info.category),
-            "分类: " + (info.submenu or "（未分类）"),
-        ]
-        if lib:
-            meta_lines.append("来源: " + lib)
+            "来源: " + lib,
+        ]))
+        net_meta = []
         if info.net_category:
-            meta_lines.append("网络: " + info.net_category)
+            net_meta.append(info.net_category)
         if info.node_count >= 0:
-            meta_lines.append("节点数: {}".format(info.node_count))
-        if info.houdini_version:
-            meta_lines.append("版本: {}（{}）".format(
-                info.houdini_version,
-                store.version_label(info.houdini_version)))
-        if info.patterns:
-            meta_lines.append("作用: " + ", ".join(info.patterns))
-        self.preview_meta.setText("\n".join(meta_lines))
+            net_meta.append("{} 节点".format(info.node_count))
+        self.meta_cell_category.setText(
+            "分类: " + (info.submenu or "（未分类）"))
+        self.meta_cell_network.setText("网络: " + " • ".join(net_meta))
+        self.meta_cell_version.setText("版本: " + info.houdini_version)
+        self.meta_cell_targets.setText(
+            "作用: " + (", ".join(info.patterns) if info.patterns else ""))
         # 文档区：有文档渲染 markdown（内联 GIF/视频按钮），
         # 无文档回退显示官方备注
         if metadata.doc_exists(info.name):
