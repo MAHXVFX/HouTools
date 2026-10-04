@@ -65,6 +65,7 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
     MARGIN = 8        # 卡片内边距（缩略图/文字与卡边距离）
     TEXT_TOP_GAP = 5  # 缩略图与名字行间距
     LINE_GAP = 3      # 文字行间距
+    TEXT_BOTTOM_PAD = 3  # 标签行到底边的留白（比 MARGIN 紧，底部不空）
     BAR_W = 3         # 名字旁颜色竖条宽度
 
     def __init__(self, window, parent=None):
@@ -105,7 +106,7 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
         name_h = cls._font_metrics(13, True).height()
         line_h = cls._font_metrics(12, True).height()   # 三行小字也加粗
         return (cls.TEXT_TOP_GAP + name_h + cls.LINE_GAP
-                + (line_h + cls.LINE_GAP) * 3 + cls.MARGIN)
+                + (line_h + cls.LINE_GAP) * 3 + cls.TEXT_BOTTOM_PAD)
 
     def sizeHint(self, option, index):
         return self._win.list.gridSize()
