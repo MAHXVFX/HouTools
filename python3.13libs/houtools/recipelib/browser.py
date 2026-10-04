@@ -665,7 +665,8 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self._badge = FavoriteBadge()   # 收藏角标（共享组件，见 ui.badge；
                                         # delegate 画在卡片右上角，非合成进图标）
         self._cover_cache = {}      # (name, w, h) -> cover 裁剪后的 QPixmap
-        self._loaded = False        # 首次 show 时自动枚举（见 showEvent）
+        self._need_reload = True    # 首次/每次从隐藏到显示时自动枚举
+                                    # （见 showEvent/hideEvent）
 
         # ---- 顶部栏 ----
         self.refresh_btn = QtWidgets.QPushButton("刷新")
@@ -752,9 +753,14 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.meta_cell_network = QtWidgets.QLabel()
         self.meta_cell_version = QtWidgets.QLabel()
         self.meta_cell_targets = QtWidgets.QLabel()
+        # 左列（子菜单/版本）内容短且须单行（折行会把行距撑乱），右列
+        # （层级/焦点）值可能较长允许折行
+        self.meta_cell_category.setWordWrap(False)
+        self.meta_cell_version.setWordWrap(False)
+        self.meta_cell_network.setWordWrap(True)
+        self.meta_cell_targets.setWordWrap(True)
         for cell in (self.meta_cell_category, self.meta_cell_network,
                      self.meta_cell_version, self.meta_cell_targets):
-            cell.setWordWrap(True)
             cell.setStyleSheet("color: #9a9aa2;")
         meta_left = QtWidgets.QVBoxLayout()
         meta_left.setSpacing(4)
@@ -768,7 +774,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         sep.setFixedWidth(1)
         sep.setStyleSheet("background-color: #3d3d3d;")
         meta_row = QtWidgets.QHBoxLayout()
-        meta_row.setSpacing(10)
+        meta_row.setSpacing(8)
         meta_row.addLayout(meta_left, 2)
         meta_row.addWidget(sep)
         meta_row.addLayout(meta_right, 3)
@@ -779,7 +785,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             "QFrame#metaPanel { background-color: #1D1D20; "
             "border: 1px solid #3d3d3d; border-radius: 6px; }")
         meta_lay = QtWidgets.QVBoxLayout(self.meta_panel)
-        meta_lay.setContentsMargins(10, 8, 10, 8)
+        meta_lay.setContentsMargins(8, 6, 8, 6)
         meta_lay.setSpacing(4)
         meta_lay.addWidget(self.preview_meta)
         meta_lay.addLayout(meta_row)
@@ -1719,15 +1725,21 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
     def _toggle_pin(self, on):
         _UI_SETTINGS.set("pin_on_top", bool(on))
         self.setWindowFlag(QtCore.Qt.WindowStaysOnTopHint, on)
+        self._need_reload = False   # 置顶切换引发的隐藏/重显不触发重载
         self.show()  # setWindowFlag 会使窗口隐藏，需要重新 show
 
     def showEvent(self, event):
         super().showEvent(event)
-        # 枚举开销小（HDA section 内存读取），开窗即载；无头冒烟测试
-        # 不 show，因此 __init__ 保持零 hou 依赖不受影响
-        if not self._loaded:
-            self._loaded = True
+        # 每次从隐藏到显示都自动刷新（库文件可能已被外部增删；单例窗口
+        # 关闭只是隐藏，重开面板时 showEvent 会再次触发）。hideEvent 置
+        # 标志，避免最小化/置顶切换等多余刷新
+        if self._need_reload:
+            self._need_reload = False
             self.reload()
+
+    def hideEvent(self, event):
+        self._need_reload = True
+        super().hideEvent(event)
 
     def closeEvent(self, event):
         _UI_SETTINGS.set("grid_size", int(self.size_slider.value()))
