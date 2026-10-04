@@ -261,8 +261,9 @@ class DocEditorDialog(QtWidgets.QDialog):
         self._doc_dir = metadata.doc_dir(self._name)
 
         self.editor = QtWidgets.QPlainTextEdit()
-        self.editor.setPlainText(
-            metadata.ensure_doc(self._name, metadata.doc_template(info)))
+        # 没有文档就是空白（不自动建模板文件）——保存后 doc.md 才存在，
+        # 主面板的"有文档渲染 markdown / 无文档显示备注"随之切换
+        self.editor.setPlainText(metadata.read_doc(self._name))
         self.preview = MarkdownMediaView(self._doc_dir)
 
         insert_img = QtWidgets.QPushButton("插入图片...")

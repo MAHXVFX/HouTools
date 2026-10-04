@@ -532,12 +532,10 @@ def main():
             rl_meta.clear_thumb(name)
             assert rl_meta.get_thumb(name) == ""
 
-            # 文档：模板创建 + 相对引用素材（同名不覆盖）+ 读写 + 目录清理
-            info = rl_store.RecipeInfo(
-                name=name, label="My Setup", category="tool",
-                submenu="HouTools", author="tester", patterns=["Sop/pyro"])
-            doc = rl_meta.ensure_doc(name, rl_meta.doc_template(info))
-            assert "My Setup" in doc and "用法" in doc and "Sop/pyro" in doc
+            # 文档：无文档读取为空（不自动建模板）+ 相对引用素材（同名
+            # 不覆盖）+ 保存读取 + 目录清理
+            assert rl_meta.read_doc(name) == ""
+            assert not rl_meta.doc_exists(name)
             asset_src = Path(tmp) / "pic.png"
             asset_src.write_bytes(b"png")
             rel = rl_meta.insert_asset(name, str(asset_src))
@@ -545,8 +543,8 @@ def main():
             assert (Path(rl_meta.doc_dir(name)) / rel).exists()
             rel2 = rl_meta.insert_asset(name, str(asset_src))
             assert rel2 != rel, "同名素材被覆盖"
-            rl_meta.write_doc(name, doc + "\nedited")
-            assert rl_meta.read_doc(name).endswith("edited")
+            rl_meta.write_doc(name, "# My Setup\n\n用法正文\n")
+            assert rl_meta.read_doc(name).startswith("# My Setup")
             rl_meta.delete_doc_dir(name)
             assert not rl_meta.doc_exists(name)
 
@@ -642,7 +640,7 @@ def main():
                 assert win.fav_btn.isEnabled()
                 # 有文档时预览面板直接渲染 markdown 文档内容，
                 # 无文档的配方回退显示官方备注
-                rl_meta.ensure_doc("houtools::pyro::a", "# 标题甲\n\n正文乙\n")
+                rl_meta.write_doc("houtools::pyro::a", "# 标题甲\n\n正文乙\n")
                 win.list.setCurrentRow(-1)  # 行未变化不触发选中信号，先清再选
                 win.list.setCurrentRow(0)
                 assert win.preview_doc.isVisibleTo(win), "doc view hidden"
@@ -677,13 +675,13 @@ def main():
         rl_store_ps.path.unlink(missing_ok=True)
     print("RecipeLibrary metadata + window OK")
 
-    # 文档编辑器：实例化 + 实时预览渲染（纯 Qt，不触 hou）
+    # 文档编辑器：实例化（无文档=空白）+ 实时预览渲染（纯 Qt，不触 hou）
     with tempfile.TemporaryDirectory() as tmp:
         with patch.object(rl_meta, "DOCS_DIR", Path(tmp) / "docs"):
             info = rl_store.RecipeInfo(name="houtools::x::doc_test",
                                        label="Doc Test", category="tool")
             dlg = rl_docs.DocEditorDialog(None, info)
-            assert "Doc Test" in dlg.editor.toPlainText()  # 模板已填元信息
+            assert dlg.editor.toPlainText() == ""  # 无文档 → 空白编辑器
             dlg.editor.setPlainText("# 标题\n\n正文 **粗体**\n")
             dlg._render_preview()
             assert "标题" in dlg.preview.toPlainText()

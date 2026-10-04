@@ -302,14 +302,6 @@ def doc_exists(name):
     return os.path.exists(doc_path(name))
 
 
-def ensure_doc(name, template):
-    """文档不存在时用模板创建（已存在则原样返回正文）。"""
-    path = doc_path(name)
-    if not os.path.exists(path):
-        write_doc(name, template)
-    return read_doc(name)
-
-
 def read_doc(name):
     path = doc_path(name)
     try:
@@ -359,29 +351,3 @@ def delete_doc_dir(name):
     d = doc_dir(name)
     if os.path.isdir(d):
         shutil.rmtree(d, ignore_errors=True)
-
-
-def doc_template(info):
-    """新文档模板：把 recipe 自带的元信息先填进去，用户忘了也有底。"""
-    patterns = "、".join(info.patterns) if info.patterns else "（未限定）"
-    return (
-        "# {}\n\n"
-        "- **类型**: {}\n"
-        "- **分类**: {}\n"
-        "- **作用节点**: {}\n"
-        "- **作者**: {}\n\n"
-        "## 用法\n\n"
-        "1. \n\n"
-        "## 注意事项\n\n"
-        "- \n"
-    ).format(
-        info.label,
-        {"tool": "Tool（Tab 工具）", "node": "Node Preset（节点预设）",
-         "parm": "Parameter Preset（参数预设）",
-         "decoration": "Decoration（装饰）",
-         "parmTemplate": "Parm Template（参数模板）",
-         "data": "Data（数据）"}.get(info.category, info.category),
-        info.submenu or "（未分类）",
-        patterns,
-        info.author or "（未知）",
-    )
