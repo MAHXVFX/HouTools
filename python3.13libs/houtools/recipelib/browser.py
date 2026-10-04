@@ -403,7 +403,10 @@ class _ImageViewerDialog(QtWidgets.QDialog):
                 self._base, QtCore.Qt.KeepAspectRatio)
             self._label = QtWidgets.QLabel()
             self._label.setAlignment(QtCore.Qt.AlignCenter)
-            self._label.setMovie(self._movie)
+            # ⚠ GIF 解码器不支持 QImageReader 缩放——QMovie.setScaledSize
+            # 对 GIF 无效（帧按原始尺寸交付，缩放后显示不变化）。不
+            # setMovie，改由 _show_movie_frame 在 frameChanged 时手动缩放
+            self._movie.frameChanged.connect(self._show_movie_frame)
         else:
             self._src = QtGui.QPixmap(image_path)
             self._fit = self._src.size().scaled(
@@ -440,7 +443,8 @@ class _ImageViewerDialog(QtWidgets.QDialog):
         w = int(self._fit.width() * self._factor)
         h = int(self._fit.height() * self._factor)
         if self._is_gif:
-            self._movie.setScaledSize(QtCore.QSize(w, h))
+            self._show_movie_frame()   # 立即按当前倍率显示第一帧
+            self._movie.start()
         else:
             self._label.setPixmap(self._src.scaled(
                 w, h, QtCore.Qt.KeepAspectRatio,
@@ -454,6 +458,24 @@ class _ImageViewerDialog(QtWidgets.QDialog):
         vp = self._scroll.viewport().size()
         self._label.move(max(0, (vp.width() - w) // 2),
                          max(0, (vp.height() - h) // 2))
+
+    def _show_movie_frame(self):
+        """按当前倍率把 movie 当前帧手动缩放后显示。
+
+        GIF 解码器不支持 QImageReader 缩放（QMovie.setScaledSize 对 GIF
+        无效），只能在 frameChanged 时自行缩放交付帧。
+        """
+        if self._movie is None:
+            return
+        pm = self._movie.currentPixmap()
+        if pm.isNull():
+            return
+        w = int(self._fit.width() * self._factor)
+        h = int(self._fit.height() * self._factor)
+        if pm.width() != w or pm.height() != h:
+            pm = pm.scaled(w, h, QtCore.Qt.KeepAspectRatio,
+                           QtCore.Qt.SmoothTransformation)
+        self._label.setPixmap(pm)
 
     def _zoom(self, steps):
         old = self._factor
