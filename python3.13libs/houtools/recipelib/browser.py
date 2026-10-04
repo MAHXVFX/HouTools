@@ -78,6 +78,27 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
         f.setBold(bold)
         return QtGui.QFontMetrics(f)
 
+    @staticmethod
+    def _tint(color, alpha):
+        """主题色按 alpha 比例混入卡片暗底，得文字区的浅色调背景。"""
+        base = QtGui.QColor("#1D1D20")
+        c = QtGui.QColor(color)
+
+        def mix(a, b):
+            return round(a * (1 - alpha) + b * alpha)
+
+        return QtGui.QColor(mix(base.red(), c.red()),
+                            mix(base.green(), c.green()),
+                            mix(base.blue(), c.blue()))
+
+    @staticmethod
+    def _readable(color):
+        """标签行文字：主题色太暗时提亮，保证浅色调背景上可读。"""
+        c = QtGui.QColor(color)
+        if c.lightness() < 90:
+            c = c.lighter(180)
+        return c
+
     @classmethod
     def text_block_height(cls):
         """缩略图以下文字区的总高度（与 paint 的行序严格一致）。"""
@@ -97,22 +118,47 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
         painter.save()
         painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
 
-        # 卡片底：圆角矩形（选中亮边框 + 微亮底色）
+    def paint(self, painter, option, index):
+        info = self._win._info_by_name.get(index.data(QtCore.Qt.UserRole))
+        thumb_h = self._win.thumb_height()
+        selected = bool(option.state & QtWidgets.QStyle.State_Selected)
+
+        painter.save()
+        painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+
+        # 整卡主题（参考官方 Recipe Manager 卡片）：自定义颜色时边框/名字
+        # 竖条/标签行用主题色，背景铺主题色混暗底——文字区 0.35、缩略图区
+        # 更暗 0.12 分出层次；未设置颜色时为默认灰主题（选中亮蓝边框）
+        custom = metadata.get_color(info.name) if info else ""
+        if custom:
+            theme = QtGui.QColor(custom)
+            bar = QtGui.QColor(theme)
+            tag_color = self._readable(theme)
+        else:
+            theme = QtGui.QColor("#9a9aa2")
+            bar = QtGui.QColor("#e8e8ec")
+            tag_color = QtGui.QColor("#c0c0c8")
+        bg = self._tint(theme, 0.35)
+        if selected:
+            bg = bg.lighter(115)
+
         card = option.rect.adjusted(GRID_CARD_GAP, GRID_CARD_GAP,
                                     -GRID_CARD_GAP, -GRID_CARD_GAP)
         path = QtGui.QPainterPath()
         path.addRoundedRect(QtCore.QRectF(card), 8, 8)
-        painter.fillPath(path, QtGui.QColor(
-            "#232329" if selected else "#1D1D20"))
-        painter.setPen(QtGui.QPen(QtGui.QColor(
-            "#0d6399" if selected else "#2d2d2d"), 1))
-        painter.drawPath(path)
+        painter.fillPath(path, bg)
 
         m = self.MARGIN
         text_w = card.width() - m * 2
         y = card.top() + m
 
+        # 缩略图区（clip 进卡片圆角）比文字区更暗一档，再 contain 居中画
         # 缩略图（icon 已含收藏角标合成，QIcon 内部按尺寸缓存缩放结果）
+        painter.save()
+        painter.setClipPath(path)
+        painter.fillRect(QtCore.QRectF(card.left() + m, y, text_w, thumb_h),
+                         self._tint(theme, 0.12))
+        painter.restore()
         icon = index.data(QtCore.Qt.DecorationRole)
         if icon is not None:
             pm = icon.pixmap(text_w, thumb_h)
@@ -122,6 +168,11 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
                     y + (thumb_h - pm.height()) // 2, pm)
         y += thumb_h + self.TEXT_TOP_GAP
 
+        border = theme if custom else QtGui.QColor(
+            "#0d6399" if selected else "#9a9aa2")
+        painter.setPen(QtGui.QPen(border, 2 if selected else 1))
+        painter.drawPath(path)
+
         if info is None:  # 理论不达（条目都带 UserRole）；兜底不画文字
             painter.restore()
             return
@@ -130,8 +181,7 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
         nfm = self._font_metrics(13, True)
         bar_h = nfm.height()
         painter.setPen(QtCore.Qt.NoPen)
-        painter.setBrush(QtGui.QColor(
-            metadata.get_color(info.name) or "#3f3f46"))
+        painter.setBrush(bar)
         painter.drawRoundedRect(QtCore.QRectF(card.left() + m, y + 1,
                                               self.BAR_W, bar_h - 2),
                                 1.5, 1.5)
@@ -148,15 +198,16 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
         line_h = painter.fontMetrics().height()
 
         def _line(text, color):
-            painter.setPen(QtGui.QColor(color))
+            painter.setPen(QtGui.QPen(QtGui.QColor(color)))
             painter.drawText(QtCore.QRect(card.left() + m, y, text_w, line_h),
                              QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter,
                              text)
             return y + line_h + self.LINE_GAP
 
-        y = _line(self._type_line(info), "#9a9aa2")
-        y = _line(store.version_label(info.houdini_version), "#9a9aa2")
-        _line(" • ".join(metadata.get_tags(info.name)), "#6f6f78")
+        y = _line(self._type_line(info), "#a8a8b0")
+        y = _line(store.version_label(info.houdini_version), "#a8a8b0")
+        _line(" ".join("#" + t for t in metadata.get_tags(info.name)),
+              tag_color)
         painter.restore()
 
     @staticmethod
