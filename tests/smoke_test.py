@@ -7,6 +7,7 @@ Run with Houdini's Python (no GUI, no Houdini session needed):
 
 import json
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -484,12 +485,36 @@ def main():
                 name="houtools::a", label="My Label").display_label \
                 == "My Label"
 
-            # 缩略图：按原扩展名落盘，get 校验存在性，清除同步删文件
+            # 缩略图：按原扩展名落盘，get 返回可用绝对路径，清除同步删文件。
+            # 此处缩略图目录被 patch 在插件根外（临时目录）：无法相对化，
+            # 存储退回绝对路径
             src = Path(tmp) / "t.gif"
             src.write_bytes(b"GIF89a fake bytes")
             stored = rl_meta.set_thumb_from_file(name, str(src))
             assert Path(stored).exists() and stored.endswith(".gif")
+            assert os.path.isabs(rl_meta._SETTINGS.get("thumbs")[name])
             assert rl_meta.get_thumb(name) == stored
+            rl_meta.clear_thumb(name)
+            assert rl_meta.get_thumb(name) == ""
+
+            # 插件根内：存储相对路径（项目整体挪动后仍有效），get 拼回
+            # 绝对；旧版绝对路径迁移成相对且幂等；clear 删相对解析的文件
+            with patch.object(rl_meta, "PROJECT_ROOT", Path(tmp)), \
+                 patch.object(rl_meta, "THUMBS_DIR",
+                              Path(tmp) / "thumbs_in_root"):
+                stored = rl_meta.set_thumb_from_file(name, str(src))
+                raw = rl_meta._SETTINGS.get("thumbs")[name]
+                assert not os.path.isabs(raw) and raw.endswith(".gif")
+                assert rl_meta.get_thumb(name) == stored
+                legacy = Path(tmp) / "thumbs_in_root" / "legacy.gif"
+                shutil.copyfile(str(src), str(legacy))
+                rl_meta._SETTINGS.get("thumbs")["legacy"] = str(legacy)
+                rl_meta.migrate_legacy_thumb_paths()
+                raw2 = rl_meta._SETTINGS.get("thumbs")["legacy"]
+                assert not os.path.isabs(raw2) and raw2.endswith(".gif")
+                assert rl_meta.get_thumb("legacy")
+                rl_meta.clear_thumb("legacy")
+                assert not legacy.exists()
             rl_meta.clear_thumb(name)
             assert rl_meta.get_thumb(name) == ""
 

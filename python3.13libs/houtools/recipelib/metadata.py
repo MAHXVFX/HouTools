@@ -22,7 +22,7 @@ import os
 import re
 import shutil
 
-from houtools.core.constants import SETTINGS_DIR
+from houtools.core.constants import PROJECT_ROOT, SETTINGS_DIR
 from houtools.core.log import get_logger
 from houtools.core.settings import JsonStore
 
@@ -54,6 +54,50 @@ def safe_name(name):
     保留全名可保证不同命名空间下同名 label 的缩略图/文档不互撞。
     """
     return re.sub(r"[^0-9a-zA-Z_]+", "__", name).strip("_") or "recipe"
+
+
+# --------------------------------------------------------------------------
+# 路径存储形式：缩略图等持久化路径一律存"相对插件根"的相对路径，
+# 项目目录整体挪动（换盘符/换机器/换 Houdini 版本目录）后仍然有效。
+# 读取侧 _to_abs 兼容历史绝对路径；跨盘等无法相对化的退回绝对。
+# --------------------------------------------------------------------------
+
+def _to_stored(path):
+    """绝对路径 → 存储形式：插件根内转相对，根外（跨盘等）保留绝对原样。"""
+    try:
+        rel = os.path.relpath(path, PROJECT_ROOT)
+    except (OSError, ValueError):
+        return os.path.abspath(path)
+    if rel.startswith(".."):
+        return os.path.abspath(path)
+    return rel
+
+
+def _to_abs(stored):
+    """存储路径 → 可用的绝对路径（相对的按插件根拼回）。"""
+    if os.path.isabs(stored):
+        return stored
+    return os.path.join(str(PROJECT_ROOT), stored)
+
+
+def migrate_legacy_thumb_paths():
+    """历史版本存的绝对缩略图路径迁成相对插件根（幂等，低频时机调用）。
+
+    只改能相对化（插件根内）的条目；根外的跨盘绝对路径原样保留。
+    """
+    thumbs = dict(_SETTINGS.get("thumbs") or {})
+    changed = False
+    for name, stored in list(thumbs.items()):
+        if not stored or not os.path.isabs(stored):
+            continue
+        rel = _to_stored(stored)
+        if not os.path.isabs(rel) and rel != stored:
+            thumbs[name] = rel
+            changed = True
+    if changed:
+        _SETTINGS.set("thumbs", thumbs)
+        log.info("migrated %d thumb paths to relative", len(thumbs))
+    return changed
 
 
 # --------------------------------------------------------------------------
@@ -185,23 +229,28 @@ def all_tags():
 # --------------------------------------------------------------------------
 
 def get_thumb(name):
-    path = (_SETTINGS.get("thumbs") or {}).get(name) or ""
-    return path if path and os.path.exists(path) else ""
+    """返回缩略图的可用绝对路径（存储侧是相对插件根的相对路径）。"""
+    stored = (_SETTINGS.get("thumbs") or {}).get(name) or ""
+    if not stored:
+        return ""
+    path = _to_abs(stored)
+    return path if os.path.exists(path) else ""
 
 
 def set_thumb_from_file(name, src):
-    """把用户选中的图片/GIF 复制进缩略图目录并记录，返回存储路径。
+    """把用户选中的图片/GIF 复制进缩略图目录并记录，返回绝对路径。
 
     保留原扩展名（GIF 靠它动起来，QImageReader 靠它选解码器）。
+    settings 里存的是相对插件根的相对路径（见 _to_stored）。
     """
     if not os.path.exists(src):
-        raise RuntimeError("缩略图文件不存在: {}".format(src))
+        raise RuntimeError("文件不存在: {}".format(src))
     ext = os.path.splitext(src)[1].lower() or ".png"
     THUMBS_DIR.mkdir(parents=True, exist_ok=True)
     dst = str(THUMBS_DIR / (safe_name(name) + ext))
     shutil.copyfile(src, dst)
     thumbs = dict(_SETTINGS.get("thumbs") or {})
-    thumbs[name] = dst
+    thumbs[name] = _to_stored(dst)
     _SETTINGS.set("thumbs", thumbs)
     return dst
 
@@ -210,11 +259,13 @@ def clear_thumb(name):
     thumbs = dict(_SETTINGS.get("thumbs") or {})
     old = thumbs.pop(name, None)
     _SETTINGS.set("thumbs", thumbs)
-    if old and os.path.exists(old):
-        try:
-            os.remove(old)
-        except OSError as exc:
-            log.warning("cannot remove thumb %s: %s", old, exc)
+    if old:
+        old_abs = _to_abs(old)
+        if os.path.exists(old_abs):
+            try:
+                os.remove(old_abs)
+            except OSError as exc:
+                log.warning("cannot remove thumb %s: %s", old_abs, exc)
 
 
 # --------------------------------------------------------------------------

@@ -588,6 +588,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
 
     def reload(self):
         """枚举用户库里的 recipe 并重建侧栏/网格（保留分类与搜索词）。"""
+        metadata.migrate_legacy_thumb_paths()  # 旧版绝对路径 → 相对插件根
         lib_dirs = metadata.get_lib_dirs()
         self._update_lib_label()
         if not lib_dirs:
