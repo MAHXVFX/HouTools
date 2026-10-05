@@ -78,8 +78,9 @@ SIDEBAR_HEADER_ROLE = QtCore.Qt.UserRole + 1   # True=段头行
 SIDEBAR_COUNT_ROLE = QtCore.Qt.UserRole + 2    # 行尾计数
 SIDEBAR_ICON_ROLE = QtCore.Qt.UserRole + 3     # 行首图标种类（grid/star/folder/tag）
 
-GRID_PADDING_X = 24   # 格子水平留白（卡片左右各 7 + 空隙）
-GRID_CARD_GAP = 7     # 格子边缘到卡片的留白
+GRID_PADDING_X = 24   # 格子水平留白（卡片左右各 4 + 空隙）
+GRID_CARD_GAP = 4     # 格子边缘到卡片的留白（卡片间/行间视觉间距 = 2×此值
+                      # = 8px，用户指定较原 14px 收紧一半）
 
 
 class _CardDelegate(QtWidgets.QStyledItemDelegate):
