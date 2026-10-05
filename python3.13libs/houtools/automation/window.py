@@ -38,6 +38,7 @@ from houtools.automation.styles import STYLE_SHEET
 
 from houtools.core.constants import PROJECT_ROOT
 from houtools.core.log import get_logger
+from houtools.ui import fonts as tool_fonts
 logger = get_logger("automation.window")
 
 
@@ -696,6 +697,7 @@ class AutomationWindow(QWidget):
         self.setMinimumSize(600, 450)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setStyleSheet(STYLE_SHEET)
+        tool_fonts.apply(self)   # 工具统一字体（子树继承，Panel/浮窗共用本类）
 
         # Delete 用 QShortcut 认领（WidgetWithChildren 上下文优先于
         # Houdini 的全局快捷键）；焦点在输入框内时 QLineEdit 自己会

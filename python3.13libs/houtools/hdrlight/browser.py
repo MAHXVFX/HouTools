@@ -45,6 +45,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from houtools.core.log import get_logger
 from houtools.core.settings import JsonStore
+from houtools.ui import fonts as tool_fonts
 from houtools.ui.badge import FavoriteBadge
 from houtools.ui.taskbar import apply_appwindow_flags
 
@@ -610,6 +611,7 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self.resize(1080, 620)
         self.setStyleSheet(self.STYLE_SHEET)
         apply_appwindow_flags(self)  # 任务栏常驻（失败静默）
+        tool_fonts.apply(self)   # 工具统一字体（子树继承）
         # 网格自适应的滚动条预留量：按系统滚动条宽度度量，随 DPI 缩放
         self._sb_reserve = QtWidgets.QApplication.style().pixelMetric(
             QtWidgets.QStyle.PM_ScrollBarExtent) + 6

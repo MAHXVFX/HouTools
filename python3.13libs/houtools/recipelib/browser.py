@@ -27,6 +27,7 @@ from houtools.core.log import get_logger
 from houtools.recipelib import metadata, store
 from houtools.recipelib.crop import ThumbCropDialog
 from houtools.recipelib.docs import DocEditorDialog, MarkdownMediaView, MediaDialog
+from houtools.ui import fonts as tool_fonts
 from houtools.ui.badge import FavoriteBadge
 from houtools.ui.dialogs import localize_buttons, localize_color_dialog, warn
 from houtools.ui.taskbar import apply_appwindow_flags
@@ -98,11 +99,8 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
         super().__init__(parent)
         self._win = window
 
-    @staticmethod
-    def _font_metrics(pixel_size, bold):
-        f = QtWidgets.QApplication.font()
-        f.setPixelSize(pixel_size)
-        f.setBold(bold)
+    def _font_metrics(self, pixel_size, bold):
+        f = self._font(pixel_size, bold)
         return QtGui.QFontMetrics(f)
 
     @staticmethod
@@ -126,13 +124,24 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
             c = c.lighter(180)
         return c
 
-    @classmethod
-    def text_block_height(cls):
-        """缩略图以下文字区的总高度（与 paint 的行序严格一致）。"""
-        name_h = cls._font_metrics(13, True).height()
-        line_h = cls._font_metrics(12, True).height()   # 三行小字也加粗
-        return (cls.TEXT_TOP_GAP + name_h + cls.LINE_GAP
-                + (line_h + cls.LINE_GAP) * 3 + cls.TEXT_BOTTOM_PAD)
+    def text_block_height(self):
+        """缩略图以下文字区的总高度（与 paint 的行序严格一致）。
+
+        度量走窗口字体（_font → _win.font()），与 paint 同源，
+        否则 gridSize 与实际绘制错位。
+        """
+        name_h = self._font_metrics(13, True).height()
+        line_h = self._font_metrics(12, True).height()   # 三行小字也加粗
+        return (self.TEXT_TOP_GAP + name_h + self.LINE_GAP
+                + (line_h + self.LINE_GAP) * 3 + self.TEXT_BOTTOM_PAD)
+
+    def _font(self, pixel_size, bold):
+        # 基准取窗口字体（fonts.apply 后=工具统一字体），而非应用全局
+        # 字体——否则换字体后卡片度量/绘制不跟随
+        f = QtGui.QFont(self._win.font())
+        f.setPixelSize(pixel_size)
+        f.setBold(bold)
+        return f
 
     def sizeHint(self, option, index):
         return self._win.list.gridSize()
@@ -241,13 +250,6 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
         _line(" ".join("#" + t for t in metadata.get_tags(info.name)),
               tag_color)
         painter.restore()
-
-    @staticmethod
-    def _font(pixel_size, bold):
-        f = QtWidgets.QApplication.font()
-        f.setPixelSize(pixel_size)
-        f.setBold(bold)
-        return f
 
     @staticmethod
     def _type_line(info):
@@ -891,6 +893,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.resize(1240, 680)
         self.setStyleSheet(self.STYLE_SHEET)
         apply_appwindow_flags(self)
+        tool_fonts.apply(self)   # 工具统一字体（子树继承，delegate 度量随之）
 
         self._recipes = []          # 全量 RecipeInfo（store.list_recipes）
         self._info_by_name = {}
@@ -983,7 +986,8 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.list.setWordWrap(True)
         # 卡片式条目：缩略图 + 名字/类型/版本/标签（自绘 delegate，见下）
         self._thumb_h = 0
-        self.list.setItemDelegate(_CardDelegate(self))
+        self._card_delegate = _CardDelegate(self)
+        self.list.setItemDelegate(self._card_delegate)
         self.list.itemDoubleClicked.connect(self._on_double_click)
         self.list.currentItemChanged.connect(self._on_selection_changed)
         self.list.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
@@ -1468,7 +1472,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.list.setIconSize(QtCore.QSize(base, self._thumb_h))
         card_w = base + _CardDelegate.MARGIN * 2
         grid_h = (GRID_CARD_GAP + _CardDelegate.MARGIN + self._thumb_h
-                  + _CardDelegate.text_block_height() + GRID_CARD_GAP)
+                  + self._card_delegate.text_block_height() + GRID_CARD_GAP)
         self.list.setGridSize(QtCore.QSize(
             card_w + GRID_CARD_GAP * 2, grid_h))
         self._cover_cache.clear()   # 缩略图显示尺寸变了，cover 缓存失效

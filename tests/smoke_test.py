@@ -84,6 +84,7 @@ def main():
     import houtools.videoseq.ffmpeg
     import houtools.hdrlight.browser  # noqa: F401
     import houtools.tools.hdr_library  # noqa: F401
+    import houtools.ui.fonts  # noqa: F401
     from houtools.automation import task_types
     from houtools.dev import reloader
 
@@ -571,6 +572,9 @@ def main():
                                   list(infos) if lib_dirs else []):
                 win = rl_browser._RecipeLibraryWindow()
                 win.reload()
+                # 工具统一字体已应用到窗口树（子控件经继承生效）
+                assert win.font().family() == "Alimama ShuHeiTi", \
+                    win.font().family()
                 assert win.list.count() == 3, win.list.count()
 
                 def _sidebar_keys():

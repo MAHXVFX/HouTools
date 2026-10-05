@@ -21,6 +21,7 @@ root/
 │   ├── hdrlight/                  # Hdr Library：HDR 库浏览 + 缩略图 + 双击赋给灯光
 │   ├── recipelib/                 # Recipe Library：官方 recipes 资产库（网格浏览/标签/收藏/Markdown 文档/拖入网络创建）
 │   ├── icons/                     # UI 图标（SVG，文件名不含空格）
+│   ├── fonts/                     # 工具统一显示字体（阿里妈妈数黑体 Bold，ui/fonts.py 加载）
 │   └── tools/                     # 工具入口：<tool_id>.py 暴露 run()
 ├── tests/smoke_test.py            # 无头回归：菜单 XML / 全包导入 / reload_all / TaskItem 往返 / 各窗口实例化（Automation/视频/HDR）
 └── settings/                      # 运行时生成的用户设置（gitignored）
@@ -35,6 +36,7 @@ root/
 | 菜单定义 | `MainMenuCommon.xml` / `NetworkViewMenu.xml` | 顶层子菜单 id：`houtools_tools_menu` / `houtools_network_view_menu`；均插在 help_menu 前 |
 | 新增工具 | `houtools/tools/<tool_id>.py` + 两份菜单 XML | 模块暴露 `run()`；菜单 scriptCode 只写两行分发器 |
 | 默认热键 | `houtools/core/hotkeys.py`（清单+自定义存储）+ `python3.13libs/uiready.py`（执行） | 菜单 item id 须为 `pane.wsheet.<name>` 前缀，热键符号才是 `h.pane.wsheet.<name>`；`settings/hotkeys.json` 的自定义键每次启动强制应用，其次尊重 Hotkey Manager 已有键位，最后落默认值 |
+| 工具统一字体 | `houtools/ui/fonts.py` + `houtools/fonts/` | 阿里妈妈数黑体 Bold（免费商用授权，用户指定）：`QFontDatabase.addApplicationFont` 私有加载（不装系统）；**会话实测（fxhoudini 探针）：Houdini 在应用层给控件类设了自家字体 SideFX Source Sans Pro，压过 Qt 的父子字体继承——只 setFont 窗口时子控件全是 SideFX**（`app.styleSheet()` 为空，非 QSS 所致；无头环境无此机制、会正常继承，故无头验证通过≠会话生效）。所以 `apply()` 必须**逐控件显式 setFont 刷整棵子树**（实测显式设置能压过应用级类字体，A/B 抓图逐像素验证），动态创建的子控件（右键菜单/对话框/Automation 运行时加任务槽）由装在 QApplication 上的全局 ChildAdded 过滤器兜底：新控件挂在带 `_houtools_tool_window` 属性标记的窗口子树内就整枝刷 `root.font()`；四个工具窗口（recipelib/hdrlight/videoseq/automation）构造时各调一次 apply——不动 QApplication 全局字体，Houdini 自身 UI 不受影响；字族名与过滤器安装标记挂 QApplication 动态属性（reload 不重复登记/装机）；**换字体后卡片度量基准必须跟窗口字体**：`_CardDelegate.text_block_height/_font` 走 `_win.font()`（曾用 QApplication.font()，换字体后 gridSize 与绘制错位）；新字重往 `_FONT_FILES` 追加同族文件（字体自带 Bold 字面，setBold 才真正可见） |
 | 粘贴为 Object Merge | `houtools/tools/paste_as_object_merge.py` | 网络编辑器菜单入口 / `Ctrl+Shift+V`（`Paste Hotkey Settings` 可改）；按"目标上下文×源类别"建引用（XXX=源名，颜色随源）：SOP→SOP object_merge(Merge_XXX)；SOP→OBJ geo(XXX) 内 object_merge(Merge_XXX)；SOP→LOP / OBJ→LOP sopimport(SOP_XXX)；LOP→SOP lopimport(LOP_XXX)；LOP→LOP fetch(LOP_XXX)；LOP→ROP usdrender(XXX)；SOP→ROP fetch(SOP_XXX, source；源为 File Cache 时路径追加 /render)；SOP→DOP staticobject(Object_XXX)；SOP→COP(新COP) sopimport(SOP_XXX, usesoppath=1)；未列组合跳过；单 undo 槽。源路径靠 OS 剪贴板文本（内部剪贴板无法反查原件），SOP 网络文本失效时 `pasteItemsFromClipboard` 粘贴副本兜底 |
 | 快捷键设置 | `houtools/tools/paste_hotkey_settings.py` | 捕获式改键 → `hou.hotkeys.addAssignment` 会话即时生效 + `settings/hotkeys.json` 持久化；经 `window_manager` 单例 |
 | 窗口单例 | `houtools/ui/window_manager.py` | `open_window(tool_id, factory)`；close_all 供 Reload 前调用 |

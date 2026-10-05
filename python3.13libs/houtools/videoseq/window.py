@@ -23,6 +23,7 @@ from houtools.videoseq.ffmpeg import find_ffprobe as _get_ffprobe_path
 from houtools.videoseq.ffmpeg import get_startup_kwargs as _get_startup_kwargs
 
 from houtools.core.log import get_logger
+from houtools.ui import fonts as tool_fonts
 logger = get_logger("videoseq.window")
 
 # 支持的视频格式
@@ -688,6 +689,7 @@ class _VideoToSequenceWindow(QDialog):
 
         self._build_ui()
         self.setStyleSheet(STYLE_SHEET)
+        tool_fonts.apply(self)   # 工具统一字体（子树继承）
         self._apply_window_flags()
         # 整窗接收视频文件拖放（视频源分组框也单独支持，子控件未命中时兜底）
         self.setAcceptDrops(True)
