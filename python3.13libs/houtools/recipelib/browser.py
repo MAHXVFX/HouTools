@@ -398,6 +398,7 @@ class _SidebarDelegate(QtWidgets.QStyledItemDelegate):
 
     ROW_H = 26
     ICON_PX = 14
+    INDENT = 14      # 子项视觉缩进（indentation 已归 0，由 delegate 自画）
     PAD_L = 8        # 行左内边距
     PAD_R = 10       # 计数距右缘
     GAP_ICON = 6     # 图标与文字间距
@@ -440,6 +441,8 @@ class _SidebarDelegate(QtWidgets.QStyledItemDelegate):
         fm = QtGui.QFontMetrics(font)
 
         x = rect.left() + self.PAD_L
+        if item.parent() is not None:   # 子项视觉缩进（树缩进已归 0）
+            x += self.INDENT
         if is_header:
             _draw_chevron(painter, x + 4, rect.center().y(),
                           item.isExpanded(), "#8a8a92")
@@ -934,7 +937,10 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.sidebar.setRootIsDecorated(False)
         self.sidebar.setExpandsOnDoubleClick(False)
         self.sidebar.setUniformRowHeights(True)
-        self.sidebar.setIndentation(14)
+        # 缩进必须为 0：QTreeView 会为子行保留 branch 区（行 rect 从缩进
+        # 处开始），那条竖带由 Houdini 全局样式上色、与面板底色不一致——
+        # 归零后每行 rect 占满全宽，子项缩进由 delegate 在行内自画
+        self.sidebar.setIndentation(0)
         self.sidebar.header().setSectionResizeMode(
             QtWidgets.QHeaderView.Stretch)
         self.sidebar.setMinimumWidth(150)
