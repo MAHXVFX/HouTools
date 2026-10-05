@@ -612,10 +612,6 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self.setStyleSheet(self.STYLE_SHEET)
         apply_appwindow_flags(self)  # 任务栏常驻（失败静默）
         tool_fonts.apply(self)   # 工具统一字体（子树继承）
-        # 网格自适应的滚动条预留量：按系统滚动条宽度度量，随 DPI 缩放
-        self._sb_reserve = QtWidgets.QApplication.style().pixelMetric(
-            QtWidgets.QStyle.PM_ScrollBarExtent) + 6
-
         # ---- 顶部栏 ----
         self.target_label = QtWidgets.QLabel("灯光: (未选中)")
         self.target_label.setStyleSheet("padding: 4px 8px;")
@@ -724,13 +720,7 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self._size_timer.setInterval(self.FIT_DELAY_MS)
         self._size_timer.timeout.connect(self._fit_grid)
         self.size_slider.valueChanged.connect(self._on_size_changed)
-
-        # 面板宽度变化（窗口缩放/滚动条出现消失）后防抖重排网格，铺满面板
-        self._fit_timer = QtCore.QTimer(self)
-        self._fit_timer.setSingleShot(True)
-        self._fit_timer.setInterval(self.FIT_DELAY_MS)
-        self._fit_timer.timeout.connect(self._fit_grid)
-        self.list.viewport().installEventFilter(self)
+        self._fit_grid()   # 初始尺寸应用（格宽恒定，不再依赖视口宽）
 
         # 缩略图就绪后批量应用图标，避免每张触发一次全网格重排
         self._icon_timer = QtCore.QTimer(self)
@@ -910,44 +900,27 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
 
     # ---------------- 网格自适应（铺满面板宽度） ----------------
 
-    def eventFilter(self, obj, event):
-        if obj is self.list.viewport() and event.type() == QtCore.QEvent.Resize:
-            self._fit_timer.start()
-        return super().eventFilter(obj, event)
-
     def showEvent(self, event):
         super().showEvent(event)
         # 关窗时注销了选中推送（隐藏期零开销）；重开是同一实例、__init__
         # 不再执行，在此重注册，并刷一次显示（隐藏期间选择可能已变）
         self._register_selection_callback()
         self._on_selection_changed()
-        self._fit_grid()
 
     def _fit_grid(self):
-        """网格列宽拉伸到正好铺满面板宽度（必须保持幂等）。
+        """缩略图尺寸只由滑条决定（固定，不随面板宽伸缩）。
 
-        滑条值只决定列数（列数 = 可用宽 / 基准单元宽），单元格宽 =
-        可用宽 / 列数，缩略图随之拉伸——窗口拉大不再留大片空白。
-
-        幂等的关键是计算输入不能随滚动条显隐变化：滚动条一出现视口
-        就窄 17px，若用视口宽计算，两个状态各算出不同网格尺寸，互相
-        触发切换 → 滚动条再翻转 → 无限重排（缩略图一直闪）。所以：
-        1) 用列表控件自身宽度（含滚动条区域，滚动条显隐不改变它）减
-           去按系统度量动态预留的滚动条宽度；
-        2) 算出的尺寸与当前一致时直接跳过，不触发无谓重排。
+        格宽 = 图标宽 + GRID_PADDING_X、行高 = 图标高 + GRID_PADDING_Y，
+        恒定不随面板宽变化——面板宽窄只改变每列数量（Qt 原生换行），
+        缩略图间距恒定。（原实现按面板宽拉伸图标铺满面板，用户否决：
+        缩略图是刚体，与 Recipe Library 卡片同一套逻辑。）
         """
-        base = self.size_slider.value()
-        vw = self.list.width() - self._sb_reserve
-        if vw < 120:
-            return
-        cols = max(1, int(vw // (base + GRID_PADDING_X)))
-        cell_w = int(vw / cols)
-        icon_w = max(64, min(cell_w - GRID_PADDING_X, ICON_MAX_WIDTH))
+        icon_w = max(64, min(self.size_slider.value(), ICON_MAX_WIDTH))
         icon_h = icon_w // 2
         icon_size = QtCore.QSize(icon_w, icon_h)
-        grid_size = QtCore.QSize(cell_w, icon_h + GRID_PADDING_Y)
-        if self.list.iconSize() == icon_size \
-                and self.list.gridSize() == grid_size:
+        grid_size = QtCore.QSize(icon_w + GRID_PADDING_X,
+                                 icon_h + GRID_PADDING_Y)
+        if self.list.iconSize() == icon_size                 and self.list.gridSize() == grid_size:
             return
         self.list.setIconSize(icon_size)
         self.list.setGridSize(grid_size)
@@ -1220,7 +1193,6 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
 
     def closeEvent(self, event):
         _SETTINGS.set("thumb_size", int(self.size_slider.value()))
-        self._fit_timer.stop()
         self._size_timer.stop()
         self._icon_timer.stop()
         self._unregister_selection_callback()
