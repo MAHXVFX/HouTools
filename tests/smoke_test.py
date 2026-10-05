@@ -561,6 +561,8 @@ def main():
                                     category="tool", submenu="HouTools"),
                 rl_store.RecipeInfo(name="houtools::light::b", label="Light B",
                                     category="node", submenu="Lighting"),
+                rl_store.RecipeInfo(name="houtools::plain::c", label="Plain C",
+                                    category="tool", submenu=""),
             ]
             with patch.object(rl_meta, "get_lib_dirs",
                               return_value=[str(Path(tmp) / "scanlib")]), \
@@ -569,21 +571,44 @@ def main():
                                   list(infos) if lib_dirs else []):
                 win = rl_browser._RecipeLibraryWindow()
                 win.reload()
-                assert win.list.count() == 2, win.list.count()
-                # 侧栏结构：全部 / ★收藏 / 分类头 / 分类x2 / 标签头
-                keys = [win.sidebar.item(i).data(QtCore.Qt.UserRole)
-                        for i in range(win.sidebar.count())]
+                assert win.list.count() == 3, win.list.count()
+
+                def _sidebar_keys():
+                    # 树侧栏：先序遍历取全部条目的 UserRole 键
+                    keys = []
+
+                    def walk(it):
+                        keys.append(it.data(0, QtCore.Qt.UserRole))
+                        for i in range(it.childCount()):
+                            walk(it.child(i))
+
+                    for t in range(win.sidebar.topLevelItemCount()):
+                        walk(win.sidebar.topLevelItem(t))
+                    return keys
+
+                # 侧栏树结构：全部 / 收藏 / 未分组 / 分组头 / 分类x2
+                # （此时尚无标签，不出现标签段头）
+                keys = _sidebar_keys()
                 assert keys[0] == rl_browser.KEY_ALL, keys
                 assert keys[1] == rl_browser.KEY_FAV, keys
-                assert sorted(k for k in keys[2:]
-                              if k and k.startswith("cat::")) \
+                assert "cat::" in keys, keys   # 无 submenu 的归「未分组」
+                assert sorted(k for k in keys
+                              if k and k.startswith("cat::")
+                              and k != "cat::") \
                     == ["cat::HouTools", "cat::Lighting"], keys
                 # 分类过滤
                 win._select_category("cat::Lighting")
                 assert win.list.count() == 1
                 assert win.list.item(0).data(QtCore.Qt.UserRole) \
                     == "houtools::light::b"
-                # 收藏过滤：收藏后 ★ 前缀 + 收藏视图只剩 1 条
+                # 未分组过滤：无 submenu 的 recipe（cat:: 空键）
+                win._select_category("cat::")
+                assert win.list.count() == 1
+                assert win.list.item(0).data(QtCore.Qt.UserRole) \
+                    == "houtools::plain::c"
+                assert win._category_label() == "未分组"
+                win._select_category(rl_browser.KEY_ALL)
+                # 收藏过滤：收藏视图只剩 1 条
                 rl_meta.set_favorite("houtools::pyro::a", True)
                 win._rebuild_sidebar()
                 win._select_category(rl_browser.KEY_FAV)
@@ -598,7 +623,7 @@ def main():
                     == "houtools::light::b"
                 win.search.setText("")
                 win._apply_filter()
-                assert win.list.count() == 2
+                assert win.list.count() == 3
                 # 搜索：# 前缀只搜标签（按内容点命中，名称含该词也不算）；
                 # 普通词全字段子串；混合词 AND
                 rl_meta.set_tags("houtools::light::b", [])   # 清掉旧测试标签
@@ -620,7 +645,7 @@ def main():
                 rl_meta.set_tags("houtools::pyro::a", [])
                 win.search.setText("")
                 win._apply_filter()
-                assert win.list.count() == 2
+                assert win.list.count() == 3
                 # 预览面板联动：选中后名称/元信息/按钮就绪；
                 # 名称走显示链，元信息第一行是内部名称
                 win.list.setCurrentRow(0)

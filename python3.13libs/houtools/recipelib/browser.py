@@ -1,7 +1,8 @@
 """Recipe Library 主窗口：基于官方 recipes 的资产浏览/应用/文档面板。
 
-布局：顶部工具栏（刷新/库目录/搜索/大小）+ 左侧栏（全部/收藏/分类/标签）
-+ 中部缩略图网格 + 右侧预览面板（动图预览/元信息/标签编辑）+ 底部状态栏。
+布局：顶部工具栏（刷新/库目录/搜索/大小）+ 左侧树形栏（全部/收藏/未分组/
+分组▸/标签▸，段头整行点击折叠展开）+ 中部缩略图网格 + 右侧预览面板
+（动图预览/元信息/标签编辑）+ 底部状态栏。
 
 交互（四类 recipe 语义不同，见 store.apply_*）：
 - 双击卡片：Tool 按官方工具架体验立即在当前网络创建并框选（无二次点击）；
@@ -16,6 +17,7 @@
 reload() 里经 store.list_recipes()（测试里打补丁替换）。
 """
 
+import math
 import os
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -66,6 +68,11 @@ KEY_ALL = "__all__"
 KEY_FAV = "__fav__"
 CAT_PREFIX = "cat::"
 TAG_PREFIX = "tag::"
+KEY_GRP_HDR = "__grp_hdr__"    # 「分组」段头（不可选中，整行点击折叠）
+KEY_TAG_HDR = "__tag_hdr__"    # 「标签」段头
+SIDEBAR_HEADER_ROLE = QtCore.Qt.UserRole + 1   # True=段头行
+SIDEBAR_COUNT_ROLE = QtCore.Qt.UserRole + 2    # 行尾计数
+SIDEBAR_ICON_ROLE = QtCore.Qt.UserRole + 3     # 行首图标种类（grid/star/folder/tag）
 
 GRID_PADDING_X = 24   # 格子水平留白（卡片左右各 7 + 空隙）
 GRID_CARD_GAP = 7     # 格子边缘到卡片的留白
@@ -255,9 +262,188 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
             parts.append("{} 节点".format(info.node_count))
         return " • ".join(parts)
 
+_SIDEBAR_ICON_CACHE = {}   # (kind, size, dpr) -> QPixmap
+
+
+def _sidebar_icon_pixmap(kind, size, dpr):
+    """侧栏行首图标（扁平线稿风，参考外部蓝图管理面板）：grid/star/folder/tag。
+
+    QPainter 手绘而非 SVG 文件：颜色随主题写死在函数里、不新增资源文件；
+    统一在 14×14 逻辑坐标绘制后缩放，按 (种类, 尺寸, DPR) 缓存保证高分屏不糊。
+    """
+    key = (kind, size, round(dpr, 2))
+    pm = _SIDEBAR_ICON_CACHE.get(key)
+    if pm is not None:
+        return pm
+    pm = QtGui.QPixmap(max(1, int(size * dpr)), max(1, int(size * dpr)))
+    pm.setDevicePixelRatio(dpr)
+    pm.fill(QtCore.Qt.transparent)
+    p = QtGui.QPainter(pm)
+    p.setRenderHint(QtGui.QPainter.Antialiasing, True)
+    p.scale(size / 14.0, size / 14.0)
+    color = {"grid": "#b4b4bc", "star": "#d9a544",
+             "folder": "#a4a4ac", "tag": "#5b9bd5"}.get(kind, "#a4a4ac")
+    if kind == "grid":
+        pen = QtGui.QPen(QtGui.QColor(color), 1.2)
+        pen.setJoinStyle(QtCore.Qt.RoundJoin)
+        p.setPen(pen)
+        p.setBrush(QtCore.Qt.NoBrush)
+        for gx in (1.0, 8.0):
+            for gy in (1.0, 8.0):
+                p.drawRoundedRect(QtCore.QRectF(gx, gy, 5.0, 5.0), 1.2, 1.2)
+    elif kind == "folder":
+        path = QtGui.QPainterPath()
+        path.moveTo(1.5, 11.0)
+        path.lineTo(1.5, 4.2)
+        path.quadTo(1.5, 3.2, 2.5, 3.2)
+        path.lineTo(4.8, 3.2)
+        path.quadTo(5.7, 3.2, 6.2, 3.9)
+        path.lineTo(7.1, 5.0)
+        path.lineTo(11.5, 5.0)
+        path.quadTo(12.5, 5.0, 12.5, 6.0)
+        path.lineTo(12.5, 11.0)
+        path.quadTo(12.5, 12.0, 11.5, 12.0)
+        path.lineTo(2.5, 12.0)
+        path.quadTo(1.5, 12.0, 1.5, 11.0)
+        pen = QtGui.QPen(QtGui.QColor(color), 1.2)
+        pen.setJoinStyle(QtCore.Qt.RoundJoin)
+        p.strokePath(path, pen)
+    elif kind == "tag":
+        path = QtGui.QPainterPath()
+        path.moveTo(3.0, 2.5)
+        path.lineTo(7.0, 2.5)
+        path.quadTo(7.6, 2.5, 8.0, 2.9)
+        path.lineTo(12.1, 6.3)
+        path.quadTo(12.5, 7.0, 12.1, 7.7)
+        path.lineTo(8.0, 11.1)
+        path.quadTo(7.6, 11.5, 7.0, 11.5)
+        path.lineTo(3.0, 11.5)
+        path.quadTo(2.0, 11.5, 2.0, 10.5)
+        path.lineTo(2.0, 3.5)
+        path.quadTo(2.0, 2.5, 3.0, 2.5)
+        pen = QtGui.QPen(QtGui.QColor(color), 1.2)
+        pen.setJoinStyle(QtCore.Qt.RoundJoin)
+        p.strokePath(path, pen)
+        p.drawEllipse(QtCore.QRectF(4.0, 5.9, 2.2, 2.2))
+    elif kind == "star":
+        poly = QtGui.QPolygonF()
+        for i in range(10):
+            ang = -math.pi / 2 + i * math.pi / 5
+            rad = 5.6 if i % 2 == 0 else 2.3
+            poly.append(QtCore.QPointF(7.0 + rad * math.cos(ang),
+                                       7.0 + rad * math.sin(ang)))
+        p.setPen(QtCore.Qt.NoPen)
+        p.setBrush(QtGui.QColor(color))
+        p.drawPolygon(poly)
+    p.end()
+    _SIDEBAR_ICON_CACHE[key] = pm
+    return pm
+
+
+def _draw_chevron(painter, cx, cy, expanded, color):
+    """段头折叠箭头（展开▼ / 折叠▶），圆帽细线。"""
+    pen = QtGui.QPen(QtGui.QColor(color), 1.4)
+    pen.setCapStyle(QtCore.Qt.RoundCap)
+    pen.setJoinStyle(QtCore.Qt.RoundJoin)
+    path = QtGui.QPainterPath()
+    if expanded:
+        path.moveTo(cx - 2.7, cy - 1.7)
+        path.lineTo(cx, cy + 1.7)
+        path.lineTo(cx + 2.7, cy - 1.7)
+    else:
+        path.moveTo(cx - 1.7, cy - 2.7)
+        path.lineTo(cx + 1.7, cy)
+        path.lineTo(cx - 1.7, cy + 2.7)
+    painter.strokePath(path, pen)
+
+
+class _SidebarDelegate(QtWidgets.QStyledItemDelegate):
+    """侧栏树行全自绘（不调父类 paint）：段头行画折叠箭头 + 琥珀色计数，
+    普通行画种类图标 + 灰色计数（右对齐）；选中行画蓝底圆角（半透明填充
+    + 描边，参考图选中样式）。行高统一 ROW_H。"""
+
+    ROW_H = 26
+    ICON_PX = 14
+    PAD_L = 8        # 行左内边距
+    PAD_R = 10       # 计数距右缘
+    GAP_ICON = 6     # 图标与文字间距
+
+    def __init__(self, window, parent=None):
+        super().__init__(parent)
+        self._win = window
+
+    def sizeHint(self, option, index):
+        return QtCore.QSize(60, self.ROW_H)
+
+    def paint(self, painter, option, index):
+        item = self._win.sidebar.itemFromIndex(index)
+        if item is None:
+            super().paint(painter, option, index)
+            return
+        is_header = bool(item.data(0, SIDEBAR_HEADER_ROLE))
+        count = item.data(0, SIDEBAR_COUNT_ROLE)
+        kind = item.data(0, SIDEBAR_ICON_ROLE)
+        selected = bool(option.state & QtWidgets.QStyle.State_Selected)
+        rect = QtCore.QRectF(option.rect)
+
+        painter.save()
+        painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+
+        # 选中态：半透明蓝底 + 描边圆角（段头不可选中，理论不达）
+        if selected:
+            path = QtGui.QPainterPath()
+            path.addRoundedRect(rect.adjusted(2.0, 1.5, -2.0, -1.5), 4, 4)
+            painter.fillPath(path, QtGui.QColor(13, 99, 153, 110))
+            painter.setPen(QtGui.QPen(QtGui.QColor("#2e7cb8"), 1))
+            painter.drawPath(path)
+
+        font = option.font
+        painter.setFont(font)
+        fm = QtGui.QFontMetrics(font)
+
+        x = rect.left() + self.PAD_L
+        if is_header:
+            _draw_chevron(painter, x + 4, rect.center().y(),
+                          item.isExpanded(), "#8a8a92")
+            x += 14
+        if kind:
+            pm = _sidebar_icon_pixmap(kind, self.ICON_PX,
+                                      self._win.devicePixelRatioF())
+            painter.drawPixmap(
+                int(round(x)),
+                int(round(rect.center().y() - self.ICON_PX / 2)), pm)
+            x += self.ICON_PX + self.GAP_ICON
+
+        count_text = "" if count is None else str(count)
+        count_w = fm.horizontalAdvance(count_text)
+        text_w = rect.right() - self.PAD_R - count_w - 8 - x
+        text = fm.elidedText(item.text(0), QtCore.Qt.ElideRight,
+                             max(0, int(text_w)))
+        if is_header:
+            text_color, count_color = "#b0b0b8", "#d29a55"
+        else:
+            text_color, count_color = "#c6c6cc", "#85858d"
+        if selected:
+            text_color = count_color = "#ffffff"
+        painter.setPen(QtGui.QColor(text_color))
+        painter.drawText(
+            QtCore.QRectF(x, rect.top(),
+                          rect.right() - self.PAD_R - count_w - 8 - x,
+                          rect.height()),
+            QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, text)
+        if count_text:
+            painter.setPen(QtGui.QColor(count_color))
+            painter.drawText(
+                QtCore.QRectF(rect.right() - self.PAD_R - count_w,
+                              rect.top(), count_w, rect.height()),
+                QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter, count_text)
+        painter.restore()
+
 _UI_SETTINGS = JsonStore("recipelib_ui.json", defaults={
     "grid_size": 112,     # 缩略图基准大小（滑条 64-256）
     "pin_on_top": False,  # 全局置顶，按机器记住
+    "grp_expanded": True,   # 「分组」段折叠状态，跨会话记忆
+    "tag_expanded": True,   # 「标签」段折叠状态
 })
 
 
@@ -626,10 +812,11 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         QMenu::item:disabled { color: #666666; }
         QMenu::separator { height: 1px; background: #3d3d3d; margin: 4px 6px; }
         QLabel#statusLabel { color: #888888; padding: 4px 8px; }
-        QListWidget, QPlainTextEdit, QTextBrowser {
+        QListWidget, QTreeWidget, QPlainTextEdit, QTextBrowser {
             background-color: #1D1D20; border: 1px solid #3d3d3d;
             border-radius: 6px;
         }
+        QTreeWidget { outline: 0; }
         QListWidget::item { color: #bbbbbb; }
         QListWidget::item:selected { background-color: #0d6399; }
         QLineEdit {
@@ -699,11 +886,26 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         top.addWidget(self.size_slider)
         top.addWidget(self.size_label)
 
-        # ---- 左侧栏：全部 / 收藏 / 分类 / 标签 ----
-        self.sidebar = QtWidgets.QListWidget()
+        # ---- 左侧树形栏：全部 / 收藏 / 未分组 / 分组▸ / 标签▸ ----
+        # QTreeWidget + 全自绘 delegate：去掉系统展开箭头（delegate 画在
+        # 行内），段头行不可选中、itemClicked 整行切换折叠，子项经
+        # indentation 缩进
+        self.sidebar = QtWidgets.QTreeWidget()
+        self.sidebar.setColumnCount(1)
+        self.sidebar.setHeaderHidden(True)
+        self.sidebar.setRootIsDecorated(False)
+        self.sidebar.setExpandsOnDoubleClick(False)
+        self.sidebar.setUniformRowHeights(True)
+        self.sidebar.setIndentation(14)
+        self.sidebar.header().setSectionResizeMode(
+            QtWidgets.QHeaderView.Stretch)
         self.sidebar.setMinimumWidth(150)
         self.sidebar.setMaximumWidth(280)
+        self.sidebar.setItemDelegate(_SidebarDelegate(self))
         self.sidebar.currentItemChanged.connect(self._on_category_changed)
+        self.sidebar.itemClicked.connect(self._on_sidebar_clicked)
+        self.sidebar.expanded.connect(self._on_section_toggle)
+        self.sidebar.collapsed.connect(self._on_section_toggle)
 
         # ---- 中部网格 ----
         self.list = _Grid()
@@ -901,17 +1103,24 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             self.reload()
 
     def _rebuild_sidebar(self):
-        """全部 / 收藏 / 分类(submenu) / 标签 四段侧栏，带计数。
+        """树形侧栏：全部 / 收藏 / 未分组 / 分组▸（可折叠）/ 标签▸（可折叠）。
 
-        分类取自官方字段（node preset 的 submenu、tool 的 tab_submenu）；
-        标签是本工具自己的元数据层。空分类显示为"未分类"。
+        分组取自官方字段（node preset 的 submenu、tool 的 tab_submenu），
+        无任何分组的 recipe 归入「未分组」；标签是本工具自己的元数据层。
+        段头行尾计数 = 段内条目数（参考图语义），普通行 = 归入该组的
+        recipe 数。折叠状态存 _UI_SETTINGS 跨会话记忆。
         """
         cat_counts = {}
         tag_counts = {}
         fav_count = 0
+        ungrouped = 0
         for r in self._recipes:
-            for sub in self._submenus_of(r):
-                cat_counts[sub] = cat_counts.get(sub, 0) + 1
+            subs = self._submenus_of(r)
+            if subs:
+                for sub in subs:
+                    cat_counts[sub] = cat_counts.get(sub, 0) + 1
+            else:
+                ungrouped += 1
             tags = metadata.get_tags(r.name)
             for t in tags:
                 tag_counts[t] = tag_counts.get(t, 0) + 1
@@ -921,38 +1130,77 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.sidebar.blockSignals(True)
         self.sidebar.clear()
 
-        def _add(key, label, count, header=False):
-            item = QtWidgets.QListWidgetItem(
-                label if header else "{} ({})".format(label, count))
-            item.setData(QtCore.Qt.UserRole, key)
-            if header:
-                item.setFlags(QtCore.Qt.ItemIsEnabled)
-                item.setForeground(QtGui.QColor("#666666"))
-            self.sidebar.addItem(item)
+        def _add(parent, label, count, key=None, kind=None, header=False):
+            # 不用 QTreeWidgetItem(label)：PySide6 会命中 QStringList 重载，
+            # 把中文标签按字符拆进多列（"全部" → 列0="全"，列1="部"）
+            item = QtWidgets.QTreeWidgetItem()
+            item.setText(0, label)
+            item.setData(0, QtCore.Qt.UserRole, key)
+            item.setData(0, SIDEBAR_HEADER_ROLE, header)
+            item.setData(0, SIDEBAR_COUNT_ROLE, count)
+            if kind:
+                item.setData(0, SIDEBAR_ICON_ROLE, kind)
+            item.setFlags(QtCore.Qt.ItemIsEnabled if header else
+                          QtCore.Qt.ItemIsSelectable | QtCore.Qt.ItemIsEnabled)
+            if parent is None:
+                self.sidebar.addTopLevelItem(item)
+            else:
+                parent.addChild(item)
+            return item
 
-        _add(KEY_ALL, "全部", len(self._recipes))
-        _add(KEY_FAV, "★ 收藏", fav_count)
-        _add(None, "── 子菜单 ──", 0, header=True)
-        for sub in sorted(cat_counts, key=str.lower):
-            _add(CAT_PREFIX + sub, sub or "未分类", cat_counts[sub])
-        _add(None, "── 标签 ──", 0, header=True)
-        for tag in sorted(tag_counts, key=str.lower):
-            _add(TAG_PREFIX + tag, tag, tag_counts[tag])
+        _add(None, "全部", len(self._recipes), KEY_ALL, "grid")
+        _add(None, "收藏", fav_count, KEY_FAV, "star")
+        _add(None, "未分组", ungrouped, CAT_PREFIX, "folder")
+        if cat_counts:
+            grp = _add(None, "分组", len(cat_counts), KEY_GRP_HDR, header=True)
+            for sub in sorted(cat_counts, key=str.lower):
+                _add(grp, sub, cat_counts[sub], CAT_PREFIX + sub, "folder")
+            grp.setExpanded(bool(_UI_SETTINGS.get("grp_expanded")))
+        if tag_counts:
+            tag = _add(None, "标签", len(tag_counts), KEY_TAG_HDR, header=True)
+            for t in sorted(tag_counts, key=str.lower):
+                _add(tag, t, tag_counts[t], TAG_PREFIX + t, "tag")
+            tag.setExpanded(bool(_UI_SETTINGS.get("tag_expanded")))
 
-        row = next((i for i in range(self.sidebar.count())
-                    if self.sidebar.item(i).data(QtCore.Qt.UserRole)
-                    == self._category_key), 0)
-        self.sidebar.setCurrentRow(row)
+        current = self._find_key_item(self._category_key) \
+            or self.sidebar.topLevelItem(0)
+        self.sidebar.setCurrentItem(current)
         self.sidebar.blockSignals(False)
+
+    def _find_key_item(self, key):
+        """按 UserRole 键找侧栏条目（含折叠子项），找不到返回 None。"""
+        if key is None:
+            return None
+        stack = [self.sidebar.topLevelItem(i)
+                 for i in range(self.sidebar.topLevelItemCount())]
+        while stack:
+            item = stack.pop()
+            if item.data(0, QtCore.Qt.UserRole) == key:
+                return item
+            stack.extend(item.child(i) for i in range(item.childCount()))
+        return None
+
+    def _on_sidebar_clicked(self, item, _column=0):
+        """点段头整行切换折叠；段头不可选中，不影响当前过滤。"""
+        if item.data(0, SIDEBAR_HEADER_ROLE):
+            item.setExpanded(not item.isExpanded())
+
+    def _on_section_toggle(self, _index=None):
+        """分组/标签段展开状态持久化（expanded/collapsed 共用）。"""
+        for key, setting in ((KEY_GRP_HDR, "grp_expanded"),
+                             (KEY_TAG_HDR, "tag_expanded")):
+            item = self._find_key_item(key)
+            if item is not None:
+                _UI_SETTINGS.set(setting, bool(item.isExpanded()))
 
     @staticmethod
     def _submenus_of(info):
         return [s.strip() for s in (info.submenu or "").split(",") if s.strip()]
 
     def _on_category_changed(self, current, _previous=None):
-        if current is None:
+        if current is None or current.data(0, SIDEBAR_HEADER_ROLE):
             return
-        self._category_key = current.data(QtCore.Qt.UserRole) or KEY_ALL
+        self._category_key = current.data(0, QtCore.Qt.UserRole) or KEY_ALL
         self._apply_filter()
 
     def _select_category(self, key):
@@ -960,10 +1208,9 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self._category_key = key
         self._apply_filter()
         self.sidebar.blockSignals(True)
-        for i in range(self.sidebar.count()):
-            if self.sidebar.item(i).data(QtCore.Qt.UserRole) == key:
-                self.sidebar.setCurrentRow(i)
-                break
+        item = self._find_key_item(key)
+        if item is not None:
+            self.sidebar.setCurrentItem(item)
         self.sidebar.blockSignals(False)
 
     def _display_label(self, info):
@@ -1011,6 +1258,8 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             return metadata.is_favorite(info.name)
         if key.startswith(CAT_PREFIX):
             sub = key[len(CAT_PREFIX):]
+            if not sub:   # 未分组：没有任何 submenu 的 recipe
+                return not self._submenus_of(info)
             return sub in self._submenus_of(info)
         if key.startswith(TAG_PREFIX):
             tag = key[len(TAG_PREFIX):]
@@ -1060,9 +1309,9 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         if key in (KEY_ALL, None):
             return "全部"
         if key == KEY_FAV:
-            return "★ 收藏"
+            return "收藏"
         if key.startswith(CAT_PREFIX):
-            return key[len(CAT_PREFIX):] or "未分类"
+            return key[len(CAT_PREFIX):] or "未分组"
         if key.startswith(TAG_PREFIX):
             return "标签 " + key[len(TAG_PREFIX):]
         return key
