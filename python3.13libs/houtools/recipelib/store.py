@@ -36,7 +36,7 @@ log = get_logger("recipelib.store")
 # 与 docs/metadata 模板一致的类型展示顺序
 CATEGORY_LABELS = {
     "tool": "Tool（Tab 工具）",
-    "node": "Node Preset（节点预设）",
+    "node": "Node Preset（节点参数）",
     "parm": "Parameter Preset（参数预设）",
     "decoration": "Decoration（装饰）",
     "parmTemplate": "Parm Template（参数模板）",

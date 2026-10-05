@@ -1,7 +1,7 @@
 """Recipe Library 主窗口：基于官方 recipes 的资产浏览/应用/文档面板。
 
-布局：顶部工具栏（刷新/库目录/搜索/大小）+ 左侧树形栏（全部/收藏/未分组/
-分组▸/标签▸，段头整行点击折叠展开）+ 中部缩略图网格 + 右侧预览面板
+布局：顶部工具栏（刷新/库目录/搜索/大小）+ 左侧树形栏（全部/收藏/节点参数/
+子菜单▸/标签▸，段头整行点击折叠展开）+ 中部缩略图网格 + 右侧预览面板
 （动图预览/元信息/标签编辑）+ 底部状态栏。
 
 交互（四类 recipe 语义不同，见 store.apply_*）：
@@ -19,6 +19,7 @@ reload() 里经 store.list_recipes()（测试里打补丁替换）。
 
 import math
 import os
+from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -262,6 +263,33 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
             parts.append("{} 节点".format(info.node_count))
         return " • ".join(parts)
 
+_FAV_SVG_PATH = Path(__file__).resolve().parent.parent / "icons" / \
+    "favorite_badge.svg"
+_FAV_SVG_RENDERER = False   # False=未初始化；None=不可用
+
+
+def _favorite_svg_renderer():
+    """收藏角标 SVG 渲染器（与卡片角标同一素材，badge.py 同款守卫）。"""
+    global _FAV_SVG_RENDERER
+    if _FAV_SVG_RENDERER is False:
+        renderer = None
+        try:
+            from PySide6 import QtSvg
+            if _FAV_SVG_PATH.is_file():
+                candidate = QtSvg.QSvgRenderer(str(_FAV_SVG_PATH))
+                if candidate.isValid():
+                    renderer = candidate
+                else:
+                    log.warning("favorite badge svg invalid: %s",
+                                _FAV_SVG_PATH)
+            else:
+                log.warning("favorite badge svg missing: %s", _FAV_SVG_PATH)
+        except ImportError:
+            log.warning("QtSvg unavailable, sidebar star falls back to draw")
+        _FAV_SVG_RENDERER = renderer
+    return _FAV_SVG_RENDERER
+
+
 _SIDEBAR_ICON_CACHE = {}   # (kind, size, dpr) -> QPixmap
 
 
@@ -326,15 +354,21 @@ def _sidebar_icon_pixmap(kind, size, dpr):
         p.strokePath(path, pen)
         p.drawEllipse(QtCore.QRectF(4.0, 5.9, 2.2, 2.2))
     elif kind == "star":
-        poly = QtGui.QPolygonF()
-        for i in range(10):
-            ang = -math.pi / 2 + i * math.pi / 5
-            rad = 5.6 if i % 2 == 0 else 2.3
-            poly.append(QtCore.QPointF(7.0 + rad * math.cos(ang),
-                                       7.0 + rad * math.sin(ang)))
-        p.setPen(QtCore.Qt.NoPen)
-        p.setBrush(QtGui.QColor(color))
-        p.drawPolygon(poly)
+        # 与卡片收藏角标同一素材（favorite_badge.svg）；QtSvg 缺失或
+        # 文件损坏时回退 QPainter 手绘星
+        renderer = _favorite_svg_renderer()
+        if renderer is not None:
+            renderer.render(p, QtCore.QRectF(0, 0, 14, 14))
+        else:
+            poly = QtGui.QPolygonF()
+            for i in range(10):
+                ang = -math.pi / 2 + i * math.pi / 5
+                rad = 5.6 if i % 2 == 0 else 2.3
+                poly.append(QtCore.QPointF(7.0 + rad * math.cos(ang),
+                                           7.0 + rad * math.sin(ang)))
+            p.setPen(QtCore.Qt.NoPen)
+            p.setBrush(QtGui.QColor(color))
+            p.drawPolygon(poly)
     p.end()
     _SIDEBAR_ICON_CACHE[key] = pm
     return pm
@@ -389,6 +423,10 @@ class _SidebarDelegate(QtWidgets.QStyledItemDelegate):
         painter.save()
         painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
 
+        # 整行铺面板底色：行区由 Qt 用 palette base 填充、色值可能与
+        # viewport 不一致（亮暗分界），delegate 亲自铺底保证全栏同色
+        painter.fillRect(rect, QtGui.QColor("#1D1D20"))
+
         # 选中态：半透明蓝底 + 描边圆角（段头不可选中，理论不达）
         if selected:
             path = QtGui.QPainterPath()
@@ -442,7 +480,7 @@ class _SidebarDelegate(QtWidgets.QStyledItemDelegate):
 _UI_SETTINGS = JsonStore("recipelib_ui.json", defaults={
     "grid_size": 112,     # 缩略图基准大小（滑条 64-256）
     "pin_on_top": False,  # 全局置顶，按机器记住
-    "grp_expanded": True,   # 「分组」段折叠状态，跨会话记忆
+    "grp_expanded": True,   # 「子菜单」段折叠状态，跨会话记忆
     "tag_expanded": True,   # 「标签」段折叠状态
 })
 
@@ -902,6 +940,11 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.sidebar.setMinimumWidth(150)
         self.sidebar.setMaximumWidth(280)
         self.sidebar.setItemDelegate(_SidebarDelegate(self))
+        # 行区（Qt 行绘制用 palette base 填充）与行以下空白区（viewport
+        # 自身底色）在 Houdini 全局样式下色值不一致，出现亮暗分界——
+        # viewport 显式同色 + delegate 整行铺底（_SidebarDelegate.paint），
+        # 双保险统一为面板亮色
+        self.sidebar.viewport().setStyleSheet("background-color: #1D1D20;")
         self.sidebar.currentItemChanged.connect(self._on_category_changed)
         self.sidebar.itemClicked.connect(self._on_sidebar_clicked)
         self.sidebar.expanded.connect(self._on_section_toggle)
@@ -1103,11 +1146,11 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             self.reload()
 
     def _rebuild_sidebar(self):
-        """树形侧栏：全部 / 收藏 / 未分组 / 分组▸（可折叠）/ 标签▸（可折叠）。
+        """树形侧栏：全部 / 收藏 / 节点参数 / 子菜单▸（可折叠）/ 标签▸（可折叠）。
 
-        分组取自官方字段（node preset 的 submenu、tool 的 tab_submenu），
-        无任何分组的 recipe 归入「未分组」；标签是本工具自己的元数据层。
-        段头行尾计数 = 段内条目数（参考图语义），普通行 = 归入该组的
+        子菜单取自官方字段（node preset 的 submenu、tool 的 tab_submenu），
+        无任何子菜单的 recipe 归入「节点参数」；标签是本工具自己的元数据
+        层。段头行尾计数 = 段内条目数（参考图语义），普通行 = 归入该组的
         recipe 数。折叠状态存 _UI_SETTINGS 跨会话记忆。
         """
         cat_counts = {}
@@ -1150,9 +1193,10 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
 
         _add(None, "全部", len(self._recipes), KEY_ALL, "grid")
         _add(None, "收藏", fav_count, KEY_FAV, "star")
-        _add(None, "未分组", ungrouped, CAT_PREFIX, "folder")
+        _add(None, "节点参数", ungrouped, CAT_PREFIX, "folder")
         if cat_counts:
-            grp = _add(None, "分组", len(cat_counts), KEY_GRP_HDR, header=True)
+            grp = _add(None, "子菜单", len(cat_counts), KEY_GRP_HDR,
+                       header=True)
             for sub in sorted(cat_counts, key=str.lower):
                 _add(grp, sub, cat_counts[sub], CAT_PREFIX + sub, "folder")
             grp.setExpanded(bool(_UI_SETTINGS.get("grp_expanded")))
@@ -1186,7 +1230,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             item.setExpanded(not item.isExpanded())
 
     def _on_section_toggle(self, _index=None):
-        """分组/标签段展开状态持久化（expanded/collapsed 共用）。"""
+        """子菜单/标签段展开状态持久化（expanded/collapsed 共用）。"""
         for key, setting in ((KEY_GRP_HDR, "grp_expanded"),
                              (KEY_TAG_HDR, "tag_expanded")):
             item = self._find_key_item(key)
@@ -1258,7 +1302,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             return metadata.is_favorite(info.name)
         if key.startswith(CAT_PREFIX):
             sub = key[len(CAT_PREFIX):]
-            if not sub:   # 未分组：没有任何 submenu 的 recipe
+            if not sub:   # 节点参数：没有任何 submenu 的 recipe
                 return not self._submenus_of(info)
             return sub in self._submenus_of(info)
         if key.startswith(TAG_PREFIX):
@@ -1311,7 +1355,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         if key == KEY_FAV:
             return "收藏"
         if key.startswith(CAT_PREFIX):
-            return key[len(CAT_PREFIX):] or "未分组"
+            return key[len(CAT_PREFIX):] or "节点参数"
         if key.startswith(TAG_PREFIX):
             return "标签 " + key[len(TAG_PREFIX):]
         return key

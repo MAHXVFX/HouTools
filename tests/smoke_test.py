@@ -586,12 +586,12 @@ def main():
                         walk(win.sidebar.topLevelItem(t))
                     return keys
 
-                # 侧栏树结构：全部 / 收藏 / 未分组 / 分组头 / 分类x2
+                # 侧栏树结构：全部 / 收藏 / 节点参数 / 子菜单头 / 分类x2
                 # （此时尚无标签，不出现标签段头）
                 keys = _sidebar_keys()
                 assert keys[0] == rl_browser.KEY_ALL, keys
                 assert keys[1] == rl_browser.KEY_FAV, keys
-                assert "cat::" in keys, keys   # 无 submenu 的归「未分组」
+                assert "cat::" in keys, keys   # 无 submenu 的归「节点参数」
                 assert sorted(k for k in keys
                               if k and k.startswith("cat::")
                               and k != "cat::") \
@@ -601,12 +601,12 @@ def main():
                 assert win.list.count() == 1
                 assert win.list.item(0).data(QtCore.Qt.UserRole) \
                     == "houtools::light::b"
-                # 未分组过滤：无 submenu 的 recipe（cat:: 空键）
+                # 节点参数过滤：无 submenu 的 recipe（cat:: 空键）
                 win._select_category("cat::")
                 assert win.list.count() == 1
                 assert win.list.item(0).data(QtCore.Qt.UserRole) \
                     == "houtools::plain::c"
-                assert win._category_label() == "未分组"
+                assert win._category_label() == "节点参数"
                 win._select_category(rl_browser.KEY_ALL)
                 # 收藏过滤：收藏视图只剩 1 条
                 rl_meta.set_favorite("houtools::pyro::a", True)
