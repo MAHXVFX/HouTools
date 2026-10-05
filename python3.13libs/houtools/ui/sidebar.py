@@ -2,7 +2,7 @@
 
 行结构：行首图标 + 名称 + 右对齐计数；选中行蓝底圆角高亮；树形视图的
 段头行带折叠箭头（收拢态整行调暗）。图标为 QPainter 手绘的扁平线稿
-（grid/star/folder/tag/level），按 (种类, 尺寸, DPR) 缓存。
+（grid/star/folder/tag/level/sliders），按 (种类, 尺寸, DPR) 缓存。
 
 数据协议（条目经 ItemRole 携带，QListWidget / QTreeWidget 通用）：
 - SIDEBAR_HEADER_ROLE（bool）：段头行（画折叠箭头；不可选中由条目 flags 保证）
@@ -96,6 +96,20 @@ def sidebar_icon_pixmap(kind, size, dpr):
         pen = QtGui.QPen(QtGui.QColor(color), 1.2)
         pen.setJoinStyle(QtCore.Qt.RoundJoin)
         p.strokePath(path, pen)
+    elif kind == "sliders":
+        # 参数滑块：两行滑轨，左端实心方点 + 滑轨 + 错位的空心方滑块
+        # （节点参数语义，参考用户提供的参考图）
+        pen = QtGui.QPen(QtGui.QColor(color), 1.2)
+        pen.setCapStyle(QtCore.Qt.RoundCap)
+        pen.setJoinStyle(QtCore.Qt.RoundJoin)
+        for yy, knob_x in ((4.5, 8.0), (10.0, 5.0)):
+            p.setPen(QtCore.Qt.NoPen)
+            p.setBrush(QtGui.QColor(color))
+            p.drawRect(QtCore.QRectF(1.5, yy - 1.25, 2.5, 2.5))   # 左端实心点
+            p.setPen(pen)
+            p.setBrush(QtCore.Qt.NoBrush)
+            p.drawLine(QtCore.QPointF(4.5, yy), QtCore.QPointF(12.0, yy))
+            p.drawRect(QtCore.QRectF(knob_x, yy - 1.75, 3.5, 3.5))  # 空心滑块
     elif kind == "tag":
         path = QtGui.QPainterPath()
         path.moveTo(3.0, 2.5)

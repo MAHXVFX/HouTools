@@ -1019,7 +1019,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
 
         _add(None, "全部", len(self._recipes), KEY_ALL, "grid")
         _add(None, "收藏", fav_count, KEY_FAV, "star")
-        _add(None, "节点参数", ungrouped, CAT_PREFIX, "folder")
+        _add(None, "节点参数", ungrouped, CAT_PREFIX, "sliders")
         if cat_counts:
             grp = _add(None, "子菜单", len(cat_counts), KEY_GRP_HDR,
                        header=True)
