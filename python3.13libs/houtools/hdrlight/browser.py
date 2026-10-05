@@ -46,6 +46,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from houtools.core.log import get_logger
 from houtools.core.settings import JsonStore
 from houtools.ui import fonts as tool_fonts
+from houtools.ui import sidebar as ui_sidebar
 from houtools.ui.badge import FavoriteBadge
 from houtools.ui.taskbar import apply_appwindow_flags
 
@@ -653,6 +654,11 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self.sidebar = QtWidgets.QListWidget()
         self.sidebar.setMinimumWidth(self.SIDEBAR_MIN)
         self.sidebar.setMaximumWidth(self.SIDEBAR_MAX)
+        # 行绘制共享 delegate（图标 + 名称 + 右对齐计数 + 选中高亮，
+        # 与 Recipe Library 分类板块同款）；行底色与视口同色保证全栏统一
+        self.sidebar.setItemDelegate(ui_sidebar.SidebarDelegate())
+        self.sidebar.viewport().setStyleSheet(
+            "background-color: %s;" % ui_sidebar.SidebarDelegate.PANEL_BG)
         self.sidebar.currentItemChanged.connect(self._on_category_changed)
         self.sidebar.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.sidebar.customContextMenuRequested.connect(self._on_sidebar_menu)
@@ -791,13 +797,17 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self.sidebar.blockSignals(True)
         self.sidebar.clear()
         entries = [(KEY_ALL, "全部", len(self._hdrs)),
-                   (KEY_FAV, "★ 收藏", fav_count)]
+                   (KEY_FAV, "收藏", fav_count)]
         entries.extend(
             (cat, cat or "未分类", counts.get(cat, 0))
             for cat in sorted(categories, key=str.lower))
+        icon_kind = {"grid": KEY_ALL, "star": KEY_FAV}
         for key, label, n in entries:
-            item = QtWidgets.QListWidgetItem("{} ({})".format(label, n))
+            item = QtWidgets.QListWidgetItem(label)
             item.setData(QtCore.Qt.UserRole, key)
+            item.setData(ui_sidebar.SIDEBAR_COUNT_ROLE, n)
+            item.setData(ui_sidebar.SIDEBAR_ICON_ROLE,
+                         icon_kind.get(key, "folder"))
             if key not in (KEY_ALL, KEY_FAV):
                 item.setToolTip(os.path.join(self.lib_dir, key))
             self.sidebar.addItem(item)
