@@ -573,6 +573,17 @@ class _ClickableImage(QtWidgets.QLabel):
         super().mouseReleaseEvent(event)
 
 
+class _PreviewImageLabel(_ClickableImage):
+    """预览缩略图标签：宽度随面板拉伸（高度固定），尺寸变化发信号
+    让窗口按新宽度重渲染预览图。"""
+
+    resized = QtCore.Signal()
+
+    def resizeEvent(self, event):
+        self.resized.emit()
+        super().resizeEvent(event)
+
+
 class _ZoomScrollArea(QtWidgets.QScrollArea):
     """滚轮即缩放（拦截 wheel 转发步进）；中键按住拖动平移视框——
     与 Houdini 网络编辑器中键拖动同手感：内容跟随抓取移动、光标
@@ -917,6 +928,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self._category_key = KEY_ALL
         self._thumb_cache = {}      # name -> QIcon（GIF 首帧也在这里）
         self._preview_movie = None
+        self._preview_pm = None     # 预览原图（面板变宽重采样的源，防糊）
         self._doc_dialog = None
         self._preview_info = None
         self._drag_state = None     # 拖拽中: {name, ghost}
@@ -1014,13 +1026,15 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self._apply_grid_size()
 
         # ---- 右侧预览面板 ----
-        self.preview_label = _ClickableImage()
-        self.preview_label.setFixedSize(self.PREVIEW_W, self.PREVIEW_H)
+        # 标签宽度随面板拉伸（高度固定），尺寸变化经 resized 重渲染预览图
+        self.preview_label = _PreviewImageLabel()
+        self.preview_label.setFixedHeight(self.PREVIEW_H)
         self.preview_label.setAlignment(QtCore.Qt.AlignCenter)
         self.preview_label.setStyleSheet(
             "background-color: #1D1D20; border: 1px solid #3d3d3d; "
             "border-radius: 6px; color: #666666;")
         self.preview_label.clicked.connect(self._view_image)
+        self.preview_label.resized.connect(self._refresh_preview_image)
 
         self.preview_name = _PreviewNameLabel()
         self.preview_name.setWordWrap(True)
@@ -1121,7 +1135,9 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
 
         preview_panel = QtWidgets.QWidget()
         preview_panel.setLayout(pv)
-        preview_panel.setFixedWidth(self.PREVIEW_W)
+        # 面板随分割条铺满整格（原固定宽在格子更宽时右侧留白）；
+        # PREVIEW_W 只作可拖动的最小宽度
+        preview_panel.setMinimumWidth(self.PREVIEW_W)
 
         self.splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
         self.splitter.setHandleWidth(4)
@@ -1531,6 +1547,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
 
     def _clear_preview(self):
         self._stop_preview_movie()
+        self._preview_pm = None
         self.preview_label.setPixmap(QtGui.QPixmap())
         self.preview_label.setText("未选中")
         self.preview_label.setCursor(QtCore.Qt.ArrowCursor)
@@ -1607,9 +1624,12 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self._show_tags(metadata.get_tags(info.name))
         self._apply_tags_theme(info)
 
-        # 大图预览：GIF 动起来，其余静态缩放；有图时光标手形提示可点
+        # 大图预览：GIF 动起来，其余静态缩放；有图时光标手形提示可点。
+        # 原图存 _preview_pm（面板变宽时 _refresh_preview_image 从原图
+        # 重采样，不重读文件也不糊）
         self._stop_preview_movie()
         self.preview_label.setText("")
+        self._preview_pm = None
         thumb = metadata.get_thumb(info.name)
         if thumb:
             self.preview_label.setCursor(QtCore.Qt.PointingHandCursor)
@@ -1622,25 +1642,51 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             movie.setFileName(thumb)
             movie.setCacheMode(QtGui.QMovie.CacheAll)
             movie.jumpToFrame(0)
-            pm = movie.currentPixmap()
-            if not pm.isNull():
-                scaled = pm.size().scaled(
-                    QtCore.QSize(self.PREVIEW_W - 8, self.PREVIEW_H - 8),
-                    QtCore.Qt.KeepAspectRatio)
-                movie.setScaledSize(scaled)
+            self._preview_pm = movie.currentPixmap()   # 原始尺寸首帧
+            if not self._preview_pm.isNull():
+                movie.setScaledSize(self._preview_pm.size().scaled(
+                    self._preview_box(), QtCore.Qt.KeepAspectRatio))
             self.preview_label.setMovie(movie)
             movie.start()
             self._preview_movie = movie
         elif thumb:
             pm = QtGui.QPixmap(thumb)
             if not pm.isNull():
+                self._preview_pm = pm
                 self.preview_label.setPixmap(pm.scaled(
-                    self.PREVIEW_W - 8, self.PREVIEW_H - 8,
-                    QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation))
+                    self._preview_box(), QtCore.Qt.KeepAspectRatio,
+                    QtCore.Qt.SmoothTransformation))
             else:
                 self._clear_preview_image()
         else:
             self._clear_preview_image()
+
+    def _preview_box(self):
+        """预览图可用绘制区（标签当前尺寸 - 边距）。"""
+        return QtCore.QSize(max(1, self.preview_label.width() - 8),
+                            self.PREVIEW_H - 8)
+
+    def _refresh_preview_image(self):
+        """预览标签宽度变化（面板拉伸）后按新宽度重渲染当前预览图。"""
+        if self._preview_info is None:
+            return
+        thumb = metadata.get_thumb(self._preview_info.name)
+        if not thumb:
+            return
+        if thumb.lower().endswith(".gif"):
+            movie = self._preview_movie
+            if movie is not None and self._preview_pm is not None \
+                    and not self._preview_pm.isNull():
+                # 从原始首帧的尺寸重算目标框（setScaledSize 后的
+                # currentPixmap 已是缩放帧，不能作缩放源）
+                movie.setScaledSize(self._preview_pm.size().scaled(
+                    self._preview_box(), QtCore.Qt.KeepAspectRatio))
+                # 强制按新尺寸立即重投当前帧（不等下一帧播放）
+                movie.jumpToFrame(max(0, movie.currentFrameNumber()))
+        elif self._preview_pm is not None and not self._preview_pm.isNull():
+            self.preview_label.setPixmap(self._preview_pm.scaled(
+                self._preview_box(), QtCore.Qt.KeepAspectRatio,
+                QtCore.Qt.SmoothTransformation))
 
     def _clear_preview_image(self):
         self.preview_label.setText("无缩略图\n（右键卡片 → 设置缩略图）")
