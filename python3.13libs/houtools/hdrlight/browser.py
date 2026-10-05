@@ -801,7 +801,7 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         entries.extend(
             (cat, cat or "未分类", counts.get(cat, 0))
             for cat in sorted(categories, key=str.lower))
-        icon_kind = {"grid": KEY_ALL, "star": KEY_FAV}
+        icon_kind = {KEY_ALL: "grid", KEY_FAV: "star"}
         for key, label, n in entries:
             item = QtWidgets.QListWidgetItem(label)
             item.setData(QtCore.Qt.UserRole, key)
