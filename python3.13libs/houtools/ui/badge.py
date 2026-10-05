@@ -101,7 +101,8 @@ class FavoriteBadge:
         canvas.fill(QtCore.Qt.transparent)
         painter = QtGui.QPainter(canvas)
         painter.drawPixmap(0, 0, base_pm)
-        badge_size = max(14, min(44, int(base_pm.width() * 0.24)))
+        # 角标大小对齐 Recipe 卡片（缩略图宽的 12%，上限 24px）
+        badge_size = max(12, min(24, int(base_pm.width() * 0.12)))
         badge = self.badge_pixmap(badge_size)
         margin = max(3, badge_size // 8)
         # badge 画布含投影余量（四周 pad），按 -pad 贴回视觉角落
