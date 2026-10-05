@@ -180,8 +180,15 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
         if selected:
             bg = bg.lighter(115)
 
-        card = option.rect.adjusted(GRID_CARD_GAP, GRID_CARD_GAP,
-                                    -GRID_CARD_GAP, -GRID_CARD_GAP)
+        # 卡片在格内右对齐（右缘贴格边、左缘留 2×GAP）：卡片右缘恒等于
+        # 列数×格宽，与 Qt 的换行判定（分界线 < 列数×格宽）天然重合——
+        # 面板收窄时分界线碰到卡片右缘的那一像素就换行，不多让；扩宽时
+        # 空位够一整张卡+间距才加列。卡片间距 = 2×GAP、大小只由滑条决定
+        card = QtCore.QRect(option.rect.right() + 1 - option.rect.width()
+                            + GRID_CARD_GAP * 2,
+                            option.rect.top() + GRID_CARD_GAP,
+                            option.rect.width() - GRID_CARD_GAP * 2,
+                            option.rect.height() - GRID_CARD_GAP * 2)
         path = QtGui.QPainterPath()
         path.addRoundedRect(QtCore.QRectF(card), 8, 8)
         painter.fillPath(path, bg)
