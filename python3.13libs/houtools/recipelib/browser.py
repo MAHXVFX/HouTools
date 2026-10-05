@@ -424,9 +424,9 @@ class _SidebarDelegate(QtWidgets.QStyledItemDelegate):
         painter.save()
         painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
 
-        # 整行铺面板底色：行区由 Qt 用 palette base 填充、色值可能与
+        # 整行铺侧栏底色：行区由 Qt 用 palette base 填充、色值可能与
         # viewport 不一致（亮暗分界），delegate 亲自铺底保证全栏同色
-        painter.fillRect(rect, QtGui.QColor("#1D1D20"))
+        painter.fillRect(rect, QtGui.QColor("#26262b"))
 
         # 选中态：半透明蓝底 + 描边圆角（段头不可选中，理论不达）
         if selected:
@@ -436,16 +436,22 @@ class _SidebarDelegate(QtWidgets.QStyledItemDelegate):
             painter.setPen(QtGui.QPen(QtGui.QColor("#2e7cb8"), 1))
             painter.drawPath(path)
 
-        font = option.font
+        # 整栏文字加粗（用户指定，与网格卡片文字全加粗同一口味）；拷贝
+        # option.font 再改，不动调用方的字体对象
+        font = QtGui.QFont(option.font)
+        font.setBold(True)
         painter.setFont(font)
         fm = QtGui.QFontMetrics(font)
 
         x = rect.left() + self.PAD_L
         if item.parent() is not None:   # 子项视觉缩进（树缩进已归 0）
             x += self.INDENT
+        # 段头收拢态整行调暗（"已折叠"的视觉反馈；背景不动作保持全栏统一）
+        collapsed = is_header and not item.isExpanded()
         if is_header:
             _draw_chevron(painter, x + 4, rect.center().y(),
-                          item.isExpanded(), "#8a8a92")
+                          item.isExpanded(),
+                          "#6a6a72" if collapsed else "#8a8a92")
             x += 14
         if kind:
             pm = _sidebar_icon_pixmap(kind, self.ICON_PX,
@@ -461,9 +467,12 @@ class _SidebarDelegate(QtWidgets.QStyledItemDelegate):
         text = fm.elidedText(item.text(0), QtCore.Qt.ElideRight,
                              max(0, int(text_w)))
         if is_header:
-            text_color, count_color = "#b0b0b8", "#d29a55"
+            if collapsed:
+                text_color, count_color = "#8f8f97", "#a8824e"
+            else:
+                text_color, count_color = "#d8d8de", "#d29a55"
         else:
-            text_color, count_color = "#c6c6cc", "#85858d"
+            text_color, count_color = "#e2e2e8", "#a8a8b0"
         if selected:
             text_color = count_color = "#ffffff"
         painter.setPen(QtGui.QColor(text_color))
@@ -858,6 +867,8 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             border-radius: 6px;
         }
         QTreeWidget { outline: 0; }
+        /* 侧栏树：比面板标准底色亮一档（用户指定），文字 delegate 加粗提亮 */
+        QTreeWidget#sidebarTree { background-color: #26262b; }
         QListWidget::item { color: #bbbbbb; }
         QListWidget::item:selected { background-color: #0d6399; }
         QLineEdit {
@@ -946,11 +957,12 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.sidebar.setMinimumWidth(150)
         self.sidebar.setMaximumWidth(280)
         self.sidebar.setItemDelegate(_SidebarDelegate(self))
+        self.sidebar.setObjectName("sidebarTree")
         # 行区（Qt 行绘制用 palette base 填充）与行以下空白区（viewport
         # 自身底色）在 Houdini 全局样式下色值不一致，出现亮暗分界——
         # viewport 显式同色 + delegate 整行铺底（_SidebarDelegate.paint），
-        # 双保险统一为面板亮色
-        self.sidebar.viewport().setStyleSheet("background-color: #1D1D20;")
+        # 双保险统一为侧栏亮底色（比面板标准色亮一档）
+        self.sidebar.viewport().setStyleSheet("background-color: #26262b;")
         self.sidebar.currentItemChanged.connect(self._on_category_changed)
         self.sidebar.itemClicked.connect(self._on_sidebar_clicked)
         self.sidebar.expanded.connect(self._on_section_toggle)
