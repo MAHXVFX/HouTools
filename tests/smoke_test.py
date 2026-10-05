@@ -559,9 +559,11 @@ def main():
             # 浏览器窗口：list_recipes / selected_nodes / 网络编辑器全部打桩
             infos = [
                 rl_store.RecipeInfo(name="houtools::pyro::a", label="Pyro A",
-                                    category="tool", submenu="HouTools"),
+                                    category="tool", submenu="HouTools",
+                                    net_category="Sop"),
                 rl_store.RecipeInfo(name="houtools::light::b", label="Light B",
-                                    category="node", submenu="Lighting"),
+                                    category="node", submenu="Lighting",
+                                    net_category="Lop"),
                 rl_store.RecipeInfo(name="houtools::plain::c", label="Plain C",
                                     category="tool", submenu=""),
             ]
@@ -611,6 +613,17 @@ def main():
                 assert win.list.item(0).data(QtCore.Qt.UserRole) \
                     == "houtools::plain::c"
                 assert win._category_label() == "节点参数"
+                win._select_category(rl_browser.KEY_ALL)
+                # 层级过滤：按库内实际出现的 net_category 动态生成
+                assert "net::Sop" in keys, keys
+                assert "net::Lop" in keys, keys
+                win._select_category("net::Sop")
+                assert win.list.count() == 1
+                assert win.list.item(0).data(QtCore.Qt.UserRole) \
+                    == "houtools::pyro::a"
+                assert win._category_label() == "Sop"
+                win._select_category("net::Lop")
+                assert win.list.count() == 1
                 win._select_category(rl_browser.KEY_ALL)
                 # 收藏过滤：收藏视图只剩 1 条
                 rl_meta.set_favorite("houtools::pyro::a", True)

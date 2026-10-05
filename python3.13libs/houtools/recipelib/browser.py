@@ -1,7 +1,7 @@
 """Recipe Library 主窗口：基于官方 recipes 的资产浏览/应用/文档面板。
 
 布局：顶部工具栏（刷新/库目录/搜索/大小）+ 左侧树形栏（全部/收藏/节点参数/
-子菜单▸/标签▸，段头整行点击折叠展开）+ 中部缩略图网格 + 右侧预览面板
+子菜单▸/标签▸/层级▸，段头整行点击折叠展开）+ 中部缩略图网格 + 右侧预览面板
 （动图预览/元信息/标签编辑）+ 底部状态栏。
 
 交互（四类 recipe 语义不同，见 store.apply_*）：
@@ -70,8 +70,10 @@ KEY_ALL = "__all__"
 KEY_FAV = "__fav__"
 CAT_PREFIX = "cat::"
 TAG_PREFIX = "tag::"
-KEY_GRP_HDR = "__grp_hdr__"    # 「分组」段头（不可选中，整行点击折叠）
+LEVEL_PREFIX = "net::"         # 层级（net_category："Sop"/"Lop"/...）
+KEY_GRP_HDR = "__grp_hdr__"    # 「子菜单」段头（不可选中，整行点击折叠）
 KEY_TAG_HDR = "__tag_hdr__"    # 「标签」段头
+KEY_LEVEL_HDR = "__level_hdr__"    # 「层级」段头
 SIDEBAR_HEADER_ROLE = QtCore.Qt.UserRole + 1   # True=段头行
 SIDEBAR_COUNT_ROLE = QtCore.Qt.UserRole + 2    # 行尾计数
 SIDEBAR_ICON_ROLE = QtCore.Qt.UserRole + 3     # 行首图标种类（grid/star/folder/tag）
@@ -312,7 +314,8 @@ def _sidebar_icon_pixmap(kind, size, dpr):
     p.setRenderHint(QtGui.QPainter.Antialiasing, True)
     p.scale(size / 14.0, size / 14.0)
     color = {"grid": "#b4b4bc", "star": "#d9a544",
-             "folder": "#a4a4ac", "tag": "#5b9bd5"}.get(kind, "#a4a4ac")
+             "folder": "#a4a4ac", "tag": "#5b9bd5",
+             "level": "#9b8cd9"}.get(kind, "#a4a4ac")
     if kind == "grid":
         pen = QtGui.QPen(QtGui.QColor(color), 1.2)
         pen.setJoinStyle(QtCore.Qt.RoundJoin)
@@ -355,6 +358,19 @@ def _sidebar_icon_pixmap(kind, size, dpr):
         pen.setJoinStyle(QtCore.Qt.RoundJoin)
         p.strokePath(path, pen)
         p.drawEllipse(QtCore.QRectF(4.0, 5.9, 2.2, 2.2))
+    elif kind == "level":
+        # 迷你节点图：两个圆角方节点 + 折线连线（网络层级语义）
+        pen = QtGui.QPen(QtGui.QColor(color), 1.2)
+        pen.setJoinStyle(QtCore.Qt.RoundJoin)
+        p.setPen(pen)
+        p.setBrush(QtCore.Qt.NoBrush)
+        p.drawRoundedRect(QtCore.QRectF(1.0, 8.0, 5.0, 5.0), 1.2, 1.2)
+        p.drawRoundedRect(QtCore.QRectF(8.0, 1.0, 5.0, 5.0), 1.2, 1.2)
+        path = QtGui.QPainterPath()
+        path.moveTo(6.0, 10.5)
+        path.lineTo(10.5, 10.5)
+        path.lineTo(10.5, 6.0)
+        p.strokePath(path, pen)
     elif kind == "star":
         # 与卡片收藏角标同一素材（favorite_badge.svg）；QtSvg 缺失或
         # 文件损坏时回退 QPainter 手绘星
@@ -496,6 +512,7 @@ _UI_SETTINGS = JsonStore("recipelib_ui.json", defaults={
     "pin_on_top": False,  # 全局置顶，按机器记住
     "grp_expanded": True,   # 「子菜单」段折叠状态，跨会话记忆
     "tag_expanded": True,   # 「标签」段折叠状态
+    "level_expanded": True,   # 「层级」段折叠状态
 })
 
 
@@ -1168,15 +1185,18 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             self.reload()
 
     def _rebuild_sidebar(self):
-        """树形侧栏：全部 / 收藏 / 节点参数 / 子菜单▸（可折叠）/ 标签▸（可折叠）。
+        """树形侧栏：全部 / 收藏 / 节点参数 / 子菜单▸ / 标签▸ / 层级▸（可折叠）。
 
         子菜单取自官方字段（node preset 的 submenu、tool 的 tab_submenu），
         无任何子菜单的 recipe 归入「节点参数」；标签是本工具自己的元数据
-        层。段头行尾计数 = 段内条目数（参考图语义），普通行 = 归入该组的
-        recipe 数。折叠状态存 _UI_SETTINGS 跨会话记忆。
+        层；层级取官方 net_category（network_categories[0]），按库内实际
+        出现的层级动态生成、无层级的 recipe 不入段。段头行尾计数 = 段内
+        条目数（参考图语义），普通行 = 归入该组的 recipe 数。折叠状态存
+        _UI_SETTINGS 跨会话记忆。
         """
         cat_counts = {}
         tag_counts = {}
+        level_counts = {}
         fav_count = 0
         ungrouped = 0
         for r in self._recipes:
@@ -1189,6 +1209,9 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             tags = metadata.get_tags(r.name)
             for t in tags:
                 tag_counts[t] = tag_counts.get(t, 0) + 1
+            if r.net_category:
+                level_counts[r.net_category] = \
+                    level_counts.get(r.net_category, 0) + 1
             if metadata.is_favorite(r.name):
                 fav_count += 1
 
@@ -1227,6 +1250,12 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             for t in sorted(tag_counts, key=str.lower):
                 _add(tag, t, tag_counts[t], TAG_PREFIX + t, "tag")
             tag.setExpanded(bool(_UI_SETTINGS.get("tag_expanded")))
+        if level_counts:
+            lvl = _add(None, "层级", len(level_counts), KEY_LEVEL_HDR,
+                       header=True)
+            for lv in sorted(level_counts, key=str.lower):
+                _add(lvl, lv, level_counts[lv], LEVEL_PREFIX + lv, "level")
+            lvl.setExpanded(bool(_UI_SETTINGS.get("level_expanded")))
 
         current = self._find_key_item(self._category_key) \
             or self.sidebar.topLevelItem(0)
@@ -1252,9 +1281,10 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             item.setExpanded(not item.isExpanded())
 
     def _on_section_toggle(self, _index=None):
-        """子菜单/标签段展开状态持久化（expanded/collapsed 共用）。"""
+        """子菜单/标签/层级段展开状态持久化（expanded/collapsed 共用）。"""
         for key, setting in ((KEY_GRP_HDR, "grp_expanded"),
-                             (KEY_TAG_HDR, "tag_expanded")):
+                             (KEY_TAG_HDR, "tag_expanded"),
+                             (KEY_LEVEL_HDR, "level_expanded")):
             item = self._find_key_item(key)
             if item is not None:
                 _UI_SETTINGS.set(setting, bool(item.isExpanded()))
@@ -1330,6 +1360,8 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         if key.startswith(TAG_PREFIX):
             tag = key[len(TAG_PREFIX):]
             return tag in metadata.get_tags(info.name)
+        if key.startswith(LEVEL_PREFIX):
+            return info.net_category == key[len(LEVEL_PREFIX):]
         return True
 
     def _apply_filter(self, note=""):
@@ -1380,6 +1412,8 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             return key[len(CAT_PREFIX):] or "节点参数"
         if key.startswith(TAG_PREFIX):
             return "标签 " + key[len(TAG_PREFIX):]
+        if key.startswith(LEVEL_PREFIX):
+            return key[len(LEVEL_PREFIX):]
         return key
 
     def _tooltip_for(self, info):
