@@ -701,13 +701,19 @@ def main():
                     win._rename_selected()
                 assert rl_meta.get_display_name("houtools::light::b") == ""
                 assert win.preview_name.text() == "Light B"
-                # 点空白处取消选中：预览面板复位为空态（meta 卡片隐藏、
-                # comment 恢复显示——否则布局无 stretch 项、控件被拉伸错位）
+                # 点空白处取消选中：预览面板复位为空态（meta 卡片保留
+                # 版式、值留空——空态与选中态同格式；comment 恢复显示
+                # ——否则布局无 stretch 项、控件被拉伸错位）
                 win.list.setCurrentRow(0)
                 assert win.preview_name.text()
                 win.list.emptyClicked.emit()
                 assert win.preview_name.text() == "", win.preview_name.text()
-                assert not win.meta_panel.isVisibleTo(win)
+                assert win.meta_panel.isVisibleTo(win)
+                assert win.preview_meta.text().startswith("内部名称: ")
+                assert win.meta_cell_category.text() == "子菜单: "
+                assert win.meta_cell_network.text() == "层级: "
+                assert win.meta_cell_version.text() == "版本: "
+                assert win.meta_cell_targets.text() == "焦点: "
                 assert win.preview_comment.isVisibleTo(win)
                 assert not win.tags_apply_btn.isEnabled()
                 win.list.setCurrentRow(0)

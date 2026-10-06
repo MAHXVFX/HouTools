@@ -810,20 +810,25 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         # 中缝竖线分隔）。不用 QGridLayout rowSpan——其 Expanding 分隔线
         # 会拉伸行距留空隙；改左右双列 VBox 紧凑堆叠
         self.preview_meta = QtWidgets.QLabel()
-        self.preview_meta.setWordWrap(True)
         self.preview_meta.setStyleSheet("color: #9a9aa2;")
         self.meta_cell_category = QtWidgets.QLabel()
         self.meta_cell_network = QtWidgets.QLabel()
         self.meta_cell_version = QtWidgets.QLabel()
         self.meta_cell_targets = QtWidgets.QLabel()
-        # 左列（子菜单/版本）内容短且须单行（折行会把行距撑乱），右列
-        # （层级/焦点）值可能较长允许折行
+        # 卡片内标签一律不折行且行高钉死：折行标签的高度随文本/宽度
+        # 取整，空态与选中态之间会差 1px（会话实测卡片 97↔98，
+        # "版本/焦点"行随之跳动）；recipe 内部名是无空格 token 本就
+        # 不可断行，超宽值横向裁切不撑高
+        self.preview_meta.setWordWrap(False)
         self.meta_cell_category.setWordWrap(False)
         self.meta_cell_version.setWordWrap(False)
-        self.meta_cell_network.setWordWrap(True)
-        self.meta_cell_targets.setWordWrap(True)
+        self.meta_cell_network.setWordWrap(False)
+        self.meta_cell_targets.setWordWrap(False)
+        line_h = self.fontMetrics().height()
+        self.preview_meta.setFixedHeight(line_h * 3)
         for cell in (self.meta_cell_category, self.meta_cell_network,
                      self.meta_cell_version, self.meta_cell_targets):
+            cell.setFixedHeight(line_h)
             cell.setStyleSheet("color: #9a9aa2;")
         meta_left = QtWidgets.QVBoxLayout()
         meta_left.setSpacing(4)
@@ -1318,11 +1323,14 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.preview_label.setCursor(QtCore.Qt.ArrowCursor)
         self.preview_label.setToolTip("")
         self.preview_name.setText("")
-        self.preview_meta.setText("")
-        for cell in (self.meta_cell_category, self.meta_cell_network,
-                     self.meta_cell_version, self.meta_cell_targets):
-            cell.setText("")
-        self.meta_panel.setVisible(False)   # 空卡片不展示
+        # 空态与选中态同版式：标签保留、值留空（用户指定）
+        self.preview_meta.setText(
+            "内部名称: \n类型: \n来源: ")
+        self.meta_cell_category.setText("子菜单: ")
+        self.meta_cell_network.setText("层级: ")
+        self.meta_cell_version.setText("版本: ")
+        self.meta_cell_targets.setText("焦点: ")
+        self.meta_panel.setVisible(True)
         self.preview_comment.setText("")
         # doc 分支会把 comment 藏起来——必须恢复，否则布局里没有任何
         # stretch 项，剩余空间会把空的名字标签/卡片拉伸推挤（空态错乱）
