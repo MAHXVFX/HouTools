@@ -96,6 +96,7 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
     LINE_GAP = 3      # 文字行间距
     TEXT_BOTTOM_PAD = 3  # 标签行到底边的留白（比 MARGIN 紧，底部不空）
     BAR_W = 3         # 名字旁颜色竖条宽度
+    BAR_DEFAULT = "#e8e8ec"  # 未设自定义色时的竖条色（预览名称竖条同款）
     DEFAULT_THEME = "#9a9aa2"  # 未设置自定义颜色时的默认主题（灰）
 
     def __init__(self, window, parent=None):
@@ -190,7 +191,7 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
             tag_color = self._readable(theme)
         else:
             theme = QtGui.QColor(self.DEFAULT_THEME)
-            bar = QtGui.QColor("#e8e8ec")
+            bar = QtGui.QColor(self.BAR_DEFAULT)
             tag_color = QtGui.QColor("#c0c0c8")
         bg = self._tint(theme, 0.35)
         if selected:
@@ -357,9 +358,38 @@ class _Grid(QtWidgets.QListWidget):
 
 
 class _PreviewNameLabel(QtWidgets.QLabel):
-    """预览面板的名称标签：双击可自定义显示名（支持中文）。"""
+    """预览面板的名称标签：双击可自定义显示名（支持中文）。
+
+    名称前画卡片行1同款颜色竖条（宽度/圆角/间距取自 _CardDelegate），
+    颜色经 set_bar_color 与卡片主题同步；None 清掉竖条（空态用）。
+    """
 
     nameDoubleClicked = QtCore.Signal()
+    _BAR_GAP = 6   # 竖条与名字的间距，同卡片行1
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._bar = None
+
+    def set_bar_color(self, color):
+        self._bar = QtGui.QColor(color) if color else None
+        self.setContentsMargins(
+            (_CardDelegate.BAR_W + self._BAR_GAP) if self._bar else 0,
+            0, 0, 0)
+        self.update()
+
+    def paintEvent(self, event):
+        if self._bar is not None:
+            with QtGui.QPainter(self) as p:
+                p.setRenderHint(QtGui.QPainter.Antialiasing, True)
+                p.setPen(QtCore.Qt.NoPen)
+                p.setBrush(self._bar)
+                fm = self.fontMetrics()
+                # 与首行文字等高的圆角竖条（卡片行1同款 y+1、高-2）；
+                # 布局按 heightForWidth 给高，首行贴 contentsRect 顶
+                p.drawRoundedRect(QtCore.QRectF(0, 1, _CardDelegate.BAR_W,
+                                                fm.height() - 2), 1.5, 1.5)
+        super().paintEvent(event)
 
     def mouseDoubleClickEvent(self, event):
         self.nameDoubleClicked.emit()
@@ -1733,6 +1763,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.preview_label.setCursor(QtCore.Qt.ArrowCursor)
         self.preview_label.setToolTip("")
         self.preview_name.setText("")
+        self.preview_name.set_bar_color(None)
         # 空态与选中态同版式：标签保留、值留空（用户指定）
         self.preview_meta.setText(
             "内部名称: \n类型: \n来源: ")
@@ -1770,6 +1801,9 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self._preview_info = info
         fav = metadata.is_favorite(info.name)
         self.preview_name.setText(self._display_label(info))
+        # 名称竖条与卡片行1同色：自定义色=主题色，无色=卡片默认竖条色
+        self.preview_name.set_bar_color(
+            metadata.get_color(info.name) or _CardDelegate.BAR_DEFAULT)
         lib = os.path.basename(info.library) if info.library else ""
         self.preview_meta.setText("\n".join([
             "内部名称: " + info.name,
