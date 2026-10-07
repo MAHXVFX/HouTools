@@ -182,7 +182,7 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
 
         # 整卡主题（参考官方 Recipe Manager 卡片）：自定义颜色时边框/名字
         # 竖条/标签行用主题色，背景铺主题色混暗底——文字区 0.35、缩略图区
-        # 更暗 0.12 分出层次；未设置颜色时为默认灰主题（选中亮蓝边框）
+        # 更暗 0.12 分出层次；未设置颜色时为默认灰主题
         custom = metadata.get_color(info.name) if info else ""
         if custom:
             theme = QtGui.QColor(custom)
@@ -239,9 +239,9 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
                 int(card.top() + m + margin - pad), badge)
         y += thumb_h + self.TEXT_TOP_GAP
 
-        border = theme if custom else QtGui.QColor(
-            "#0d6399" if selected else "#9a9aa2")
-        painter.setPen(QtGui.QPen(border, 2 if selected else 1))
+        # 选中态 = 主题色加粗 2px（默认灰主题与自定义色同规则，不另设
+        # 蓝色边框——用户指定选中一律用同色高亮）
+        painter.setPen(QtGui.QPen(theme, 2 if selected else 1))
         painter.drawPath(path)
 
         if info is None:  # 理论不达（条目都带 UserRole）；兜底不画文字
