@@ -1154,7 +1154,12 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         """重建网格条目（hdrlight 同款结论：IconMode+gridSize 下
         setHidden 的条目仍占槽位，必须重建式过滤）。重建会丢选中态——
         按内部名恢复，否则元数据操作（改标签/收藏等）之后
-        _selected_info() 变 None，面板按钮会"失灵"。"""
+        _selected_info() 变 None，面板按钮会"失灵"。
+
+        重建全程屏蔽信号、结束后按最终选中状态统一对齐预览：clear()
+        会把 currentItem 打成 None 并发 currentItemChanged 把预览清成
+        空态，而随后的静默恢复不发信号——两头夹出"卡片高亮但预览显示
+        未选中、再点同一卡片无效（current 未变不发信号）"的脱节态。"""
         keep_name = None
         current = self.list.currentItem()
         if current is not None:
@@ -1162,6 +1167,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         entries = [r for r in self._recipes
                    if self._match_category(r) and self._match_search(r)]
         self.list.setUpdatesEnabled(False)
+        self.list.blockSignals(True)
         try:
             self.list.clear()
             for info in entries:
@@ -1173,11 +1179,12 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
                 item.setIcon(self._base_icon(info))
                 self.list.addItem(item)
         finally:
+            self.list.blockSignals(False)
             self.list.setUpdatesEnabled(True)
         if keep_name:
             for i in range(self.list.count()):
                 if self.list.item(i).data(QtCore.Qt.UserRole) == keep_name:
-                    # blockSignals：预览刷新由调用方负责，避免双重刷新
+                    # 预览对齐统一在函数末尾做，这里保持静默
                     self.list.blockSignals(True)
                     self.list.setCurrentRow(i)
                     self.list.blockSignals(False)
@@ -1185,8 +1192,18 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.status.setText("{}：{}/{} 个 recipe{}。{}".format(
             self._category_label(), len(entries), len(self._recipes), note,
             "双击应用；或按住拖入网络编辑器。"))
-        if self.list.count() == 0:
+        current = self.list.currentItem()
+        if current is None:
             self._clear_preview()
+            return
+        info = self._info_by_name.get(current.data(QtCore.Qt.UserRole))
+        if info is None:
+            self._clear_preview()
+        elif self._preview_info is not info:
+            # 预览在重建期间未被清过：同一 info 对象（切分类/搜索）说明
+            # 预览本就显示它，不必重刷；reload 后 _info_by_name 换了新
+            # 对象，须按新数据重刷
+            self._update_preview(info)
 
     def _category_label(self):
         key = self._category_key
@@ -1316,6 +1333,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.list.setCurrentRow(-1)
 
     def _clear_preview(self):
+        self._preview_info = None   # 空态即无预览对象，防 _view_image 摸旧值
         self._stop_preview_movie()
         self._preview_pm = None
         self.preview_label.setPixmap(QtGui.QPixmap())

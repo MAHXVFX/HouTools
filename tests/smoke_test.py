@@ -744,6 +744,27 @@ def main():
                 rl_meta.set_tags("houtools::pyro::a", [])
                 rl_meta.delete_doc_dir("houtools::pyro::a")
                 rl_meta.set_display_name("houtools::pyro::a", None)
+                # 回归：切分类后仍存活的选中必须与预览面板同步——重建
+                # 网格时 clear() 发 currentItemChanged(None) 清掉预览，
+                # 而选中恢复若不发信号，就出现"卡片高亮但预览显示未选
+                # 中、再点同一卡片无效"（current 未变不发信号，只能先
+                # 点空白再选）的脱节态
+                win._select_category("cat::Lighting")  # light::b 仍在其中
+                assert win.list.currentItem() is not None, "存活选中被弄丢"
+                assert win.preview_name.text() == "Light B", \
+                    win.preview_name.text()
+                assert win.tags_apply_btn.isEnabled()
+                win._select_category("cat::")  # 选中被过滤掉 → 预览复位
+                assert win.list.currentItem() is None
+                assert win.preview_name.text() == "", win.preview_name.text()
+                win._select_category(rl_browser.KEY_ALL)
+                win.list.setCurrentRow(1)
+                # reload 重建 _info_by_name（info 全是新对象），恢复选中
+                # 后预览须按新数据重刷而不是停在旧内容
+                win.reload()
+                assert win.list.currentItem() is not None, "reload 后选中丢失"
+                assert win.preview_name.text() == "Light B", \
+                    win.preview_name.text()
                 # 应用分发：node 预设无选中 → 引导文案（不触 hou）
                 with patch.object(rl_browser.store, "selected_nodes",
                                   return_value=[]):
