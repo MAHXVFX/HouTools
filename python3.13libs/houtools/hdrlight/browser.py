@@ -545,6 +545,19 @@ class ThumbnailThread(QtCore.QThread):
         self.finishedCount.emit(counter["ok"])
 
 
+class _ThumbList(QtWidgets.QListWidget):
+    """缩略图网格：左键点在条目外的空白处则取消选中
+    （与 Recipe Library 网格同款交互）。"""
+
+    emptyClicked = QtCore.Signal()
+
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton \
+                and self.itemAt(event.position().toPoint()) is None:
+            self.emptyClicked.emit()
+        super().mousePressEvent(event)
+
+
 # --------------------------------------------------------------------------
 # 窗口
 # --------------------------------------------------------------------------
@@ -664,7 +677,7 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self.sidebar.customContextMenuRequested.connect(self._on_sidebar_menu)
 
         # ---- 缩略图列表 ----
-        self.list = QtWidgets.QListWidget()
+        self.list = _ThumbList()
         self.list.setViewMode(QtWidgets.QListWidget.IconMode)
         # IconMode 默认 movement=Free（桌面图标语义：条目可被按住拖离
         # 网格槽位，且不区分左右键），拖过的条目还会记住自定义位置
@@ -677,6 +690,7 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self.list.setUniformItemSizes(True)
         self.list.setWordWrap(True)
         self.list.itemDoubleClicked.connect(self._on_double_click)
+        self.list.emptyClicked.connect(self._on_empty_clicked)
         self.list.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._on_context_menu)
 
@@ -998,6 +1012,11 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
             self.target_label.setStyleSheet("padding: 4px 8px; color: #6f6;")
 
     # ---------------- 交互 ----------------
+
+    def _on_empty_clicked(self):
+        """点空白处取消选中：连 current 一起清空（Qt 默认点空白保留
+        选中态），避免选中高亮一直挂在缩略图上。"""
+        self.list.setCurrentRow(-1)
 
     def _on_double_click(self, item):
         hdr_path = item.data(QtCore.Qt.UserRole)

@@ -338,6 +338,11 @@ def main():
             # 全部视图恢复
             win._select_category(hdr_browser.KEY_ALL)
             assert win._visible_count() == 6
+            # 点空白取消选中：current 连同选中一起清空
+            win.list.setCurrentRow(0)
+            win.list.emptyClicked.emit()
+            assert win.list.currentRow() == -1, win.list.currentRow()
+            assert win.list.selectedIndexes() == []
             # 生成中显示进度行;线程池并发按核数取中低档(2..4)
             assert win.progress_widget.isVisibleTo(win), \
                 "generating but progress row hidden"
