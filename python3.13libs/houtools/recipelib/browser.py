@@ -338,6 +338,20 @@ class _Grid(QtWidgets.QListWidget):
         self._press_pos = None
         super().mouseReleaseEvent(event)
 
+    def focusInEvent(self, event):
+        # QAbstractItemView 拿到键盘焦点且 current 无效时，会把首行设为
+        # current 但不选中（Qt 内建行为）：重开面板时焦点恢复到网格
+        # （上次关闭前点过空白 = 网格持焦且无选中）必触发，表现为
+        # "预览显示第一卡但卡片无高亮"。焦点建立后若无选中项就把
+        # current 退回 -1，维持"currentItem 非空 ⟺ 有选中"的面板
+        # 不变量；点卡片时 mousePress 紧随焦点事件、会重新设
+        # current+选中，不受影响
+        row = self.currentRow()
+        super().focusInEvent(event)
+        if row == -1 and self.currentRow() != -1 \
+                and not self.selectedItems():
+            self.setCurrentRow(-1)
+
 
 class _PreviewNameLabel(QtWidgets.QLabel):
     """预览面板的名称标签：双击可自定义显示名（支持中文）。"""
@@ -960,6 +974,14 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.search.textChanged.connect(lambda _t: self._search_timer.start())
 
         self._clear_preview()
+
+        # 初始焦点显式给侧栏：不指定时首次激活 Qt 会把焦点给 tab 链
+        # 首个可聚焦控件（Houdini 样式下按钮不可聚焦，落点是搜索框，
+        # 用户不期望搜索框预激活）。不能给网格——QAbstractItemView
+        # 拿到键盘焦点且 current 无效时会把首行设为 current（不选中，
+        # 实测），表现为"预览显示第一卡但卡片无高亮"；侧栏在 rebuild
+        # 时已静默 setCurrentItem（KEY_ALL），焦点落上去零副作用
+        self.sidebar.setFocus()
 
     # ---------------- 数据加载与过滤 ----------------
 

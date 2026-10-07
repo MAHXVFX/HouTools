@@ -574,6 +574,35 @@ def main():
                                   list(infos) if lib_dirs else []):
                 win = rl_browser._RecipeLibraryWindow()
                 win.reload()
+                # 初始焦点在侧栏而非搜索框（用户不期望搜索框预激活；
+                # 对隐藏窗口 setFocus 即设定激活时的焦点控件）
+                assert win.focusWidget() is win.sidebar, win.focusWidget()
+                # 首次 show（模拟打开）：焦点不得落到网格——QAbstractItemView
+                # 拿键盘焦点且 current 无效时会把首行设为 current（不选中），
+                # 曾表现为"预览显示第一卡但卡片无高亮"
+                win.show()
+                app.processEvents()
+                assert win.focusWidget() is win.sidebar, win.focusWidget()
+                assert win.list.currentRow() == -1, win.list.currentRow()
+                assert win.list.selectedIndexes() == []
+                assert win.preview_name.text() == "", win.preview_name.text()
+                # 回归：网格在无选中时收到焦点建立事件（真实场景=上次
+                # 关闭前点过空白即"网格持焦且 current 已清"，重开面板时
+                # 窗口激活把焦点恢复给网格），Qt 会把首行设为 current
+                # （不选中），曾表现为"预览显示第一卡但卡片无高亮"；
+                # _Grid.focusInEvent 须把无选中的 current 回退。offscreen
+                # 下首次 show 后窗口处于激活态，setFocus 即投递焦点事件
+                win.list.setCurrentRow(0)
+                assert win.preview_name.text()
+                win.list.emptyClicked.emit()   # 点空白：current 清空
+                assert win.list.currentRow() == -1
+                assert win.preview_name.text() == ""
+                win.list.setFocus()
+                app.processEvents()
+                assert win.list.currentRow() == -1, win.list.currentRow()
+                assert win.list.selectedIndexes() == []
+                assert win.preview_name.text() == "", win.preview_name.text()
+                win.hide()
                 # 工具统一字体已应用到窗口树（子控件经继承生效）
                 assert win.font().family() == "Alimama ShuHeiTi", \
                     win.font().family()
