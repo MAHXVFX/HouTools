@@ -1662,7 +1662,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         act_thumb = menu.addAction("设置缩略图...")
         act_thumb_clear = None
         if metadata.get_thumb(info.name):
-            act_thumb_clear = menu.addAction("清除缩略图")
+            act_thumb_clear = menu.addAction("清除缩略图...")
         # 清除颜色不进菜单：颜色对话框里「恢复默认」+ 确认
         act_color = menu.addAction("自定义颜色...")
         act_copy = menu.addAction("复制内部名")
@@ -1680,11 +1680,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         elif act is act_thumb:
             self._set_thumb(info)
         elif act is not None and act is act_thumb_clear:
-            metadata.clear_thumb(info.name)
-            self._thumb_cache.pop(info.name, None)
-            self._cover_cache.clear()
-            item.setIcon(self._base_icon(info))
-            self._refresh_current_item()
+            self._clear_thumb(info, item)
         elif act is act_color:
             self._set_color(info)
         elif act is act_copy:
@@ -1851,6 +1847,26 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self._update_preview(info)
         self.status.setText("{}：缩略图已更新（{}）".format(
             self._display_label(info), os.path.basename(stored)))
+
+    def _clear_thumb(self, info, item):
+        """清除缩略图，带确认防误触：只删工具内保存的缩略图副本，
+        用户原图不受影响。item 是右键命中的卡片（右键不改选中，
+        未必是 current）。"""
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("清除缩略图")
+        box.setText("确定清除「{}」的缩略图？\n"
+                    "（只删工具内保存的缩略图副本，原图不受影响）".format(
+                        self._display_label(info)))
+        box.setStandardButtons(QtWidgets.QMessageBox.Yes
+                               | QtWidgets.QMessageBox.No)
+        localize_buttons(box)   # Yes → 确认、No → 取消
+        if box.exec_() != QtWidgets.QMessageBox.Yes:
+            return
+        metadata.clear_thumb(info.name)
+        self._thumb_cache.pop(info.name, None)
+        self._cover_cache.clear()
+        item.setIcon(self._base_icon(info))
+        self._refresh_current_item()
 
     def _open_doc_for(self, info):
         if self._doc_dialog is not None:

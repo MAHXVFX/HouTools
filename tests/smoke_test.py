@@ -765,6 +765,26 @@ def main():
                 assert win.list.currentItem() is not None, "reload 后选中丢失"
                 assert win.preview_name.text() == "Light B", \
                     win.preview_name.text()
+                # 清除缩略图带确认（防误触）：选 No 保留，选 Yes 才真清
+                thumb_pm = QtGui.QPixmap(64, 42)
+                thumb_pm.fill(QtGui.QColor("#3a7bd5"))
+                rl_meta.set_thumb_from_pixmap("houtools::light::b", thumb_pm)
+                assert rl_meta.get_thumb("houtools::light::b")
+                thumb_item = next(
+                    it for it in (win.list.item(i)
+                                  for i in range(win.list.count()))
+                    if it.data(QtCore.Qt.UserRole) == "houtools::light::b")
+                with patch("PySide6.QtWidgets.QMessageBox.exec_",
+                           return_value=QtWidgets.QMessageBox.No):
+                    win._clear_thumb(infos[1], thumb_item)
+                assert rl_meta.get_thumb("houtools::light::b"), \
+                    "选「取消」应保留缩略图"
+                with patch("PySide6.QtWidgets.QMessageBox.exec_",
+                           return_value=QtWidgets.QMessageBox.Yes):
+                    win._clear_thumb(infos[1], thumb_item)
+                assert not rl_meta.get_thumb("houtools::light::b"), \
+                    "选「确认」应清除缩略图"
+                assert "houtools::light::b" not in win._thumb_cache
                 # 应用分发：node 预设无选中 → 引导文案（不触 hou）
                 with patch.object(rl_browser.store, "selected_nodes",
                                   return_value=[]):
