@@ -27,7 +27,8 @@ from houtools.recipelib.crop import ThumbCropDialog
 from houtools.recipelib.docs import DocEditorDialog, MarkdownMediaView, MediaDialog
 from houtools.ui import fonts as tool_fonts
 from houtools.ui.sidebar import (SIDEBAR_COUNT_ROLE, SIDEBAR_HEADER_ROLE,
-                                 SIDEBAR_ICON_ROLE, SidebarDelegate)
+                                 SIDEBAR_ICON_ROLE, SidebarDelegate,
+                                 sidebar_icon_pixmap)
 from houtools.ui.badge import FavoriteBadge
 from houtools.ui.dialogs import localize_buttons, localize_color_dialog, warn
 from houtools.ui.taskbar import apply_appwindow_flags
@@ -143,16 +144,31 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
         f.setBold(bold)
         return f
 
+    def _draw_watermark(self, painter, option, clip_path, card, thumb_h):
+        """「节点参数」卡片水印：侧栏「节点参数」行同款滑块图标
+        （sidebar_icon_pixmap("sliders")，自带 (kind, size, dpr) 缓存），
+        低透明度铺在文字区右侧（垂直居中）——文字左对齐、右侧天然
+        留空，图标如"盖在右下角的章"；居中会与文字重叠打架（实测）。
+        调用方已保证画在缩略图/文字之前。"""
+        dpr = option.widget.devicePixelRatioF() \
+            if option.widget is not None else 1.0
+        block_h = self.text_block_height()
+        text_w = card.width() - self.MARGIN * 2
+        size = max(18, min(48, int(block_h * 0.55), int(text_w * 0.6)))
+        pm = sidebar_icon_pixmap("sliders", size, dpr)
+        area = QtCore.QRectF(card.left() + self.MARGIN,
+                             card.top() + self.MARGIN + thumb_h
+                             + self.TEXT_TOP_GAP,
+                             text_w, block_h)
+        painter.save()
+        painter.setClipPath(clip_path)
+        painter.setOpacity(0.22)
+        painter.drawPixmap(int(area.right() - size - 2),
+                           int(area.center().y() - size / 2), pm)
+        painter.restore()
+
     def sizeHint(self, option, index):
         return self._win.list.gridSize()
-
-    def paint(self, painter, option, index):
-        info = self._win._info_by_name.get(index.data(QtCore.Qt.UserRole))
-        thumb_h = self._win.thumb_height()
-        selected = bool(option.state & QtWidgets.QStyle.State_Selected)
-
-        painter.save()
-        painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
 
     def paint(self, painter, option, index):
         info = self._win._info_by_name.get(index.data(QtCore.Qt.UserRole))
@@ -190,6 +206,12 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
         path = QtGui.QPainterPath()
         path.addRoundedRect(QtCore.QRectF(card), 8, 8)
         painter.fillPath(path, bg)
+
+        # 「节点参数」卡片水印：侧栏「节点参数」行同款滑块图标，铺在
+        # 卡片最底层（clip 圆角内、缩略图/文字之下）；缩略图不透明会
+        # 盖住上半部分，水印实际在文字区与边距透出
+        if info is not None and not self._win._submenus_of(info):
+            self._draw_watermark(painter, option, path, card, thumb_h)
 
         m = self.MARGIN
         text_w = card.width() - m * 2

@@ -785,6 +785,34 @@ def main():
                 assert not rl_meta.get_thumb("houtools::light::b"), \
                     "选「确认」应清除缩略图"
                 assert "houtools::light::b" not in win._thumb_cache
+                # 「节点参数」卡片水印：滑块图标铺在卡片最底层（文字区
+                # 透出，缩略图盖住上半）；其他类型卡片不画
+                def _render_card(info_obj):
+                    row = next(
+                        i for i in range(win.list.count())
+                        if win.list.item(i).data(QtCore.Qt.UserRole)
+                        == info_obj.name)
+                    gs = win.list.gridSize()
+                    img = QtGui.QImage(gs.width(), gs.height(),
+                                       QtGui.QImage.Format_ARGB32_Premultiplied)
+                    img.fill(QtGui.QColor("#26262b"))
+                    p = QtGui.QPainter(img)
+                    opt = QtWidgets.QStyleOptionViewItem()
+                    opt.rect = QtCore.QRect(0, 0, gs.width(), gs.height())
+                    win._card_delegate.paint(
+                        p, opt, win.list.model().index(row, 0))
+                    p.end()
+                    return img
+
+                parm_img = _render_card(infos[2])    # plain::c 无 submenu
+                tool_img = _render_card(infos[0])    # pyro::a 有 submenu
+                with patch.object(rl_browser._CardDelegate,
+                                  "_draw_watermark",
+                                  lambda *a, **k: None):
+                    parm_nowm = _render_card(infos[2])
+                    tool_nowm = _render_card(infos[0])
+                assert parm_img != parm_nowm, "节点参数卡应带水印"
+                assert tool_img == tool_nowm, "非节点参数卡不应有水印"
                 # 应用分发：node 预设无选中 → 引导文案（不触 hou）
                 with patch.object(rl_browser.store, "selected_nodes",
                                   return_value=[]):
