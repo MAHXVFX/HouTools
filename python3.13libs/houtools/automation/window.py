@@ -19,7 +19,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QComboBox,
     QLineEdit, QStackedWidget, QCheckBox, QWidget, QScrollArea, QSizePolicy,
-    QGraphicsDropShadowEffect, QApplication, QMessageBox, QMenu,
+    QGraphicsDropShadowEffect, QApplication, QMenu,
 )
 from PySide6.QtCore import Qt, Signal, QPoint, QSize, QRect, QEvent, QTimer, QObject
 from PySide6.QtGui import QColor, QIcon, QKeySequence, QShortcut
@@ -38,6 +38,7 @@ from houtools.automation.styles import STYLE_SHEET
 
 from houtools.core.constants import PROJECT_ROOT
 from houtools.core.log import get_logger
+from houtools.ui import dialogs
 from houtools.ui import fonts as tool_fonts
 logger = get_logger("automation.window")
 
@@ -172,6 +173,9 @@ def _split_parm_path(parm_path: str) -> tuple[str, str]:
     - 无 ``/``(纯参数名)→ ``(原字符串, "")``
     - 末尾 ``/``(如 ``/obj/foo/``)→ ``("/obj/foo", "")``
     """
+    # 先剥掉可能粘贴进来的 ``hou.parm('...')`` wrapper(与拖入路径框的
+    # 解析同源),否则表达式里的 ``/`` 会把引号碎片当成节点路径
+    parm_path = _extract_parm_path(parm_path)
     parm_path = parm_path.strip()
     if not parm_path:
         return "", ""
@@ -272,6 +276,8 @@ def _activate_existing_panel(desktop) -> bool:
          PythonPanel tab 的 activeInterface 名字认领;Qt 窗口包装失败时
          宁可不动作也绝不误关。隐藏的残留面板(关闭后仍挂桌面)在此回收。
     """
+    import hou  # Houdini-only(paneTabType 枚举);按约定放函数内,保证无头可导入
+
     activated = False
 
     for widget in _iter_live_panels():
@@ -637,10 +643,13 @@ def _extract_drag_text(mime) -> str:
         urls = mime.urls()
         if urls:
             return urls[0].toString()
-    # 兜底:遍历所有格式,解码 raw bytes。Houdini 自定义 MIME 内容
-    # 通常仍是 UTF-8 文本(``hou.parm('...')`` 表达式),decode errors=ignore
-    # 容错非文本格式(比如图片 binary)。
+    # 兜底:只遍历 Houdini 自有 MIME 前缀(application/x-houdini-*),解码
+    # raw bytes —— Houdini 自定义 MIME 内容通常仍是 UTF-8 文本
+    # (``hou.parm('...')`` 表达式)。任意格式都解码会把图片/颜色等二进制
+    # 格式的乱码当文本塞进输入框,故收窄为前缀白名单。
     for fmt in mime.formats():
+        if not fmt.startswith("application/x-houdini-"):
+            continue
         try:
             data = bytes(mime.data(fmt)).decode("utf-8", errors="ignore").strip()
             if data:
@@ -767,6 +776,30 @@ class AutomationWindow(QWidget):
         if app is not None:
             app.removeEventFilter(self)
 
+    def _is_own_native_window(self, obj) -> bool:
+        """判断事件源 ``obj``(QWindow) 是否为本面板专属的原生窗口。
+
+        旧实现 ``obj is self.window().windowHandle()`` 在停靠形态下失效:
+        ``self.window()`` 是 Houdini 主窗,导致主窗收到的 Delete(部件焦点
+        被 Houdini 清空时)被误认领成"删除本面板选中任务"。现改为在顶层
+        部件里找 windowHandle 与 obj 相同者,要求:
+          - 其部件树包含本面板(``isAncestorOf``,跨窗口返回 False);
+          - 窗口标题以本工具接口名结尾(浮动面板标题格式
+            "Houdini FX - <接口名>",与 _PanelCenterFilter 同款判定)——
+            主窗等其他共享窗口一律不认领(Delete 归属不明,宁可不动作)。
+        """
+        app = QApplication.instance()
+        if app is None:
+            return False
+        for w in app.topLevelWidgets():
+            if w.windowHandle() is not obj or not w.isAncestorOf(self):
+                continue
+            try:
+                return w.windowTitle().endswith(INTERFACE_NAME)
+            except RuntimeError:
+                continue
+        return False
+
     def eventFilter(self, obj, event):
         # 过滤器挂在 QApplication 上会收到所有对象的事件；面板开关过程
         # 中部分 QWindow 的 C++ 对象已销毁，透传时 PySide 抛 RuntimeError
@@ -778,17 +811,18 @@ class AutomationWindow(QWidget):
             if etype not in (QEvent.KeyPress, QEvent.ShortcutOverride):
                 return super().eventFilter(obj, event)
             if getattr(event, "key", lambda: None)() == Qt.Key_Delete \
-                    and self._selected_index is not None:
+                    and self._selected_index is not None \
+                    and self._is_own_native_window(obj):
                 # Houdini 浮动面板会在鼠标释放后清空部件焦点（focus=None），
                 # 此时 Delete 直接投递给原生 QWindow，任何部件处理器都收
-                # 不到。若该原生窗口正是本面板，视为"删除选定任务"并在
-                # 源头消费。
-                if obj is self.window().windowHandle():
-                    if etype == QEvent.KeyPress:
-                        self._remove_slot(self._selected_index)
-                        return True
-                    if etype == QEvent.ShortcutOverride:
-                        return True  # 阻止 Houdini 全局快捷键先吃掉 Delete
+                # 不到。若该原生窗口是本面板专属的浮动窗口，视为"删除选定
+                # 任务"并在源头消费；停靠形态下事件源是 Houdini 主窗，
+                # 归属不明，不认领（见 _is_own_native_window）。
+                if etype == QEvent.KeyPress:
+                    self._remove_slot(self._selected_index)
+                    return True
+                if etype == QEvent.ShortcutOverride:
+                    return True  # 阻止 Houdini 全局快捷键先吃掉 Delete
             return super().eventFilter(obj, event)
         except RuntimeError:
             return False
@@ -1136,7 +1170,7 @@ class AutomationWindow(QWidget):
             else:
                 folder = resolved
             if not folder or not os.path.isdir(folder):
-                QMessageBox.warning(
+                dialogs.warn(
                     slot, "路径不存在",
                     f"输出路径的文件夹不存在：\n{folder}"
                 )
@@ -1188,6 +1222,26 @@ class AutomationWindow(QWidget):
             webhook_url_le.setText(params.get("webhook_url", ""))
         elif type_str == "OPEN_DW":
             combo.setCurrentIndex(3)  # 无参数页,占位提示见 page3
+        else:
+            # 未知任务类型(新版数据被旧版面板打开/手工编辑等):绝不静默
+            # 落到默认 BUTTON_CLICK —— 那会把原始数据悄悄改坏。渲染为
+            # 禁用占位,原始 dict 挂在槽上由 _collect_data 原样透传,
+            # Start 落盘不破坏未知类型数据。
+            logger.warning("未知任务类型: %s(原始数据已保留,该槽只读)", type_str)
+            slot._raw_data = dict(data)
+            # 本槽的 combo 独立追加占位项并切过去:setCurrentIndex 触发
+            # _on_type_changed(4) 自动隐藏跳转按钮、切到占位页,随后禁用
+            # 下拉,杜绝用户改类型把原始数据弄丢
+            combo.addItem("未知类型")
+            hint_page = QWidget()
+            hint_layout = QHBoxLayout(hint_page)
+            hint_layout.setContentsMargins(0, 0, 0, 0)
+            hint_label = QLabel("未知类型（原始数据已保留）")
+            hint_label.setStyleSheet("color: #999999; background: transparent;")
+            hint_layout.addWidget(hint_label)
+            stacked.addWidget(hint_page)
+            combo.setCurrentIndex(combo.count() - 1)
+            combo.setEnabled(False)
 
         enabled_cb.setChecked(enabled)
 
@@ -1204,8 +1258,9 @@ class AutomationWindow(QWidget):
             # 输入无效，恢复为当前数量
             self._update_task_count_input()
             return
-        if new_count < 0:
-            new_count = 0
+        # 夹到 1..500:界面语义上始终保底 1 个空槽(0 个槽无法操作),
+        # 上限防手滑输入超大数一次性创建海量控件把界面卡死
+        new_count = max(1, min(500, new_count))
         current_count = len(self._slot_widgets)
         if new_count == current_count:
             return
@@ -1257,6 +1312,25 @@ class AutomationWindow(QWidget):
             index = len(self._slot_widgets) - 1
         if not (0 <= index < len(self._slot_widgets)):
             return
+
+        # 拖动中删除:先复位拖拽状态(等效 _on_handle_released 的清理段),
+        # 否则手柄上的鼠标捕获和悬空的 _drag_source_index 会在删除后继续
+        # 响应 move/release,造成幽灵重排。删的是拖动源槽时整体复位;
+        # 删的是源槽之前的槽时源索引前移一格,后续 move 才不会错位。
+        if self._drag_source_index is not None:
+            if index == self._drag_source_index:
+                handle = self._slot_handles[index]
+                try:
+                    if QApplication.mouseGrabber() is handle:
+                        handle.releaseMouse()
+                except RuntimeError:
+                    pass  # C++ 对象已销毁,捕获随析构自动释放
+                handle.setCursor(Qt.OpenHandCursor)
+                self._drag_source_index = None
+                self._drag_press_pos = None
+                self._drag_active = False
+            elif index < self._drag_source_index:
+                self._drag_source_index -= 1
 
         slot = self._slot_widgets.pop(index)
         self._slot_handles.pop(index)  # 同步 pop handle
@@ -1661,6 +1735,10 @@ class AutomationWindow(QWidget):
         self._log_to_disk_cb = QCheckBox("将日志输出到磁盘")
         self._log_to_disk_cb.setChecked(self._log_to_disk_enabled)
         self._log_to_disk_cb.setToolTip("勾选后，执行日志将保存到 $HIP/HouTools_cfg/Automation_logs/")
+        # 引擎运行中禁用:stdout 重定向与该开关耦合(开始执行时按它包
+        # _LogTee),运行中切换会留下"包了没人还原"的缺口;_on_all_completed
+        # 复位 _running 后,下次打开设置自然恢复可勾
+        self._log_to_disk_cb.setEnabled(not self._running)
         layout.addWidget(self._log_to_disk_cb)
 
         # 按钮
@@ -1684,11 +1762,20 @@ class AutomationWindow(QWidget):
         self._log_to_disk_enabled = settings.get("log_to_disk", False)
 
     def _save_settings(self):
-        """保存设置到配置文件。"""
-        AutomationDataManager.save_settings(
+        """保存设置到配置文件(失败弹窗提示,不静默)。"""
+        ok = AutomationDataManager.save_settings(
             {"log_to_disk": self._log_to_disk_enabled},
             self._current_config_name,
         )
+        if not ok:
+            logger.warning(
+                "Automation: 设置保存失败 filename=%s", self._current_config_name
+            )
+            dialogs.warn(
+                self, "保存失败",
+                "设置写入配置文件失败:\n"
+                + AutomationDataManager.get_data_path(self._current_config_name),
+            )
 
     def _get_log_path(self) -> str:
         """获取日志文件路径（基于当前时间，防覆盖）。
@@ -1708,7 +1795,18 @@ class AutomationWindow(QWidget):
             base = tempfile.gettempdir()
 
         log_dir = os.path.join(base, "HouTools_cfg", "Automation_logs")
-        os.makedirs(log_dir, exist_ok=True)
+        try:
+            os.makedirs(log_dir, exist_ok=True)
+        except OSError as e:
+            # 目录建不出来(权限/磁盘满等):禁用磁盘日志并明确告知,否则
+            # 每次 _write_log 都在同一个失败点上反复抛错
+            logger.warning("无法创建日志目录，已停用磁盘日志: %s (%s)", log_dir, e)
+            self._log_to_disk_enabled = False
+            dialogs.warn(
+                self, "日志目录创建失败",
+                f"无法创建日志目录:\n{log_dir}\n\n本次执行已停用日志输出到磁盘。",
+            )
+            return ""
 
         base_name = datetime.now().strftime("%Y%m%d%H%M")
         log_path = os.path.join(log_dir, base_name + ".log")
@@ -1731,9 +1829,11 @@ class AutomationWindow(QWidget):
         if not self._log_to_disk_enabled:
             return
 
-        # 首次调用时确定路径并缓存
+        # 首次调用时确定路径并缓存("" = 目录创建失败,本次已停用)
         if not hasattr(self, "_current_log_path") or self._current_log_path is None:
             self._current_log_path = self._get_log_path()
+        if not self._current_log_path:
+            return
 
         try:
             with open(self._current_log_path, "a", encoding="utf-8") as f:
@@ -1811,6 +1911,7 @@ class AutomationWindow(QWidget):
             slot.deleteLater()
         self._slot_widgets.clear()
         self._slot_handles.clear()  # 同步清空 handle 平行列表
+        self._selected_index = None  # 选中指针随槽一起清空(同 _remove_slot 契约)
         self._last_selected_index = None  # 重置差量状态
 
         for item_data in raw_list:
@@ -1872,14 +1973,12 @@ class AutomationWindow(QWidget):
         清空部件焦点,内联编辑不可靠。同名配置已存在时**不覆盖**(否则
         会把用户任务清成空),仅切换并加载其已有内容。
         """
-        from PySide6.QtWidgets import QInputDialog
-
-        name, ok = QInputDialog.getText(self, "新建配置", "")
+        name, ok = dialogs.prompt_text(self, "新建配置", "配置名称:")
         if not ok:
             return
         sanitized = _sanitize_config_name(name)
         if not sanitized:
-            QMessageBox.warning(
+            dialogs.warn(
                 self, "无效名称",
                 "配置名不能为空,不能包含路径分隔符,\n"
                 "也不能使用 Windows 保留名(CON/PRN/AUX/NUL/COM1-9/LPT1-9)。",
@@ -1888,7 +1987,7 @@ class AutomationWindow(QWidget):
 
         path = AutomationDataManager.get_data_path(sanitized)
         if os.path.exists(path):
-            QMessageBox.information(
+            dialogs.info(
                 self, "配置已存在",
                 f"配置 {sanitized} 已存在,已切换到该配置(内容未改动)。",
             )
@@ -1896,7 +1995,7 @@ class AutomationWindow(QWidget):
             logger.warning(
                 "Automation: 新建配置落盘失败 filename=%s", sanitized
             )
-            QMessageBox.warning(self, "创建失败", f"无法创建配置文件:\n{path}")
+            dialogs.warn(self, "创建失败", f"无法创建配置文件:\n{path}")
             return
         self._current_config_name = sanitized
         # 与下拉切换配置同款行为:加载新配置的内容到面板
@@ -1922,6 +2021,20 @@ class AutomationWindow(QWidget):
         """
         tasks: list[dict] = []
         for slot in self._slot_widgets:
+            # 未知类型槽:原样透传创建时挂上的原始 dict(仅 enabled 跟随
+            # 勾选框),避免按 UI 控件重建把未知类型数据改坏 —— 见
+            # _populate_slot_from_data 的未知类型分支
+            raw = getattr(slot, "_raw_data", None)
+            if raw is not None:
+                passthrough = dict(raw)
+                enabled_cb = slot.findChild(QCheckBox, "slotEnabled")
+                passthrough["enabled"] = (
+                    enabled_cb.isChecked() if enabled_cb
+                    else raw.get("enabled", True)
+                )
+                tasks.append(passthrough)
+                continue
+
             combo = slot.findChild(QComboBox, "taskType")
             if combo is None:
                 continue
@@ -2055,7 +2168,20 @@ class AutomationWindow(QWidget):
         编辑后未点 Start 直接关窗 = 丢弃未执行编辑(有意为之)。
         """
         tasks_data = self._save_data()  # 收集 + 落盘(只此一处)
-        task_items = [TaskItem.from_dict(d) for d in tasks_data]
+        # 未知类型/字段缺损的任务原样留在落盘数据里,但不参与本次执行
+        # (TaskItem.from_dict 对它们抛 ValueError/KeyError/TypeError)
+        task_items = []
+        for d in tasks_data:
+            try:
+                task_items.append(TaskItem.from_dict(d))
+            except (ValueError, KeyError, TypeError) as e:
+                logger.warning(
+                    "任务无法执行，已从本次运行跳过: type=%s (%s)", d.get("type"), e
+                )
+
+        # 先还原可能残留的旧重定向(上次执行异常收尾/重复 Start),杜绝
+        # _LogTee 嵌套;必须在写日志头之前做 —— 还原会清日志路径缓存
+        self._restore_stdout()
 
         # 清除上次日志路径缓存，本次执行重新计算
         self._current_log_path = None
@@ -2131,13 +2257,27 @@ class AutomationWindow(QWidget):
         self._restore_stdout()
 
     def _restore_stdout(self):
-        """恢复被重定向的 stdout/stderr。"""
-        if self._log_to_disk_enabled and hasattr(self, "_orig_stdout"):
+        """恢复被重定向的 stdout/stderr（幂等，可安全重复调用）。
+
+        不看 ``_log_to_disk_enabled`` 现值 —— 开关可能在运行期间被改
+        （换配置重载设置等），只要还有挂着的重定向就一律还原，否则开关
+        关掉后 tee 永远卸不下来。
+        """
+        if hasattr(self, "_orig_stdout"):
             sys.stdout = self._orig_stdout
             sys.stderr = self._orig_stderr
             del self._orig_stdout
             del self._orig_stderr
             self._current_log_path = None  # 清除日志路径缓存
+        elif isinstance(sys.stdout, _LogTee):
+            # 兜底:上次收尾没走到(面板带着重定向被销毁等)导致实例属性
+            # 丢失、sys.stdout 仍是被包的 tee。沿 _original 链解包,防止
+            # 下次执行在 tee 之上再包一层(嵌套后同一行输出会写多份日志)
+            while isinstance(sys.stdout, _LogTee):
+                sys.stdout = sys.stdout._original
+            while isinstance(sys.stderr, _LogTee):
+                sys.stderr = sys.stderr._original
+            self._current_log_path = None
 
     # ── 工具栏动作 ──────────────────────────────────────────
 
@@ -2283,6 +2423,8 @@ class AutomationWindow(QWidget):
             slot.deleteLater()
         self._slot_widgets.clear()
         self._slot_handles.clear()  # 平行列表必须同步 —— 见 docstring
+        self._selected_index = None  # 选中指针随槽一起清空(同 _remove_slot 契约)
+        self._last_selected_index = None  # 差量样式状态同步归零
         self._add_slot()
 
     # ── 窗口关闭 ───────────────────────────────────────────
@@ -2295,10 +2437,12 @@ class AutomationWindow(QWidget):
         完成收尾——期间由模块级 _LIVE_ENGINES 持有引用，防止运行中的 QThread
         被 GC 销毁。其信号随面板销毁自动断开，不会再回调本窗口。
         """
-        if self._running:
-            if self._engine is not None:
-                self._engine.cancel()
-            self._cancel_requested = False
-            self._running = False
-            self._restore_stdout()
+        if self._engine is not None:
+            self._engine.cancel()
+        # _running/_cancel_requested 不在此复位:状态收尾只能由
+        # _on_all_completed/引擎负责 —— 面板子部件大概率收不到 closeEvent,
+        # 这里被调用不代表窗口真正销毁,贸然复位会制造"假空闲"(按钮恢复
+        # 可点,旧引擎迟到的 all_completed 又把新引擎状态打翻)。
+        # stdout 恢复是幂等的,重复调用无副作用。
+        self._restore_stdout()
         super().closeEvent(event)

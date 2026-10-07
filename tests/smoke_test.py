@@ -5,6 +5,7 @@ Run with Houdini's Python (no GUI, no Houdini session needed):
     "C:\\Program Files\\Side Effects Software\\Houdini 22.0.429\\python313\\python.exe" tests\\smoke_test.py
 """
 
+import atexit
 import json
 import os
 import shutil
@@ -41,6 +42,18 @@ if _pyside_dir.exists():
 _qt_bin = HOUDINI_ROOT / "bin"
 if _qt_bin.exists():
     os.add_dll_directory(str(_qt_bin))
+
+
+# 任一 assert 失败会中断 main()，行内 unlink 全部跳过 —— 统一登记 +
+# atexit 兜底清理（含异常退出），防止测试残留污染真实 settings/。
+_CLEANUP_FILES = []
+
+
+def _track_rm(path):
+    _CLEANUP_FILES.append(Path(path))
+
+
+atexit.register(lambda: [p.unlink(missing_ok=True) for p in _CLEANUP_FILES])
 
 
 def main():
@@ -217,13 +230,14 @@ def main():
     aw._PANEL_REFS.clear()
 
     # 新建配置:OK 后立即创建空配置文件并切换当前配置;同名不覆盖仅切换
+    # （输入走 ui.dialogs.prompt_text 中文化实例,打桩该助手而非
+    # QInputDialog 静态方法）
     with tempfile.TemporaryDirectory() as tmp:
         with patch.object(dm.AutomationDataManager, "_hip_base",
                           return_value=tmp), \
-             patch("PySide6.QtWidgets.QInputDialog.getText",
+             patch("houtools.ui.dialogs.prompt_text",
                    return_value=("MAtest", True)), \
-             patch("PySide6.QtWidgets.QMessageBox.information",
-                   return_value=None):
+             patch("houtools.ui.dialogs.info", return_value=None):
             win._on_new_config()
             cfg_dir = Path(tmp) / "HouTools_cfg" / "Automation_json"
             assert (cfg_dir / "MAtest.json").is_file(), "新建配置未立即落盘"
@@ -243,6 +257,12 @@ def main():
 
     win._remove_slot(0)  # 槽管理冒烟
     print("AutomationWindow instantiation OK")
+
+    # 真实实例化 videoseq 窗口（捕获 __init__ 结构损伤；无视频、无线程）
+    from houtools.videoseq.window import _VideoToSequenceWindow
+    vs_win = _VideoToSequenceWindow()
+    vs_win.deleteLater()
+    print("VideoseqWindow instantiation OK")
 
     # ExecutionEngine 构造（回归：曾因缺 data_manager import 在此 NameError）
     from houtools.automation.execution_engine import ExecutionEngine
@@ -300,6 +320,7 @@ def main():
         fav_store = houtools.core.settings.JsonStore(
             "_smoke_hdr.json",
             defaults={"favorites": [], "thumb_size": 128, "pin_on_top": True})
+        _track_rm(fav_store.path)
         fav_store.set("favorites", [])  # 上次异常中断可能残留旧收藏
         with patch.object(hdr_browser, "_SETTINGS", fav_store):
             assert not hdr_browser.get_favorites()
@@ -423,6 +444,7 @@ def main():
 
     rl_store_ps = houtools.core.settings.JsonStore(
         "_smoke_recipelib.json", defaults=dict(rl_meta._DEFAULTS))
+    _track_rm(rl_store_ps.path)
     # 上次异常中断可能残留旧状态（文件持久），先清干净
     rl_store_ps.set("favorites", [])
     rl_store_ps.set("tags", {})
@@ -569,6 +591,7 @@ def main():
                 exp_store = houtools.core.settings.JsonStore(
                     "_smoke_transfer_src.json",
                     defaults=dict(rl_meta._DEFAULTS))
+                _track_rm(exp_store.path)
                 with patch.object(rl_meta, "_SETTINGS", exp_store), \
                      patch.object(rl_meta, "THUMBS_DIR",
                                   Path(texp) / "thumbs"), \
@@ -668,6 +691,7 @@ def main():
                         dst_store = houtools.core.settings.JsonStore(
                             "_smoke_transfer_dst.json",
                             defaults=dict(rl_meta._DEFAULTS))
+                        _track_rm(dst_store.path)
                         with patch.object(rl_meta, "_SETTINGS", dst_store), \
                              patch.object(rl_meta, "THUMBS_DIR",
                                           Path(timp) / "thumbs"), \
@@ -730,6 +754,22 @@ def main():
                         raise AssertionError("bad package should fail")
                     except rl_transfer.TransferError as exc:
                         assert "manifest" in str(exc)
+
+                    # zip-slip 防护：manifest 的 original 由包作者任意
+                    # 伪造，../ 相对路径与绝对路径都只取文件名
+                    hda_import, _skip = rl_transfer._hda_plan(
+                        {"hda_files": {"recipes/a.hda": {
+                            "original": "../../evil.hda",
+                            "recipes": ["mahx::nope"]}}},
+                        {"recipes/a.hda"}, set())
+                    assert hda_import[0][1] == "evil.hda", hda_import
+                    hda_import, _skip = rl_transfer._hda_plan(
+                        {"hda_files": {"recipes/a.hda": {
+                            "original": "C:/abs/evil2.hda",
+                            "recipes": ["mahx::nope"]}}},
+                        {"recipes/a.hda"}, set())
+                    assert hda_import[0][1] == "evil2.hda", hda_import
+                    print("transfer zip-slip guard OK")
 
             # 浏览器窗口：list_recipes / selected_nodes / 网络编辑器全部打桩
             infos = [
@@ -1102,18 +1142,41 @@ def main():
 
     # Settings round-trip against the real settings/ directory.
     store = houtools.core.settings.JsonStore("_smoke_test.json", defaults={"n": 1})
+    _track_rm(store.path)
     store.set("n", 2, save=True)
     assert store.get("n") == 2
     store.path.unlink(missing_ok=True)
+    # 原子写：保存后无 .~tmp 残留（写盘中途崩溃不截断原文件）
+    assert not store.path.with_name(store.path.name + ".~tmp").exists()
     print("settings round-trip OK")
 
-    # 热键自定义存储 round-trip(JsonStore,settings/ 目录)
+    # 损坏的设置文件：读取失败时留底 .bak 再回退默认（防止下次 save
+    # 把尚可抢救的内容直接覆盖掉）
+    corrupt = houtools.core.settings.JsonStore(
+        "_smoke_corrupt.json", defaults={"n": 1})
+    _track_rm(corrupt.path)
+    corrupt.path.write_text("{not json", encoding="utf-8")
+    corrupt.load()
+    assert corrupt.get("n") == 1
+    assert corrupt.path.with_name(corrupt.path.name + ".bak").exists(), \
+        "损坏文件未留底 .bak"
+    corrupt.path.with_name(corrupt.path.name + ".bak").unlink(missing_ok=True)
+    corrupt.path.unlink(missing_ok=True)
+    print("corrupt settings backup OK")
+
+    # 热键自定义存储 round-trip（打桩到临时 store，不触真实 settings/；
+    # 此前直接删除真实 hotkeys.json，会把用户自定义键位一起删掉）
     from houtools.core import hotkeys
     _sym = "h.pane.wsheet.houtools_paste_as_object_merge"
-    hotkeys.set_custom_key(_sym, "Ctrl+Alt+P")
-    assert hotkeys.get_custom_key(_sym) == "Ctrl+Alt+P"
-    assert hotkeys.get_custom_key("h.houtools.nonexistent") is None
-    hotkeys._store().path.unlink(missing_ok=True)
+    _hotkey_store = houtools.core.settings.JsonStore(
+        "_smoke_hotkeys.json", defaults={})
+    _track_rm(_hotkey_store.path)
+    with patch.object(hotkeys, "_STORE", _hotkey_store):
+        hotkeys.set_custom_key(_sym, "Ctrl+Alt+P")
+        assert hotkeys.get_custom_key(_sym) == "Ctrl+Alt+P"
+        assert hotkeys.get_custom_key("h.houtools.nonexistent") is None
+        hotkeys.clear_custom_key(_sym)
+        assert hotkeys.get_custom_key(_sym) is None, "清除自定义键位失败"
     print("hotkey store round-trip OK")
 
     print("SMOKE TEST OK")

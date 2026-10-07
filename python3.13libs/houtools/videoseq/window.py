@@ -15,7 +15,7 @@ from typing import Optional
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QSpinBox, QSlider, QGroupBox, QFormLayout,
-    QFileDialog, QMessageBox, QProgressBar, QInputDialog,
+    QFileDialog, QProgressBar, QInputDialog,
 )
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 
@@ -23,6 +23,7 @@ from houtools.videoseq.ffmpeg import find_ffprobe as _get_ffprobe_path
 from houtools.videoseq.ffmpeg import get_startup_kwargs as _get_startup_kwargs
 
 from houtools.core.log import get_logger
+from houtools.ui import dialogs
 from houtools.ui import fonts as tool_fonts
 logger = get_logger("videoseq.window")
 
@@ -293,7 +294,8 @@ class _ProbeWorker(QThread):
             self.video_path,
         ]
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=30, **startup
+            cmd, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30, **startup
         )
         if result.returncode != 0:
             self._probe_ffmpeg(info, startup)
@@ -316,24 +318,24 @@ class _ProbeWorker(QThread):
                 num, den = r_frame_rate.split("/")
                 if int(den) > 0:
                     info.fps = int(num) / int(den)
-            except (ValueError, ZeroDivisionError):
-                pass
+            except (ValueError, ZeroDivisionError) as e:
+                logger.debug("fps 解析失败 %r: %s", r_frame_rate, e)
 
             # 帧数（优先 nb_frames）
             nb = stream.get("nb_frames")
             if nb and nb != "N/A":
                 try:
                     info.total_frames = int(nb)
-                except ValueError:
-                    pass
+                except ValueError as e:
+                    logger.debug("nb_frames 解析失败 %r: %s", nb, e)
 
             # 时长
             dur = stream.get("duration")
             if dur and dur != "N/A":
                 try:
                     info.duration = float(dur)
-                except ValueError:
-                    pass
+                except ValueError as e:
+                    logger.debug("duration 解析失败 %r: %s", dur, e)
             break
 
         # format 级别的时长作为回退
@@ -342,8 +344,8 @@ class _ProbeWorker(QThread):
             if fmt_dur:
                 try:
                     info.duration = float(fmt_dur)
-                except ValueError:
-                    pass
+                except ValueError as e:
+                    logger.debug("format.duration 解析失败 %r: %s", fmt_dur, e)
 
         # 通过时长计算帧数
         if info.total_frames == 0 and info.fps > 0 and info.duration > 0:
@@ -362,7 +364,8 @@ class _ProbeWorker(QThread):
             "-f", "null", "-",
         ]
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=120, **startup
+            cmd, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=120, **startup
         )
         output = result.stderr
 
@@ -405,7 +408,8 @@ class _ProbeWorker(QThread):
             "-f", "null", "-",
         ]
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=300, **startup
+            cmd, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=300, **startup
         )
         # 尝试从 stderr 中解析 frame 数
         frame_match = re.search(r"frame=\s*(\d+)", result.stderr)
@@ -421,7 +425,9 @@ class _ExtractWorker(QThread):
     """
 
     progress = Signal(int, int)       # current_frame, total_frames
-    finished = Signal(int, str)       # total_frames, output_dir
+    # 注意：完成信号不可叫 finished——会覆盖 QThread 内建的 finished
+    # （retire 兜底等依赖内建信号区分"线程收尾"与"业务完成"）
+    done = Signal(int, str)           # total_frames, output_dir
     error = Signal(str)
 
     def __init__(self, video_path, output_dir, ffmpeg_path,
@@ -436,6 +442,7 @@ class _ExtractWorker(QThread):
         self.prefix = prefix
         self._cancelled = False
         self._process = None
+        self.frames_written = 0   # 已写入帧数快照（取消时供窗口提示用）
 
     def cancel(self):
         # ffmpeg 未启动时（探测阶段）_process 为 None，terminate 无从谈起，
@@ -451,7 +458,11 @@ class _ExtractWorker(QThread):
         try:
             self._extract()
         except Exception as e:
-            if not self._cancelled:
+            # 取消途中再出异常也必须给一个收尾信号，否则窗口的
+            # 「停止中…」状态永远等不到复位
+            if self._cancelled:
+                self.error.emit("转换已取消")
+            else:
                 self.error.emit(str(e))
 
     def _extract(self):
@@ -504,10 +515,13 @@ class _ExtractWorker(QThread):
             self.error.emit("转换已取消")
             return
 
+        # stderr 必须 DEVNULL：本线程只读 stdout 的 progress 流，无人读取
+        # 的 stderr 管道写满（缓冲区约 4KB）后 ffmpeg 会卡死在写上，线程
+        # 随之永久挂起；失败原因由下方 returncode 给出中文提示
         self._process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
             **startup,
         )
 
@@ -529,8 +543,8 @@ class _ExtractWorker(QThread):
                 if line.startswith("frame="):
                     try:
                         frames_done = int(line.split("=", 1)[1].strip())
-                    except (ValueError, IndexError):
-                        pass
+                    except (ValueError, IndexError) as e:
+                        logger.debug("progress 行解析失败 %r: %s", line, e)
                     self.progress.emit(min(frames_done, total_frames), total_frames)
 
                 # progress=end 表示 ffmpeg 完成
@@ -541,12 +555,15 @@ class _ExtractWorker(QThread):
             # stdout 管道关闭（进程已终止）
             pass
 
+        self.frames_written = frames_done
+
         # 收尾必须保证 ffmpeg 真正退出、且等待有界：取消若发生在 Popen 之前，
         # cancel() 里那次 terminate 被跳过，进程还活着且已无人读 stdout——
         # 它很快会卡死在 progress 管道写上（缓冲区填满即停），裸 wait() 无超时
         # 会把线程永久挂起（窗口 closeEvent 靠轮询 isRunning 延迟关闭，
         # 线程挂起 = 隐藏的窗口永不关闭）
         proc, self._process = self._process, None
+        returncode = 0
         if proc is not None:
             if self._cancelled and proc.poll() is None:
                 try:
@@ -554,26 +571,30 @@ class _ExtractWorker(QThread):
                 except OSError:
                     pass
             try:
-                proc.wait(timeout=15)
+                returncode = proc.wait(timeout=15)
             except subprocess.TimeoutExpired:
                 try:
                     proc.kill()
                 except OSError:
                     pass
-                proc.wait(timeout=5)
+                returncode = proc.wait(timeout=5)
 
         if self._cancelled:
             self.error.emit("转换已取消")
             return
 
-        # 验证实际输出的文件数
-        actual_count = len([
-            f for f in os.listdir(self.output_dir)
-            if f.lower().endswith(".jpg") and f.startswith(self.prefix + ".")
-        ])
-        final_count = max(frames_done, actual_count)
+        if returncode != 0:
+            # stderr 已直弃 DEVNULL（无人读取会挂死线程），失败原因只能
+            # 按退出码给中文提示
+            self.error.emit(
+                f"ffmpeg 退出码 {returncode}，"
+                "视频可能损坏或参数不受支持。"
+            )
+            return
 
-        self.finished.emit(final_count, self.output_dir)
+        # 完成帧数只报 ffmpeg progress 的 frames_done：目录扫描会把同前缀
+        # 的旧序列文件（开工前未删/删除失败）数进去，虚报帧数
+        self.done.emit(frames_done, self.output_dir)
 
     def _get_video_info(self, startup: dict) -> VideoInfo:
         """获取视频信息（供提取帧时使用）"""
@@ -582,6 +603,7 @@ class _ExtractWorker(QThread):
 
         ffprobe = _get_ffprobe_path(self.ffmpeg_path)
         if ffprobe:
+            result = None
             try:
                 cmd = [
                     ffprobe, "-v", "quiet",
@@ -590,7 +612,8 @@ class _ExtractWorker(QThread):
                     self.video_path,
                 ]
                 result = subprocess.run(
-                    cmd, capture_output=True, text=True, timeout=30, **startup
+                    cmd, capture_output=True, text=True,
+                    encoding="utf-8", errors="replace", timeout=30, **startup
                 )
                 if result.returncode == 0:
                     data = json.loads(result.stdout)
@@ -603,8 +626,9 @@ class _ExtractWorker(QThread):
                                 num, den = r_frame_rate.split("/")
                                 if int(den) > 0:
                                     info.fps = int(num) / int(den)
-                            except (ValueError, ZeroDivisionError):
-                                pass
+                            except (ValueError, ZeroDivisionError) as e:
+                                logger.debug("fps 解析失败 %r: %s",
+                                             r_frame_rate, e)
                             nb = stream.get("nb_frames")
                             if nb and nb != "N/A":
                                 info.total_frames = int(nb)
@@ -621,8 +645,16 @@ class _ExtractWorker(QThread):
                     if info.total_frames == 0 and info.fps > 0 and info.duration > 0:
                         info.total_frames = int(round(info.fps * info.duration))
                     return info
-            except Exception:
-                pass
+                logger.debug("ffprobe 退出码 %s，回退 ffmpeg 解析",
+                             result.returncode)
+            except Exception as e:
+                logger.warning(
+                    "ffprobe 探测失败，回退 ffmpeg 解析: %s"
+                    " (returncode=%s, stdout=%r)",
+                    e,
+                    getattr(result, "returncode", None),
+                    str(getattr(result, "stdout", "") or "")[:200],
+                )
 
         # 回退：ffmpeg -i
         cmd = [
@@ -630,7 +662,8 @@ class _ExtractWorker(QThread):
             "-i", self.video_path, "-f", "null", "-",
         ]
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=120, **startup
+            cmd, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=120, **startup
         )
         output = result.stderr
 
@@ -684,6 +717,7 @@ class _VideoToSequenceWindow(QDialog):
         self._extract_worker = None
         self._pending_close = False
         self._close_poll = None
+        self._retired_workers = set()   # 运行中旧 worker 的引用位，防 GC 析构
         self._video_info = None
         self._current_video_path = ""
 
@@ -1007,31 +1041,39 @@ class _VideoToSequenceWindow(QDialog):
             self._output_dir_edit.setText(directory)
 
     def _on_convert(self):
+        # 防御：停止中按钮已禁用，正常不会走到这里；绝不覆盖仍在运行的
+        # worker 引用（运行中的 QThread 失去引用会被 GC 析构，Qt6 下崩溃）
+        if self._extract_worker is not None and self._extract_worker.isRunning():
+            logger.debug("转换仍在进行，忽略本次开始请求")
+            return
+
         if not self._current_video_path:
-            QMessageBox.warning(self, "提示", "请先选择一个视频文件。")
+            dialogs.warn(self, "提示", "请先选择一个视频文件。")
             return
 
         if not self._video_info:
-            QMessageBox.warning(self, "提示", "视频信息尚未获取，请稍候。")
+            dialogs.warn(self, "提示", "视频信息尚未获取，请稍候。")
             return
 
         if self._video_info.total_frames <= 0:
-            QMessageBox.warning(self, "提示", "无法获取视频帧数，请检查视频文件。")
+            dialogs.warn(self, "提示", "无法获取视频帧数，请检查视频文件。")
             return
 
         from houtools.videoseq.ffmpeg import find_ffmpeg
         ffmpeg_path = find_ffmpeg()
         if not ffmpeg_path:
-            QMessageBox.critical(
+            dialogs.warn(
                 self, "错误",
-                "未找到 ffmpeg，请确保 ffmpeg.exe 位于项目根目录或系统 PATH 中。",
+                "未找到 ffmpeg。\n"
+                "通常随 Houdini 附带：$HFS/bin/hffmpeg；\n"
+                "也可将 ffmpeg.exe 放到项目根目录或加入系统 PATH。",
             )
             return
 
         # 解析输出目录（展开 Houdini 变量）
         raw_output_dir = self._output_dir_edit.text().strip()
         if not raw_output_dir:
-            QMessageBox.warning(self, "提示", "请设置输出目录。")
+            dialogs.warn(self, "提示", "请设置输出目录。")
             return
 
         try:
@@ -1040,14 +1082,44 @@ class _VideoToSequenceWindow(QDialog):
         except ImportError:
             output_dir = raw_output_dir
 
-        os.makedirs(output_dir, exist_ok=True)
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+        except OSError as e:
+            dialogs.warn(
+                self, "错误", f"无法创建输出目录:\n{output_dir}\n\n{e}")
+            return
 
         quality = self._quality_spin.value()
         start_frame = self._start_frame_spin.value()
         padding = self._padding_spin.value()
         prefix = self._prefix_edit.text().strip() or "cam"
 
-        # 保存转换上下文，供完成回调使用
+        # 起始帧位数超过帧号位数：文件名位数不统一，背景路径 $F{padding}
+        # 的宽度语义也会与实际文件名失配
+        if len(str(start_frame)) > padding:
+            if not dialogs.question(
+                self, "帧号位数不足",
+                f"起始帧号 {start_frame} 共 {len(str(start_frame))} 位，"
+                f"超过帧号位数 {padding}，输出文件名位数将不统一，"
+                f"背景路径 $F{padding} 也会与实际文件名失配。\n是否继续？",
+            ):
+                return
+
+        # 旧序列检查：同前缀+帧号+同扩展名的既有文件，避免新旧帧混杂
+        stale = self._find_stale_sequence_files(output_dir, prefix)
+        if stale and dialogs.question(
+            self, "输出目录已有旧序列",
+            f"输出目录已有同前缀旧序列 {len(stale)} 个文件，"
+            "是否删除以避免新旧帧混杂？",
+        ):
+            for path in stale:
+                try:
+                    os.remove(path)
+                except OSError as e:
+                    logger.warning("删除旧序列文件失败 %s: %s", path, e)
+
+        # 保存转换上下文快照，供完成回调使用（完成后不读用户可能已改动的 UI）
+        self._last_output_dir = raw_output_dir
         self._last_prefix = prefix
         self._last_padding = padding
 
@@ -1056,11 +1128,6 @@ class _VideoToSequenceWindow(QDialog):
         # 切换到转换中状态
         self._convert_btn.hide()
         self._cancel_btn.show()
-
-        # 取消之前的提取任务
-        if self._extract_worker and self._extract_worker.isRunning():
-            self._extract_worker.cancel()
-            self._extract_worker.wait(3000)
 
         self._progress_bar.setMaximum(total)
         self._progress_bar.setValue(0)
@@ -1075,19 +1142,34 @@ class _VideoToSequenceWindow(QDialog):
             quality, start_frame, padding, prefix,
         )
         self._extract_worker.progress.connect(self._on_extract_progress)
-        self._extract_worker.finished.connect(self._on_extract_finished)
+        self._extract_worker.done.connect(self._on_extract_finished)
         self._extract_worker.error.connect(self._on_extract_error)
         self._extract_worker.start()
 
     def _on_cancel(self):
-        if self._extract_worker and self._extract_worker.isRunning():
+        extract_running = bool(
+            self._extract_worker is not None
+            and self._extract_worker.isRunning()
+        )
+        if extract_running:
             self._extract_worker.cancel()
         if self._probe_worker and self._probe_worker.isRunning():
             self._probe_worker.cancel()
-        self._cancel_btn.hide()
-        self._convert_btn.show()
+        if not extract_running:
+            # 无提取在跑（防御路径）：直接复位空闲
+            self._reset_convert_ui()
+            self._status_label.setVisible(True)
+            self._status_label.setText("已取消")
+            self._status_label.setStyleSheet("color: #d1283e; font-size: 12px;")
+            return
+        # 「停止中」：不立即复位按钮（对齐 Automation 的停止语义）——
+        # ffmpeg 收尾（terminate + 有界等待）需要时间，此刻二次 Start 会
+        # 被旧 worker 迟到的收尾信号打翻状态；等 done/error 到达再复位
+        self._convert_btn.setEnabled(False)
+        self._cancel_btn.setText("停止中…")
+        self._cancel_btn.setEnabled(False)
         self._status_label.setVisible(True)
-        self._status_label.setText("已取消")
+        self._status_label.setText("停止中…（正在结束 ffmpeg）")
         self._status_label.setStyleSheet("color: #d1283e; font-size: 12px;")
 
     # ── Probe Callbacks ──────────────────────────────────────────────
@@ -1101,10 +1183,14 @@ class _VideoToSequenceWindow(QDialog):
             self._status_label.setStyleSheet("color: #d1283e; font-size: 12px;")
             return
 
-        # 取消之前的探测任务
-        if self._probe_worker and self._probe_worker.isRunning():
-            self._probe_worker.cancel()
-            self._probe_worker.wait(2000)
+        # 取消之前的探测任务：协作式置标志后不等待——探测线程阻塞在不可
+        # 中断的子进程上（ffprobe 30s / ffmpeg 120s 超时），wait 白等；
+        # 旧 worker 挂入保留列表防运行中被 GC 析构，迟到的信号由槽内
+        # sender 过滤丢弃（当前有效 sender 已切换为新 worker）
+        old = self._probe_worker
+        if old is not None and old.isRunning():
+            old.cancel()
+            self._retire_worker(old)
 
         self._status_label.setVisible(True)
         self._status_label.setText("正在分析视频信息...")
@@ -1116,6 +1202,12 @@ class _VideoToSequenceWindow(QDialog):
         self._probe_worker.start()
 
     def _on_probe_ready(self, info):
+        # 迟到的旧探测（快速换片后）不应用：sender 已不是当前 worker，
+        # 或探测结果不属于当前视频
+        if self.sender() is not self._probe_worker:
+            return
+        if info.filepath != self._current_video_path:
+            return
         self._video_info = info
 
         self._info_labels["filename"].setText(info.filename)
@@ -1146,6 +1238,8 @@ class _VideoToSequenceWindow(QDialog):
         self._status_label.setStyleSheet("color: #87cc8e; font-size: 12px;")
 
     def _on_probe_error(self, error_msg):
+        if self.sender() is not self._probe_worker:
+            return  # 迟到的旧探测错误——丢弃
         self._status_label.setVisible(True)
         self._status_label.setText(f"分析失败: {error_msg}")
         self._status_label.setStyleSheet("color: #d1283e; font-size: 12px;")
@@ -1154,6 +1248,8 @@ class _VideoToSequenceWindow(QDialog):
     # ── Extract Callbacks ────────────────────────────────────────────
 
     def _on_extract_progress(self, current, total):
+        if self.sender() is not self._extract_worker:
+            return  # 迟到的旧 worker 进度——丢弃
         self._progress_bar.setValue(current)
         self._status_label.setVisible(True)
         self._status_label.setText(
@@ -1161,8 +1257,9 @@ class _VideoToSequenceWindow(QDialog):
         )
 
     def _on_extract_finished(self, total_frames, output_dir):
-        self._cancel_btn.hide()
-        self._convert_btn.show()
+        if self.sender() is not self._extract_worker:
+            return  # 迟到的旧 worker 完成信号——丢弃
+        self._reset_convert_ui()
         self._progress_bar.setValue(total_frames)
         self._status_label.setVisible(True)
         self._status_label.setText(
@@ -1175,7 +1272,7 @@ class _VideoToSequenceWindow(QDialog):
         if cam_path:
             self._set_camera_background(cam_path, output_dir)
 
-        QMessageBox.information(
+        dialogs.info(
             self, "完成",
             f"成功提取 {total_frames} 帧序列图\n\n输出目录:\n{output_dir}",
         )
@@ -1191,8 +1288,12 @@ class _VideoToSequenceWindow(QDialog):
             prefix = getattr(self, "_last_prefix", "cam")
             padding = getattr(self, "_last_padding", 4)
 
-            # 从 UI 的输出目录构建路径（保留 Houdini 变量如 $HIP）
-            raw_dir = self._output_dir_edit.text().strip()
+            # 用开工时快照的原始目录文本构建路径（保留 $HIP 等变量，渲染
+            # 时展开）——完成后用户可能已改动 UI 里的目录
+            raw_dir = (getattr(self, "_last_output_dir", "")
+                       or self._output_dir_edit.text().strip())
+            if not raw_dir:
+                return
             if not raw_dir.endswith("/"):
                 raw_dir += "/"
             bg_path = f"{raw_dir}{prefix}.$F{padding}.jpg"
@@ -1211,13 +1312,25 @@ class _VideoToSequenceWindow(QDialog):
             pass
 
     def _on_extract_error(self, error_msg):
-        self._cancel_btn.hide()
-        self._convert_btn.show()
+        if self.sender() is not self._extract_worker:
+            return  # 迟到的旧 worker 错误——丢弃
+        self._reset_convert_ui()
         self._status_label.setVisible(True)
-        self._status_label.setText(f"转换失败: {error_msg}")
+        if error_msg == "转换已取消":
+            # 取消收尾：报告已写帧数与保留位置（帧数为 worker 内的快照）
+            worker = self.sender()
+            frames = getattr(worker, "frames_written", 0)
+            if frames > 0:
+                self._status_label.setText(
+                    f"转换已取消（已写入 {frames} 帧，"
+                    f"保留在 {worker.output_dir}）"
+                )
+            else:
+                self._status_label.setText("转换已取消")
+        else:
+            self._status_label.setText(f"转换失败: {error_msg}")
+            dialogs.warn(self, "错误", f"转换失败:\n{error_msg}")
         self._status_label.setStyleSheet("color: #d1283e; font-size: 12px;")
-        if error_msg != "转换已取消":
-            QMessageBox.warning(self, "错误", f"转换失败:\n{error_msg}")
 
     # ── Helpers ──────────────────────────────────────────────────────
 
@@ -1258,42 +1371,106 @@ class _VideoToSequenceWindow(QDialog):
     def _on_pick_camera(self):
         """打开相机选择对话框"""
         try:
-            import hou
-            cameras = self._find_scene_cameras()
-            if not cameras:
-                QMessageBox.information(self, "提示", "当前场景中没有找到相机。")
-                return
-
-            cam_names = [c.split("/")[-1] for c in cameras]
-            current = self._camera_edit.text()
-            current_idx = cameras.index(current) if current in cameras else 0
-
-            name, ok = QInputDialog.getItem(
-                self, "选择相机", "场景中的相机:",
-                cam_names, current_idx, False,
-            )
-            if ok and name:
-                idx = cam_names.index(name)
-                self._camera_edit.setText(cameras[idx])
+            import hou  # noqa: F401 — 仅探测 hou 可用性
         except ImportError:
-            QMessageBox.warning(self, "提示", "此功能仅在 Houdini 中可用。")
+            dialogs.warn(self, "提示", "此功能仅在 Houdini 中可用。")
+            return
+
+        cameras = self._find_scene_cameras()
+        if not cameras:
+            dialogs.info(self, "提示", "当前场景中没有找到相机。")
+            return
+
+        cam_names = [c.split("/")[-1] for c in cameras]
+        current = self._camera_edit.text()
+        current_idx = cameras.index(current) if current in cameras else 0
+
+        # 实例化调用：静态便利函数 getItem 拿不到内部按钮（英文系统出
+        # 英文按钮），无法中文化
+        dlg = QInputDialog(self)
+        dlg.setWindowTitle("选择相机")
+        dlg.setLabelText("场景中的相机:")
+        dlg.setComboBoxItems(cam_names)
+        dlg.setComboBoxEditable(False)
+        dlg.setTextValue(cam_names[current_idx])
+        dialogs.localize_buttons(dlg)
+        ok = dlg.exec_() == QDialog.Accepted
+        name = dlg.textValue()
+        dlg.deleteLater()
+        if ok and name:
+            idx = cam_names.index(name)
+            self._camera_edit.setText(cameras[idx])
 
     def _reset_info_labels(self):
         for lbl in self._info_labels.values():
             lbl.setText("-")
 
+    def _reset_convert_ui(self):
+        """转换相关控件复位为空闲态（完成/失败/取消收尾共用）。"""
+        self._convert_btn.setEnabled(True)
+        self._convert_btn.show()
+        self._cancel_btn.setEnabled(True)
+        self._cancel_btn.setText("取消")
+        self._cancel_btn.hide()
+
+    @staticmethod
+    def _find_stale_sequence_files(output_dir, prefix):
+        """列出输出目录中与本次输出同模式的既有序列文件（前缀.数字.jpg）。"""
+        pat = re.compile(re.escape(prefix) + r"\.(\d+)\.jpg$")
+        try:
+            names = os.listdir(output_dir)
+        except OSError as e:
+            logger.debug("扫描输出目录失败 %s: %s", output_dir, e)
+            return []
+        return [
+            os.path.join(output_dir, n)
+            for n in names
+            if pat.fullmatch(n) and os.path.isfile(os.path.join(output_dir, n))
+        ]
+
+    def _retire_worker(self, worker):
+        """给仍在运行的旧 worker 保引用，直到其线程真正退出。
+
+        引用一旦无人持有，Python 回收会析构运行中的 QThread（Qt6 下
+        qFatal 崩溃）；worker 的内建 finished 到达后自动移出保留列表。
+        """
+        if worker is None or worker in self._retired_workers:
+            return
+        self._retired_workers.add(worker)
+        worker.finished.connect(
+            lambda w=worker: self._retired_workers.discard(w))
+
     # ── Lifecycle ────────────────────────────────────────────────────
 
-    def closeEvent(self, event):
+    def is_close_deferred(self):
+        """window_manager.close_all 用：closeEvent 是否被推迟（转换进行中走隐藏+轮询）。"""
+        return bool(getattr(self, "_pending_close", False))
+
+    def showEvent(self, event):  # noqa: N802 — Qt 命名约定
+        # 重开窗口即撤销"取消并关闭"的决定（转换在进入 pending 时已请求
+        # 取消）：清推迟标记、停轮询，窗口保持打开
+        if getattr(self, "_pending_close", False):
+            self._pending_close = False
+            if self._close_poll is not None:
+                self._close_poll.stop()
+        super().showEvent(event)
+
+    def closeEvent(self, event):  # noqa: N802 — Qt 命名约定
         if self._probe_worker and self._probe_worker.isRunning():
+            # 置取消但不等待：探测线程阻塞在不可中断的子进程上，wait 必然
+            # 白等（最长可达 ffprobe 30s + ffmpeg 计数 300s）；其迟到信号
+            # 由槽内 sender 过滤或随窗口销毁被 Qt 丢弃
             self._probe_worker.cancel()
-            self._probe_worker.wait(2000)
         if self._extract_worker and self._extract_worker.isRunning():
-            ret = QMessageBox.question(
+            if self._pending_close:
+                # 已处于延迟关闭中（隐藏窗口再被 close_all 触发）：
+                # 不重复弹确认，维持推迟
+                event.ignore()
+                return
+            if not dialogs.question(
                 self, "转换进行中",
                 "视频转换仍在进行，取消并关闭窗口？",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if ret != QMessageBox.Yes:
+            ):
                 event.ignore()
                 return
             # 非阻塞关闭:取消后先隐藏窗口,QTimer 轮询线程退出再真正关 ——
@@ -1302,7 +1479,7 @@ class _VideoToSequenceWindow(QDialog):
             self._pending_close = True
             self.hide()
             event.ignore()
-            if getattr(self, "_close_poll", None) is None:
+            if self._close_poll is None:
                 self._close_poll = QTimer(self)
                 self._close_poll.timeout.connect(self._poll_worker_done)
             self._close_poll.start(200)
@@ -1318,10 +1495,14 @@ class _VideoToSequenceWindow(QDialog):
             if self._close_poll is not None:
                 self._close_poll.stop()
             self.close()
+            # 延迟关闭的窗口必须自删：window_manager.close_all 对声明了
+            # is_close_deferred 的窗口移入 _closing 持引用、不再兜底
+            # deleteLater（防 GC 析构运行中的 QThread），收尾在这里销毁
+            self.deleteLater()
 
 
 # ─── Entry Point ─────────────────────────────────────────────────────
 
-def run(kwargs):
-    """工具入口函数（由 shelf 调用）"""
+def run(kwargs=None):
+    """工具入口函数（由 shelf 调用；kwargs 为 Houdini 传入的上下文，允许无参调用）"""
     show_video_to_sequence_window()

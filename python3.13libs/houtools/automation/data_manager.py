@@ -37,6 +37,10 @@ logger = get_logger("automation.data")
 # 打开DW 任务的默认可执行文件路径（写入 Automation_Config.json 的初始值）
 DW_EXE_PATH_DEFAULT = "C:/Program Files/Thinkbox/Deadline10/bin/deadlineworker.exe"
 
+# $HIP 不可用、配置落系统临时目录的告警只发一次:路径计算是高频调用,
+# 每次都告警会刷屏;无头测试等合法场景同样走 fallback
+_HIP_FALLBACK_WARNED = False
+
 
 class AutomationDataManager:
     """Automation 数据持久化管理器。
@@ -51,6 +55,7 @@ class AutomationDataManager:
     @classmethod
     def _hip_base(cls) -> str:
         """返回配置根目录：Houdini 内为 $HIP，否则 fallback 系统临时目录。"""
+        global _HIP_FALLBACK_WARNED
         try:
             import hou  # noqa: N812 — only available inside Houdini
             hip = hou.getenv("HIP")
@@ -58,7 +63,11 @@ class AutomationDataManager:
                 return hip
         except ImportError:
             pass
-        return tempfile.gettempdir()
+        base = tempfile.gettempdir()
+        if not _HIP_FALLBACK_WARNED:
+            _HIP_FALLBACK_WARNED = True
+            logger.warning("未取到 $HIP，Automation 配置将落在系统临时目录: %s", base)
+        return base
 
     @classmethod
     def get_data_path(cls, filename: Optional[str] = None) -> str:
@@ -111,17 +120,21 @@ class AutomationDataManager:
                     loaded = json.load(f)
                 if isinstance(loaded, dict):
                     data = loaded
-            except Exception:
+            except Exception as exc:
+                logger.warning("读取应用配置失败，将按默认值补建: %s (%s)", path, exc)
                 data = {}
 
-        if "dw_exe_path" not in data:
+        # 空字符串/纯空白视同"未配置"——补写默认(与 load_dw_exe_path
+        # 的"空值回默认"同语义)
+        value = data.get("dw_exe_path")
+        if not (isinstance(value, str) and value.strip()):
             data["dw_exe_path"] = DW_EXE_PATH_DEFAULT
             try:
                 os.makedirs(os.path.dirname(path), exist_ok=True)
                 with open(path, "w", encoding="utf-8") as f:
                     json.dump(data, f, ensure_ascii=False, indent=2)
-            except Exception:
-                logger.warning("无法写入应用配置文件: %s", path)
+            except Exception as exc:
+                logger.warning("无法写入应用配置文件: %s (%s)", path, exc)
 
         return data
 
@@ -139,11 +152,25 @@ class AutomationDataManager:
                 value = data.get("dw_exe_path")
                 if isinstance(value, str) and value.strip():
                     return value.strip()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("读取应用配置失败，使用默认 DW 路径: %s (%s)", path, exc)
         return DW_EXE_PATH_DEFAULT
 
     # ── 核心 IO ──────────────────────────────────────────
+
+    @classmethod
+    def _backup_corrupt(cls, path: str) -> None:
+        """把解析失败的配置文件改名 ``.bak`` 留底（与 core/settings.py 的
+        JsonStore 同语义）：配置读不出来时先留原件，防止后续 ``save()`` 按
+        "读取失败 → 覆盖写"把尚可抢救的内容直接冲掉。改名失败（权限等）
+        只告警，不阻塞调用方返回空数据。
+        """
+        bak = path + ".bak"
+        try:
+            os.replace(path, bak)
+            logger.warning("损坏的配置文件已留底: %s", bak)
+        except OSError as exc:
+            logger.warning("无法留底损坏的配置文件 %s: %s", path, exc)
 
     @classmethod
     def load(cls, filename: Optional[str] = None) -> list[dict]:
@@ -164,6 +191,7 @@ class AutomationDataManager:
             return data.get("tasks", [])
         except json.JSONDecodeError as exc:
             logger.warning("JSON 解析失败: %s (%s)", path, exc)
+            cls._backup_corrupt(path)
             return []
         except Exception as exc:
             logger.warning("读取配置失败: %s (%s)", path, exc)
@@ -189,8 +217,9 @@ class AutomationDataManager:
         Returns:
             True 写入成功,False 写入异常。
         """
+        path = cls.get_data_path(filename)
+        tmp_path = path + ".~tmp"  # 先于 try 定义,失败清理路径不会 NameError
         try:
-            path = cls.get_data_path(filename)
             os.makedirs(os.path.dirname(path), exist_ok=True)  # 仅此处创建配置目录
             # 读取现有数据（保留 settings）
             existing_data = {}
@@ -198,19 +227,29 @@ class AutomationDataManager:
                 try:
                     with open(path, "r", encoding="utf-8") as f:
                         existing_data = json.load(f)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning(
+                        "读取现有配置失败，其 settings 内容将随覆盖丢失: %s (%s)",
+                        path, exc,
+                    )
             # 合并数据
             existing_data["tasks"] = tasks_data
-            with open(path, "w", encoding="utf-8") as f:
+            # 临时文件 + 原子替换：写盘中途崩溃/断电不会截断原文件
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(
                     existing_data,
                     f,
                     ensure_ascii=False,
                     indent=2,
                 )
+            os.replace(tmp_path, path)
             return True
-        except Exception:
+        except Exception as exc:
+            logger.warning("保存配置失败: %s (%s)", path, exc)
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
             return False
 
     @classmethod
@@ -229,7 +268,12 @@ class AutomationDataManager:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             return data.get("settings", {})
-        except Exception:
+        except json.JSONDecodeError as exc:
+            logger.warning("JSON 解析失败: %s (%s)", path, exc)
+            cls._backup_corrupt(path)
+            return {}
+        except Exception as exc:
+            logger.warning("读取设置失败: %s (%s)", path, exc)
             return {}
 
     @classmethod
@@ -242,8 +286,9 @@ class AutomationDataManager:
 
         写入结构: ``{"tasks": [...], "settings": settings_data}``
         """
+        path = cls.get_data_path(filename)
+        tmp_path = path + ".~tmp"  # 先于 try 定义,失败清理路径不会 NameError
         try:
-            path = cls.get_data_path(filename)
             os.makedirs(os.path.dirname(path), exist_ok=True)
             # 读取现有数据（保留 tasks）
             existing_data = {}
@@ -251,19 +296,29 @@ class AutomationDataManager:
                 try:
                     with open(path, "r", encoding="utf-8") as f:
                         existing_data = json.load(f)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning(
+                        "读取现有配置失败，其 tasks 内容将随覆盖丢失: %s (%s)",
+                        path, exc,
+                    )
             # 合并数据
             existing_data["settings"] = settings_data
-            with open(path, "w", encoding="utf-8") as f:
+            # 临时文件 + 原子替换：写盘中途崩溃/断电不会截断原文件
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(
                     existing_data,
                     f,
                     ensure_ascii=False,
                     indent=2,
                 )
+            os.replace(tmp_path, path)
             return True
-        except Exception:
+        except Exception as exc:
+            logger.warning("保存设置失败: %s (%s)", path, exc)
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
             return False
 
     @classmethod
@@ -322,24 +377,32 @@ class AutomationDataManager:
         """dict → Params dataclass。
 
         根据 ``type_str``（匹配 ``TaskType`` 的 value）决定返回的参数类型。
-        ``FlipbookParams`` 只恢复当前 dataclass 定义的字段：旧 JSON 文件里
-        的遗留字段（如 frame_range）被忽略，缺失字段走 dataclass 默认值。
+        所有参数类型都只恢复当前 dataclass 定义的字段：旧 JSON 文件里的
+        遗留/未知字段被忽略（不再 TypeError），缺失字段走 dataclass 默认值。
         """
         task_type = TaskType(type_str)
 
         if task_type == TaskType.BUTTON_CLICK:
-            return ButtonClickParams(**params_dict)
+            return ButtonClickParams(**cls._filter_known_fields(params_dict, ButtonClickParams))
         elif task_type == TaskType.FLIPBOOK:
-            known = {f.name for f in fields(FlipbookParams)}
-            return FlipbookParams(**{
-                k: v for k, v in params_dict.items() if k in known
-            })
+            return FlipbookParams(**cls._filter_known_fields(params_dict, FlipbookParams))
         elif task_type == TaskType.HOME_ASSISTANT:
-            return HomeAssistantParams(**params_dict)
+            return HomeAssistantParams(**cls._filter_known_fields(params_dict, HomeAssistantParams))
         elif task_type == TaskType.OPEN_DW:
             return OpenDWParams()
         else:
             raise ValueError(f"未知参数类型: {type_str}")
+
+    @staticmethod
+    def _filter_known_fields(params_dict: dict, params_cls) -> dict:
+        """按 dataclass 字段过滤 ``params_dict``，丢弃当前版本不认识的字段。
+
+        旧 JSON 可能携带已废弃/改名的字段（如 Flipbook 的 frame_range），
+        直接 ``cls(**params_dict)`` 会 TypeError；统一过滤后缺失字段走
+        dataclass 默认值。
+        """
+        known = {f.name for f in fields(params_cls)}
+        return {k: v for k, v in params_dict.items() if k in known}
 
     # ── 高层便捷方法 ─────────────────────────────────────
 

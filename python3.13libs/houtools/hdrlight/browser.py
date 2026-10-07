@@ -10,7 +10,9 @@
   分类文件夹可在侧栏右键新建/打开，后续下载的 HDR 放进对应分类即可。
 - 缩略图按需生成：点「刷新」时比对缓存目录，仅缺失的由后台
   QThread 调用 Houdini 自带 hoiiotool 生成（linear→sRGB + 缩放），
-  生成完线程即退出，无常驻开销；无主缓存（HDR 已删）在刷新时清理。
+  hoiiotool 路径与子进程环境在主线程解析好再传入（线程内不触
+  HOM——hou.* 非线程安全）；生成完线程即退出，无常驻开销；
+  无主缓存（HDR 已删）在刷新时清理。
   线程不 parent 到窗口：Reload 关窗销毁窗口时，运行中的线程改为
   自行跑完自删（每张图生成前后及子进程等待中均响应中断请求），
   避免 Qt "QThread: Destroyed while thread is still running" 崩溃。
@@ -34,6 +36,7 @@
 
 import concurrent.futures
 import glob
+import hashlib
 import os
 import re
 import subprocess
@@ -45,6 +48,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from houtools.core.log import get_logger
 from houtools.core.settings import JsonStore
+from houtools.ui import dialogs
 from houtools.ui import fonts as tool_fonts
 from houtools.ui import sidebar as ui_sidebar
 from houtools.ui.badge import FavoriteBadge
@@ -104,7 +108,11 @@ def get_lib_dir():
 
 
 def _houdini_bin():
-    """Houdini 安装目录下的 bin 路径（不依赖 cwd）。"""
+    """Houdini 安装目录下的 bin 路径（不依赖 cwd）。
+
+    依赖 HOM 展开 $HFS，只能在主线程调用（hou.* 非线程安全）；
+    后台线程要用的路径须先在此解析好再作为参数传入。
+    """
     try:
         import hou
         return os.path.join(hou.text.expandString("$HFS"), "bin")
@@ -116,6 +124,10 @@ def _houdini_bin():
 
 
 def _oiiotool_path():
+    """hoiiotool/oiiotool 可执行文件路径，找不到返回 None。
+
+    须经 _houdini_bin 触 HOM，只能在主线程调用。
+    """
     bin_dir = _houdini_bin()
     if not bin_dir:
         return None
@@ -127,7 +139,10 @@ def _oiiotool_path():
 
 
 def _ocio_env():
-    """hoiiotool 做 linear→sRGB 转换需要 OCIO 配置，缺失时会崩溃。"""
+    """hoiiotool 做 linear→sRGB 转换需要 OCIO 配置，缺失时会崩溃。
+
+    内部经 _houdini_bin 触 HOM，只能在主线程调用，结果传给后台线程。
+    """
     if os.environ.get("OCIO"):
         return dict(os.environ)
     env = dict(os.environ)
@@ -176,9 +191,18 @@ def thumb_cache_dir(lib_dir):
 
 def thumb_path(lib_dir, hdr_path):
     """缓存缩略图路径：按相对路径+原扩展名命名（目录用 __ 连接），
-    子文件夹同名、同名字不同扩展（a.hdr 与 a.exr）不冲突。"""
+    子文件夹同名、同名字不同扩展（a.hdr 与 a.exr）不冲突。
+
+    相对路径本身含 __ 时（目录/文件名带 __ 会与连接符混淆：
+    a__b/x.hdr 与 a/b/x.hdr 得到同一个缓存名互相覆盖），在扩展名前
+    追加相对路径的 8 位 md5 短哈希消歧；不含 __ 的路径命名保持
+    不变。缓存可重新生成，新旧命名并存无害。
+    """
     rel = os.path.relpath(hdr_path, lib_dir)
     safe = rel.replace(os.sep, "__").replace("/", "__")
+    if "__" in rel:
+        digest = hashlib.md5(rel.encode("utf-8")).hexdigest()[:8]
+        safe += "-" + digest
     return os.path.join(thumb_cache_dir(lib_dir), safe + ".jpg")
 
 
@@ -216,19 +240,36 @@ def _image_size(oiiotool, image_path, env, interrupt=None):
     if rc != 0:
         log.warning("oiiotool --info failed for %s (rc=%s)", image_path, rc)
         return None
-    m = re.search(r"(\d+)\s*x\s*(\d+)", out.decode("utf-8", "ignore"))
-    return (int(m.group(1)), int(m.group(2))) if m else None
+    text = out.decode("utf-8", "ignore")
+    # --info 首行格式 "<路径> :   <宽> x   <高>, <N> channel, ..."：
+    # 尺寸锚定在" : "分隔符之后的行首并后跟逗号——裸 search 会把
+    # 路径里的 NxM（如 v2x4_test.hdr 的 2x4）抢先当成分辨率
+    for line in text.splitlines():
+        m = re.search(r"\s:\s*(\d+)\s*x\s*(\d+)\s*,", line)
+        if m:
+            return (int(m.group(1)), int(m.group(2)))
+    # 兜底：输出格式变化（无 " : " 锚点）时取最后一个匹配（尺寸行
+    # 靠近输出末尾），避免文件名里的 NxM 抢占首次匹配
+    matches = re.findall(r"(\d+)\s*x\s*(\d+)", text)
+    if matches:
+        w, h = matches[-1]
+        return (int(w), int(h))
+    log.warning("cannot parse image size from oiiotool --info: %s",
+                image_path)
+    return None
 
 
-def make_thumbnail(lib_dir, hdr_path, interrupt=None):
+def make_thumbnail(lib_dir, hdr_path, oiiotool, env, interrupt=None):
     """生成单张缩略图，返回缩略图路径；失败或被中断返回 None。
 
+    oiiotool 与 env 须由调用方在主线程解析好传入（_oiiotool_path/
+    _ocio_env 依赖 HOM 展开 $HFS，工作线程内不得调 hou.*）；
+    oiiotool 为空（未找到 hoiiotool）时记告警并跳过。
     先写 ~tmp_ 临时文件再原子改名，避免被中断/失败时留下半张
     比 HDR 新的坏缩略图（mtime 失效机制会被它骗过）。临时名必须
     以 .jpg 结尾：OIIO 靠扩展名选输出格式写入器，未知后缀（曾用
     .part）会让 hoiiotool 直接报错，整条生成链路失败。
     """
-    oiiotool = _oiiotool_path()
     if not oiiotool:
         log.warning("hoiiotool not found, cannot generate thumbnails")
         return None
@@ -239,7 +280,6 @@ def make_thumbnail(lib_dir, hdr_path, interrupt=None):
     tmp_out = os.path.join(
         os.path.dirname(out),
         "~tmp_{}_{}".format(threading.get_ident(), os.path.basename(out)))
-    env = _ocio_env()
     size = _image_size(oiiotool, hdr_path, env, interrupt)
     if not size or size[0] <= 0:
         return None
@@ -378,7 +418,9 @@ def is_light_node(node):
         if find_map_parm(node):
             return True
         return any(h in type_name for h in LIGHT_HINTS)
-    except Exception:
+    except Exception as exc:
+        # 已销毁/非法节点（如选中推送里的 network box）落在这里，属预期
+        log.debug("is_light_node check failed: %s", exc)
         return False
 
 
@@ -473,6 +515,8 @@ class ThumbnailThread(QtCore.QThread):
       线程结束自删；中断请求在每张开工前后及子进程等待中响应。
     - 并发数按机器性能取中低档（核数/4，夹在 2..4）：每张 hoiiotool
       是独立子进程，几张并行能吃掉空闲核，又给 Houdini 留足余量。
+    - oiiotool 与 oiiotool_env 由调用方在主线程解析好传入：线程内
+      不 import hou、不调任何 HOM（hou.* 非线程安全）。
     - progress(done, total) 每完成一张发一次；pause()/resume() 让每张
       开工前挂起等待（进行中的一张会跑完），停止用 requestInterruption。
     """
@@ -481,10 +525,13 @@ class ThumbnailThread(QtCore.QThread):
     finishedCount = QtCore.Signal(int)     # 成功数量
     progress = QtCore.Signal(int, int)     # 已完成数, 总数
 
-    def __init__(self, lib_dir, hdr_paths):
+    def __init__(self, lib_dir, hdr_paths, oiiotool, oiiotool_env):
         super().__init__()
         self.lib_dir = lib_dir
         self.hdr_paths = hdr_paths
+        # 主线程已解析好的 hoiiotool 路径与子进程环境（线程内零 HOM）
+        self.oiiotool = oiiotool
+        self.oiiotool_env = oiiotool_env
         cores = os.cpu_count() or 4
         self.workers = max(2, min(4, cores // 4))
         self._mutex = QtCore.QMutex()
@@ -526,8 +573,9 @@ class ThumbnailThread(QtCore.QThread):
                 if not interrupt():
                     self._wait_if_paused()
                     if not interrupt():
-                        out = make_thumbnail(self.lib_dir, path,
-                                             interrupt=interrupt)
+                        out = make_thumbnail(
+                            self.lib_dir, path, self.oiiotool,
+                            self.oiiotool_env, interrupt=interrupt)
             except Exception as exc:
                 # 单张异常不能让 pool.map 中止：剩余任务会被跳过，
                 # finishedCount 不再发射，进度条永远停住
@@ -1056,6 +1104,7 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         act_copy = menu.addAction("复制路径")
         act_open = menu.addAction("打开所在文件夹")
         act = menu.exec_(self.list.mapToGlobal(pos))
+        menu.deleteLater()   # exec_ 后释放：右键反复弹菜单会在窗口上积累
         if act is act_fav:
             self._set_favorite(item, not fav)
         elif act is act_copy:
@@ -1073,6 +1122,7 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
             if key not in (KEY_ALL, KEY_FAV):
                 act_open = menu.addAction("打开分类文件夹")
         act = menu.exec_(self.sidebar.mapToGlobal(pos))
+        menu.deleteLater()
         if act is act_new:
             self._create_category()
         elif act is act_open and item is not None:
@@ -1081,13 +1131,13 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
                                            item.data(QtCore.Qt.UserRole))])
 
     def _create_category(self):
-        name, ok = QtWidgets.QInputDialog.getText(self, "新建分类", "分类文件夹名：")
+        name, ok = dialogs.prompt_text(self, "新建分类", "分类文件夹名：")
         name = (name or "").strip()
         if not ok or not name:
             return
         if any(c in name for c in '\\/:*?"<>|'):
-            QtWidgets.QMessageBox.warning(
-                self, "新建分类", "名称不能包含 \\/ : * ? \" < > | 等字符")
+            dialogs.warn(self, "新建分类",
+                         "名称不能包含 \\/ : * ? \" < > | 等字符")
             return
         try:
             os.makedirs(os.path.join(self.lib_dir, name), exist_ok=True)
@@ -1101,9 +1151,18 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
 
     def _choose_dir(self):
         start = self.lib_dir or default_lib_dir()
-        d = QtWidgets.QFileDialog.getExistingDirectory(
-            self, "选择 HDR 库目录", start)
-        if d:
+        # 实例化 + 非原生对话框：静态便利函数（getExistingDirectory）
+        # 拿不到内部按钮，英文系统会出英文 OK/Cancel（见 ui.dialogs
+        # 模块说明）；目录模式默认只显示文件夹
+        dlg = QtWidgets.QFileDialog(self, "选择 HDR 库目录", start)
+        dlg.setFileMode(QtWidgets.QFileDialog.Directory)
+        dlg.setOption(QtWidgets.QFileDialog.DontUseNativeDialog, True)
+        dialogs.localize_buttons(dlg)
+        ok = dlg.exec_() == QtWidgets.QDialog.Accepted
+        selected = dlg.selectedFiles()
+        dlg.deleteLater()   # exec_ 后释放（父窗口长期存活）
+        d = selected[0] if selected else ""
+        if ok and d:
             self.lib_dir = d
             _SETTINGS.set("lib_dir", d)  # 记住该机器上的选择
             self._update_dir_label()
@@ -1129,7 +1188,10 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
                     thread.wait(1000)
             except RuntimeError:
                 pass  # 已被 deleteLater，C++ 对象不在了
-        self._thread = ThumbnailThread(self.lib_dir, hdr_paths)
+        # hoiiotool 路径与环境在主线程（此刻）解析好传入；找不到时线程
+        # 照常启动，每张在 make_thumbnail 里记告警跳过（进度仍会走完）
+        self._thread = ThumbnailThread(
+            self.lib_dir, hdr_paths, _oiiotool_path(), _ocio_env())
         self._thread.thumbReady.connect(self._on_thumb_ready)
         self._thread.finishedCount.connect(self._on_thumbs_done)
         self._thread.progress.connect(self._on_thumb_progress)

@@ -185,8 +185,12 @@ class ExecutionEngine(QThread):
                 raise ValueError(f"不是按钮参数: {params.parm_name}")
 
             # dl_Submit（Deadline 提交）的回调要求点击前工程已保存到磁盘，
-            # 否则会弹"保存工程"对话框卡住自动化流程；保存失败则不点击
+            # 否则会弹"保存工程"对话框卡住自动化流程；保存失败则不点击。
+            # 从未保存过的工程连默认路径都没有,save() 必弹模态对话框问
+            # 存放位置 —— 同样按"失败跳过点击"语义处理,请用户先手动保存
             if params.parm_name == "dl_Submit":
+                if hou.hipFile.hasNeverSaved():
+                    raise ValueError("工程从未保存过，已跳过 dl_Submit：请先手动保存")
                 try:
                     hou.hipFile.save()
                 except hou.OperationFailed as e:
@@ -223,8 +227,8 @@ class ExecutionEngine(QThread):
                 start = int(float(start_str))
                 end = int(float(end_str))
                 settings.frameRange((start, end))
-            except Exception:
-                pass  # 保持 Houdini 原始帧范围
+            except (hou.OperationFailed, ValueError, TypeError, OverflowError) as e:
+                logger.warning("帧范围无效，已沿用原范围: %s", e)
 
             # 设置输出路径（不展开 $F4 等表达式，让 Houdini 逐帧展开）
             if params.save_to_disk:
@@ -258,8 +262,9 @@ class ExecutionEngine(QThread):
             raise ImportError("requests 模块未安装，请执行 pip install requests")
 
         try:
-            resp = requests.post(params.webhook_url, timeout=5)
-            resp.raise_for_status()
+            with requests.post(params.webhook_url, timeout=5) as resp:
+                # 底层连接随 with 块退出即归还连接池,不再依赖 GC 兜底
+                resp.raise_for_status()
         except requests.Timeout:
             raise TimeoutError(f"请求超时: {params.webhook_url}")
         except requests.ConnectionError:

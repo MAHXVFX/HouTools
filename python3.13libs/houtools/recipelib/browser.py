@@ -81,6 +81,8 @@ KEY_LEVEL_HDR = "__level_hdr__"    # 「层级」段头
 GRID_PADDING_X = 24   # 格子水平留白（卡片左右各 4 + 空隙）
 GRID_CARD_GAP = 4     # 格子边缘到卡片的留白（卡片间/行间视觉间距 = 2×此值
                       # = 8px，用户指定较原 14px 收紧一半）
+_COVER_CACHE_MAX = 512  # cover 缓存条目上限（超出整表清空；滑条 valueChanged
+                        # 期间不再逐步全清，旧尺寸条目靠这个兜底）
 
 
 class _CardDelegate(QtWidgets.QStyledItemDelegate):
@@ -227,7 +229,10 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
         painter.fillRect(QtCore.QRectF(card.left() + m, y, text_w, thumb_h),
                          self._tint(theme, 0.12))
         painter.restore()
-        pm = self._win.thumb_pixmap(info, text_w, thumb_h)
+        # info 的兜底分支在函数末尾（只画空卡不画文字）——取缩略图前先
+        # 守卫：thumb_pixmap 需要 info.name
+        pm = self._win.thumb_pixmap(info, text_w, thumb_h) \
+            if info is not None else None
         if pm is not None:
             painter.drawPixmap(card.left() + m, y, pm)
         if info is not None and metadata.is_favorite(info.name):
@@ -1231,6 +1236,10 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.settings_btn.clicked.connect(self._open_settings)
         self.pin_chk.toggled.connect(self._toggle_pin)
         self.size_slider.valueChanged.connect(self._on_size_changed)
+        # 拖动结束才清 cover 缓存：valueChanged 期间格子已在连续重排，
+        # 逐步全清会让每一步都重算全部缩略图（卡顿）；旧尺寸条目由
+        # thumb_pixmap 的缓存上限兜底。gridSize 更新保持在 valueChanged
+        self.size_slider.sliderReleased.connect(self._cover_cache.clear)
         self.tags_apply_btn.clicked.connect(self._edit_tags)
 
         self._search_timer = QtCore.QTimer(self)
@@ -1266,6 +1275,11 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         except Exception as exc:
             log.warning("list recipes failed: %s", exc, exc_info=True)
             self._recipes = []
+            self._info_by_name = {}
+            # 与空库同路径重建侧栏/网格：否则网格残留旧卡片，点选会
+            # 命中 _info_by_name 里已不存在的 recipe
+            self._rebuild_sidebar()
+            self._apply_filter()
             self.status.setText("枚举 recipe 失败: {}".format(exc))
             return
         self._info_by_name = {r.name: r for r in self._recipes}
@@ -1324,6 +1338,29 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.status.setText("导出完成 → {}".format(summary["path"]))
         info(parent, "导出完成", msg)
 
+    @staticmethod
+    def _factory_recipe_names():
+        """出厂 recipe 内部名全集（导入冲突检查用）。无头/旧版环境读不到
+        时返回空集（smoke test 不执行该路径，逐类别失败仅记 debug）。"""
+        names = set()
+        try:
+            import hou
+            import recipeutils as ru
+        except Exception as exc:
+            log.debug("factory recipes unavailable: %s", exc)
+            return names
+        for cat in (ru.RecipeCategory.tool, ru.RecipeCategory.nodePreset,
+                    ru.RecipeCategory.parmPreset,
+                    ru.RecipeCategory.decoration,
+                    ru.RecipeCategory.parmTemplate,
+                    ru.RecipeCategory.data):
+            try:
+                names.update(ru.recipeNames(cat, include_label=False,
+                                            pad=False))
+            except Exception as exc:
+                log.debug("factory recipeNames(%r) failed: %s", cat, exc)
+        return names
+
     def _import_recipes(self, parent=None):
         """导入流程：选包 → 校验 + 摘要确认（含 .hda 时选目标库文件夹）
         → 带进度合并导入 → 落 lib_dirs 并 reload（新 .hda 由
@@ -1336,6 +1373,10 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         if not path:
             return
         existing = set(self._info_by_name)
+        # 出厂 recipe 名并入"已存在"集合：包内含同名 recipe 的 .hda 与
+        # 本地同名同语义一律跳过——装进来会与出厂定义同名冲突（Houdini
+        # 按库优先级二选一，不可预期）
+        existing.update(self._factory_recipe_names())
         try:
             s = transfer.inspect_package(path, existing)
         except transfer.TransferError as exc:
@@ -1467,8 +1508,13 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
                 _add(lvl, lv, level_counts[lv], LEVEL_PREFIX + lv, "level")
             lvl.setExpanded(bool(_UI_SETTINGS.get("level_expanded")))
 
-        current = self._find_key_item(self._category_key) \
-            or self.sidebar.topLevelItem(0)
+        current = self._find_key_item(self._category_key)
+        if current is None:
+            # 当前分类行已消失（标签被清空/层级不再出现等）：回退高亮
+            # 「全部」并同步键——signals 屏蔽中 _on_category_changed 不会
+            # 触发，不手动同步会让网格仍按旧键过滤、与侧栏显示脱节
+            self._category_key = KEY_ALL
+            current = self.sidebar.topLevelItem(0)
         self.sidebar.setCurrentItem(current)
         self.sidebar.blockSignals(False)
 
@@ -1677,11 +1723,18 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         pm = self._cover_cache.get(key)
         if pm is not None:
             return pm
-        # QIcon 不放大：请求大尺寸取到最接近原图的 pixmap，cover 精度足够
-        src = self._base_icon(info).pixmap(1024, 1024)
+        # 该 pixmap 只用于 delegate 的卡片缩略图绘制：按显示需求取档
+        # （显示尺寸×设备像素比；QIcon 不放大、只就近缩小），不再固定
+        # 1024——QIcon 按请求尺寸生成并内部缓存位图，1024 档每个 recipe
+        # 常驻近原图分辨率的大位图
+        dpr = self.list.devicePixelRatioF()
+        want = max(64, int(max(w, h) * (dpr if dpr > 0 else 1.0)))
+        src = self._base_icon(info).pixmap(want, want)
         pm = _cover_crop(src, w, h)
         if pm is None:
             pm = self._placeholder.pixmap(w, h)
+        if len(self._cover_cache) >= _COVER_CACHE_MAX:
+            self._cover_cache.clear()   # 上限兜底：旧尺寸条目整表让位
         self._cover_cache[key] = pm
         return pm
 
@@ -1736,7 +1789,8 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
                   + self._card_delegate.text_block_height() + GRID_CARD_GAP)
         self.list.setGridSize(QtCore.QSize(
             card_w + GRID_CARD_GAP * 2, grid_h))
-        self._cover_cache.clear()   # 缩略图显示尺寸变了，cover 缓存失效
+        # cover 缓存不在本函数清：它随滑条 valueChanged 连发，而缓存键
+        # 含 (名,宽,高)，旧尺寸条目不会被误用——统一在 sliderReleased 清
 
     def _on_selection_changed(self, current, _previous=None):
         if current is None:
@@ -1797,6 +1851,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
                                  "大图 - {}".format(
                                      self._display_label(info)))
         dlg.exec_()
+        dlg.deleteLater()   # exec_ 的模态框用完即释放，防积存
 
     def _update_preview(self, info):
         for btn in (self.tags_apply_btn,):
@@ -1918,6 +1973,9 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         if movie is not None:
             try:
                 movie.stop()
+                # movie 挂在 preview_label 下：不显式释放则 C++ 对象随
+                # label 滞留，CacheAll 的 GIF 全帧缓存一并滞留
+                movie.deleteLater()
             except RuntimeError:
                 pass
         self.preview_label.setMovie(None)
@@ -2150,7 +2208,9 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             bbox.addButton(reset_btn, QtWidgets.QDialogButtonBox.ActionRole)
             reset_btn.clicked.connect(_reset_default)
             dlg.currentColorChanged.connect(_on_changed)
-        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+        accepted = dlg.exec_() == QtWidgets.QDialog.Accepted
+        dlg.deleteLater()   # exec_ 的模态框用完即释放，防积存
+        if not accepted:
             return
         if state["clear"]:
             metadata.set_color(info.name, None)
@@ -2263,7 +2323,9 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
                 stored = metadata.set_thumb_from_file(info.name, path)
             else:
                 dlg = ThumbCropDialog(self, path, self._display_label(info))
-                if dlg.exec_() != QtWidgets.QDialog.Accepted:
+                accepted = dlg.exec_() == QtWidgets.QDialog.Accepted
+                dlg.deleteLater()   # exec_ 的模态框用完即释放，防积存
+                if not accepted:
                     return
                 stored = metadata.set_thumb_from_pixmap(
                     info.name, dlg.result_pixmap())
@@ -2289,7 +2351,10 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         box.setStandardButtons(QtWidgets.QMessageBox.Yes
                                | QtWidgets.QMessageBox.No)
         localize_buttons(box)   # Yes → 确认、No → 取消
-        if box.exec_() != QtWidgets.QMessageBox.Yes:
+        choice = box.exec_()
+        box.deleteLater()   # exec_ 的模态框用完即释放（保留实例+exec_ 形态，
+                            # smoke test patch 了 QMessageBox.exec_）
+        if choice != QtWidgets.QMessageBox.Yes:
             return
         metadata.clear_thumb(info.name)
         self._thumb_cache.pop(info.name, None)
@@ -2331,7 +2396,9 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         box.setStandardButtons(QtWidgets.QMessageBox.Yes
                                | QtWidgets.QMessageBox.No)
         localize_buttons(box)   # Yes → 确认、No → 取消
-        if box.exec_() != QtWidgets.QMessageBox.Yes:
+        choice = box.exec_()
+        box.deleteLater()   # exec_ 的模态框用完即释放，防积存
+        if choice != QtWidgets.QMessageBox.Yes:
             return
         try:
             store.delete_recipe(info.name)

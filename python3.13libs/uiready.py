@@ -32,30 +32,41 @@ except Exception as e:
 
 
 def _run_downstream_uiready():
-    """执行路径上下一个 python3.13libs/uiready.py（通常是 $HH 官方那份）。
+    """执行路径上其他 python3.13libs/uiready.py（通常是 $HH 官方那份）。
 
     sys.path 上放的是各个 python3.13libs 目录本身（houtools 能被导入即证），
     官方文件即 ``<entry>/uiready.py``；同时兼容 entry 为包根的挂载方式。
+    Houdini 只导入首个匹配的 uiready 模块（即本文件），路径上其余同名
+    钩子都会被遮蔽 —— 因此逐个执行全部下游，而不是只补第一个；单个
+    下游失败不阻塞其他下游与 HouTools 自身启动。
     """
     try:
         ours = Path(__file__).resolve()
     except NameError:
         return
+    seen = {ours}
     for entry in sys.path:
         if not entry:
             continue
         root = Path(entry)
         for candidate in (root / "uiready.py",
                           root / "python3.13libs" / "uiready.py"):
+            if not candidate.is_file():
+                continue
             try:
-                if candidate.is_file() and candidate.resolve() != ours:
-                    code = compile(candidate.read_text(encoding="utf-8"),
-                                   str(candidate), "exec")
-                    exec(code, {"__name__": "_houtools_downstream_uiready",
-                                "__file__": str(candidate)})
-                    return
+                resolved = candidate.resolve()
             except OSError:
                 continue
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            try:
+                code = compile(candidate.read_text(encoding="utf-8"),
+                               str(candidate), "exec")
+                exec(code, {"__name__": "_houtools_downstream_uiready",
+                            "__file__": str(candidate)})
+            except Exception as e:
+                print(f"[HouTools] 下游 uiready 执行失败 {candidate}: {e}")
 
 
 _run_downstream_uiready()

@@ -174,20 +174,34 @@ def ensure_libraries_installed(lib_dirs):
         else:
             try:
                 defs_here = hou.hda.definitionsInFile(path)
-            except Exception:
+            except Exception as exc:
+                # 二次读取失败（多数是库已被 Houdini 自动卸载）：按空
+                # 处理，但不再静默，留下告警痕迹
+                log.warning("re-inspect definitions in %s failed: %s",
+                            path, exc)
                 defs_here = []
             if not defs_here and os.path.isfile(path):
                 # 空壳库文件（0 个定义，历史删除残留）：卸载并删掉，
-                # 免得每次刷新都走一遍安装→卸载
+                # 免得每次刷新都走一遍安装→卸载。删除前与安装路径同样
+                # 的尺寸护栏：读不到定义但文件不小（可能是损坏的真资产）
+                # 保留待查，只清极小的空壳
                 try:
                     hou.hda.uninstallFile(path)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    log.debug("uninstall empty shell %s failed: %s",
+                              path, exc)
                 try:
-                    os.remove(path)
-                    log.debug("removed empty recipe library shell %s", path)
-                except OSError:
-                    pass
+                    size = os.path.getsize(path)
+                    if size < 512:
+                        os.remove(path)
+                        log.debug("removed empty recipe library shell %s",
+                                  path)
+                    else:
+                        log.warning("empty recipe library shell %s is %d "
+                                    "bytes; kept for inspection", path, size)
+                except OSError as exc:
+                    log.warning("cannot inspect empty shell %s: %s",
+                                path, exc)
             elif key not in loaded:
                 # 本次会话新装、且与 recipe 无关（误放进来的普通 OTL）：
                 # 卸载还原，不删除文件本身
@@ -235,7 +249,13 @@ def list_recipes(lib_dirs=None):
             if name in seen:
                 continue
             seen.add(name)
-            info = RecipeInfo(name=name, category=cat_key)
+            # 先按库文件过滤：非用户库（出厂 $HFS / Labs / 偏好库）的
+            # definition 不解析 data.recipe.json——全量枚举里大头是出厂
+            # recipe，逐个 JSON 解析白烧时间
+            lib_path = _definition_library(name)
+            if not lib_path or _norm(lib_path) not in keep:
+                continue
+            info = RecipeInfo(name=name, category=cat_key, library=lib_path)
             _read_header(info, hfs)
             if info.library and _norm(info.library) in keep:
                 out.append(info)
@@ -243,6 +263,18 @@ def list_recipes(lib_dirs=None):
     out.sort(key=lambda r: (order.get(r.category, 99),
                             r.display_label.lower()))
     return out
+
+
+def _definition_library(name):
+    """轻量取 definition 所在库文件路径（不解析 recipe JSON）。"""
+    import hou
+    try:
+        ntype = hou.nodeType(hou.dataNodeTypeCategory(), name)
+        defn = ntype.definition() if ntype else None
+        return defn.libraryFilePath() if defn else None
+    except Exception as exc:
+        log.debug("read library path for %s failed: %s", name, exc)
+        return None
 
 
 def _read_header(info, hfs):
@@ -355,8 +387,8 @@ def network_editor_under_cursor():
     try:
         if pane is not None and pane.type() == hou.paneTabType.NetworkEditor:
             return pane
-    except Exception:
-        pass
+    except Exception as exc:
+        log.debug("check pane type failed: %s", exc)
     return None
 
 
@@ -483,16 +515,21 @@ def apply_tool_recipe(name, pane=None, position=None, mode="shelf"):
     mode="drag"：拖拽松手即建；给 position（hou.Vector2 网络坐标）时
     把整组节点平移对齐到该点——apply 在此模式下的落点（视图中心/
     粘贴位置）官方 API 不保证是鼠标点，所以按返回的 items 锚点平移兜底。
+    未知 mode 显式归一化为 drag 并告警，避免静默走错分支。
     两者都会先做网络层级匹配检查，不匹配抛 RuntimeError（含中文提示）。
     """
     import hou
+    if mode not in ("shelf", "drag"):
+        log.warning("apply_tool_recipe: unknown mode %r, treated as drag",
+                    mode)
+        mode = "drag"
     _check_tool_context(name, pane)
     kwargs = dict(_SHELF_OPTS if mode == "shelf" else _DRAG_OPTS)
     kwargs["pane"] = pane
     result = hou.data.applyToolRecipe(name, **kwargs)
     if mode == "shelf":
         ensure_items_visible(name, result, pane)
-    elif position is not None and mode == "drag":
+    elif position is not None:
         _align_items_to_position(name, result, position)
     return result
 
@@ -592,8 +629,10 @@ def delete_recipe(name):
             if not defs_left:
                 try:
                     hou.hda.uninstallFile(lib)
-                except Exception:
-                    pass  # 未加载的文件卸载会失败，直接删文件即可
+                except Exception as exc:
+                    # 未加载的文件卸载会失败，直接删文件即可
+                    log.debug("uninstall %s after delete failed: %s",
+                              lib, exc)
                 try:
                     os.remove(lib)
                 except OSError as exc:

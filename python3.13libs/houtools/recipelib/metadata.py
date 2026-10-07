@@ -272,6 +272,38 @@ def get_thumb(name):
     return path if os.path.exists(path) else ""
 
 
+def _clean_stale_thumbs(name, skip=()):
+    """按缩略图文件名前缀（safe_name(name) + "."）清理滞留的旧文件。
+
+    GIF→PNG 等换扩展名重设后，旧文件不再被 settings 引用却留在盘上，
+    这里按 stem 前缀整扫。仍被其他 recipe 引用的文件跳过（safe_name
+    折叠碰撞时不误伤他人），skip 里的路径（本次要写入的新文件）跳过。
+    """
+    stem = safe_name(name) + "."
+    protected = set()
+    for other, stored in (_SETTINGS.get("thumbs") or {}).items():
+        if stored and other != name:
+            protected.add(os.path.normcase(
+                os.path.abspath(_to_abs(stored))))
+    skips = {os.path.normcase(os.path.abspath(p)) for p in skip if p}
+    try:
+        names = sorted(os.listdir(str(THUMBS_DIR)))
+    except OSError as exc:
+        log.debug("list thumbs dir failed: %s", exc)
+        return
+    for fn in names:
+        path = str(THUMBS_DIR / fn)
+        if not fn.startswith(stem) or not os.path.isfile(path):
+            continue
+        norm = os.path.normcase(os.path.abspath(path))
+        if norm in skips or norm in protected:
+            continue
+        try:
+            os.remove(path)
+        except OSError as exc:
+            log.warning("cannot remove stale thumb %s: %s", path, exc)
+
+
 def set_thumb_from_file(name, src):
     """把用户选中的图片/GIF 复制进缩略图目录并记录，返回绝对路径。
 
@@ -283,6 +315,7 @@ def set_thumb_from_file(name, src):
     ext = os.path.splitext(src)[1].lower() or ".png"
     THUMBS_DIR.mkdir(parents=True, exist_ok=True)
     dst = str(THUMBS_DIR / (safe_name(name) + ext))
+    _clean_stale_thumbs(name, skip={dst})   # 换扩展名重设前清掉旧文件
     shutil.copyfile(src, dst)
     thumbs = dict(_SETTINGS.get("thumbs") or {})
     thumbs[name] = _to_stored(dst)
@@ -300,6 +333,7 @@ def set_thumb_from_pixmap(name, pixmap):
         raise RuntimeError("缩略图内容为空")
     THUMBS_DIR.mkdir(parents=True, exist_ok=True)
     dst = str(THUMBS_DIR / (safe_name(name) + ".png"))
+    _clean_stale_thumbs(name, skip={dst})   # 换扩展名重设前清掉旧文件
     if not pixmap.save(dst, "PNG"):
         raise RuntimeError("缩略图保存失败: {}".format(dst))
     thumbs = dict(_SETTINGS.get("thumbs") or {})
@@ -319,6 +353,8 @@ def clear_thumb(name):
                 os.remove(old_abs)
             except OSError as exc:
                 log.warning("cannot remove thumb %s: %s", old_abs, exc)
+    # 引用已清，再按前缀扫一遍滞留文件（GIF→PNG 等换扩展名的孤儿）
+    _clean_stale_thumbs(name)
 
 
 # --------------------------------------------------------------------------
@@ -363,9 +399,18 @@ def write_doc(name, text):
     path = doc_path(name)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".~tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write(text)
-    os.replace(tmp, path)  # 原子落盘，编辑器异常中断不留半截文件
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, path)  # 原子落盘，编辑器异常中断不留半截文件
+    finally:
+        # 写盘异常 / os.replace 失败时清掉临时文件（成功时已不存在，
+        # 这里是幂等兜底），不留 .~tmp 滞留在 doc 目录里
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError as exc:
+                log.debug("cannot remove doc tmp %s: %s", tmp, exc)
 
 
 def assets_dir(name):
@@ -393,8 +438,33 @@ def insert_asset(name, src):
     return "assets/" + os.path.basename(dst)
 
 
+def _other_recipe_names(name):
+    """元数据里出现过的其他 recipe 内部名（收藏值 + 各内容键的键名）。
+
+    本模块没有全量 recipe 名册，删文档目录的 safe_name 碰撞检查以
+    元数据里出现过的名字为准（有元数据的 recipe 才可能有文档）。
+    """
+    data = all_metadata()
+    names = set(data["favorites"])
+    for key in ("tags", "thumbs", "display_names", "colors"):
+        names.update(data[key].keys())
+    names.discard(name)
+    return names
+
+
 def delete_doc_dir(name):
-    """删除配方文档目录（配方被删除时清理残留）。"""
+    """删除配方文档目录（配方被删除时清理残留）。
+
+    safe_name 折叠碰撞防护：其他 recipe 名折叠进同一目录时（如
+    "a::b" 与 "a/b" 都折成 a__b）不删目录并告警，防删除连锁误伤
+    别的配方的文档。
+    """
+    stem = safe_name(name)
+    for other in _other_recipe_names(name):
+        if safe_name(other) == stem:
+            log.warning("keep doc dir %s: safe_name collides with "
+                        "recipe %s", stem, other)
+            return
     d = doc_dir(name)
     if os.path.isdir(d):
         shutil.rmtree(d, ignore_errors=True)

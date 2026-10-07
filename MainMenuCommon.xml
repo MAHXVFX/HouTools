@@ -55,8 +55,8 @@ _houtools_dispatcher.run("recipe_library")
 
       <!-- 快捷键设置:捕获式改键,写 settings/hotkeys.json,
            uiready 每次启动应用。
-           (粘贴为 Object Merge 无菜单入口,纯快捷键触发 —— 热键符号
-           由 toolbar/HouTools.shelf 的隐藏 shelf tool 注册) -->
+           (粘贴为 Object Merge 的菜单入口在 NetworkViewMenu.xml,
+           其 scriptItem 注册热键符号 h.pane.wsheet.houtools_paste_as_object_merge) -->
       <scriptItem id="houtools.paste_hotkey_settings">
         <label>Paste Hotkey Settings</label>
         <scriptCode><![CDATA[

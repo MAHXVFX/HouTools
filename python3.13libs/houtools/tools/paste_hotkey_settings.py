@@ -7,10 +7,12 @@
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QKeySequenceEdit, QLabel, QPushButton, QVBoxLayout,
+    QDialog, QHBoxLayout, QKeySequenceEdit, QLabel, QMessageBox, QPushButton,
+    QVBoxLayout,
 )
 
 from houtools.core.log import get_logger
+from houtools.ui.dialogs import localize_buttons
 
 logger = get_logger("tools.paste_hotkey")
 
@@ -47,6 +49,22 @@ def apply_key(key: str) -> bool:
     if not hou.hotkeys.addAssignment(CONTEXT, SYMBOL, key):
         return False
     hotkeys.set_custom_key(SYMBOL, key)
+    return True
+
+
+def clear_custom() -> bool:
+    """清除自定义键位、恢复默认(会话内即时生效 + 删除持久化记录)。
+
+    返回是否成功。注意:直接应用默认值(不走 install_defaults 的
+    "已有键位不覆盖"分支)——用户明确要求恢复默认。
+    """
+    import hou
+
+    from houtools.core import hotkeys
+
+    if not hou.hotkeys.addAssignment(CONTEXT, SYMBOL, DEFAULT_KEY):
+        return False
+    hotkeys.clear_custom_key(SYMBOL)
     return True
 
 
@@ -115,8 +133,31 @@ class _PasteHotkeyDialog(QDialog):
 
         key = self._editor.keySequence().toString()
         if not key:
-            self._hint.setText("未捕获到按键。")
-            self._hint.setStyleSheet("color: #d1283e; font-size: 11px;")
+            # 空序列 = 清除自定义键位、恢复默认（此前没有撤销自定义的路径）
+            box = QtWidgets.QMessageBox(self)
+            box.setWindowTitle("清除自定义键位")
+            box.setText(f"未捕获到按键。要清除自定义键位、恢复默认"
+                        f"（{DEFAULT_KEY}）吗？")
+            box.setStandardButtons(QtWidgets.QMessageBox.Yes
+                                   | QtWidgets.QMessageBox.No)
+            localize_buttons(box)
+            ret = box.exec_()
+            box.deleteLater()
+            if ret != QtWidgets.QMessageBox.Yes:
+                return
+            if clear_custom():
+                logger.info("paste_as_object_merge custom hotkey cleared")
+                try:
+                    hou.ui.setStatusMessage(
+                        f"Paste as Object Merge 快捷键已恢复默认:"
+                        f"{DEFAULT_KEY}", hou.severityType.ImportantMessage)
+                except Exception:
+                    pass
+                self.accept()
+            else:
+                self._hint.setText("Houdini 拒绝了默认键位。")
+                self._hint.setStyleSheet(
+                    "color: #d1283e; font-size: 11px;")
             return
         if not apply_key(key):
             self._hint.setText(f"Houdini 拒绝了该键位:{key}")

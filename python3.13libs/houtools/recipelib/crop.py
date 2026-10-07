@@ -54,8 +54,17 @@ class _CropCanvas(QtWidgets.QWidget):
                             int(s.width() * f), int(s.height() * f))
 
     def source_pixmap(self):
-        """当前选区的原图分辨率裁剪结果。"""
+        """当前选区的原图分辨率裁剪结果（确认存储时用）。"""
         return self._src.copy(self.source_rect())
+
+    def display_crop_pixmap(self):
+        """当前选区的显示分辨率裁剪（预览热路径）。
+
+        直接从显示用 _disp（与原图同比例）取块，不做原图分辨率的整块
+        copy——mouseMove 每步都会走到这里，原图大时逐帧整拷很费；最终
+        预览就 150px 档，显示分辨率源精度足够。
+        """
+        return self._disp.copy(self._sel.normalized())
 
     def _fit_ratio_rect(self, anchor, target_w, sign_x, sign_y):
         """从锚点向 (sign_x, sign_y) 方向铺 target_w 宽的锁定比例框，夹图内。"""
@@ -238,7 +247,11 @@ class ThumbCropDialog(QtWidgets.QDialog):
         self._update_preview()
 
     def _update_preview(self):
-        pm = self._canvas.source_pixmap()
+        # 预览走显示分辨率裁剪（_disp 与原图同比例，最终就 150px 档）；
+        # 原图分辨率的精确裁剪只在确认时经 result_pixmap() 取
+        pm = self._canvas.display_crop_pixmap()
+        if pm.isNull():
+            return
         self._preview.setPixmap(pm.scaled(
             self._preview.size(), QtCore.Qt.KeepAspectRatio,
             QtCore.Qt.SmoothTransformation))

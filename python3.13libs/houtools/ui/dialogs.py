@@ -42,6 +42,7 @@ def warn(parent, title, text):
     box.setStandardButtons(QtWidgets.QMessageBox.Ok)
     localize_buttons(box)
     box.exec_()
+    box.deleteLater()   # 不留隐藏对话框（可能带 parent 长期存活）
 
 
 def info(parent, title, text):
@@ -52,6 +53,36 @@ def info(parent, title, text):
     box.setStandardButtons(QtWidgets.QMessageBox.Ok)
     localize_buttons(box)
     box.exec_()
+    box.deleteLater()
+
+
+def question(parent, title, text):
+    """QMessageBox.question 的中文化版本。返回 True = 「确认」（Yes）。"""
+    box = QtWidgets.QMessageBox(parent)
+    box.setWindowTitle(title)
+    box.setText(text)
+    box.setStandardButtons(QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+    localize_buttons(box)
+    ret = box.exec_()
+    box.deleteLater()
+    return ret == QtWidgets.QMessageBox.Yes
+
+
+def prompt_text(parent, title, label, text=""):
+    """单行文本输入（自建 QInputDialog 实例 + 按钮中文化）。
+
+    返回 (text, ok)。静态便利函数 QInputDialog.getText 拿不到内部按钮
+    （英文系统出英文按钮），必须实例化调用。
+    """
+    dlg = QtWidgets.QInputDialog(parent)
+    dlg.setWindowTitle(title)
+    dlg.setLabelText(label)
+    dlg.setTextValue(text)
+    localize_buttons(dlg)
+    ok = dlg.exec_() == QtWidgets.QDialog.Accepted
+    value = dlg.textValue()
+    dlg.deleteLater()
+    return value, ok
 
 
 # QColorDialog（DontUseNativeDialog）内部的英文部件文本 → 中文。

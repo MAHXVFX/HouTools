@@ -113,7 +113,14 @@ class MarkdownMediaView(_DocPreview):
 
     def stop_media(self):
         for movie in self._movies.values():
-            movie.stop()
+            try:
+                movie.stop()
+                # movie 挂在本视图下：不显式释放则 C++ 对象滞留，
+                # CacheAll 的全帧缓存随之滞留（loadResource 里创建的
+                # movie 都登记在 _movies，在这里统一释放）
+                movie.deleteLater()
+            except RuntimeError:
+                pass
         self._movies.clear()
 
     def _on_movie_frame(self, url_str):
@@ -324,6 +331,11 @@ class DocEditorDialog(QtWidgets.QDialog):
             log.warning("save doc failed for %s: %s", self._name, exc)
             warn(self, "保存失败", str(exc))
             return   # 保存失败不关窗，内容留在编辑器里
+        # 保存成功：本次会话插入的 assets 已被保存的文档引用，清掉登记
+        # 防止再次关闭时走"丢弃修改"清理误删它们；同时复位 modified
+        # 标志，再次关窗不再弹"有未保存修改"确认
+        self._inserted_assets = []
+        self.editor.document().setModified(False)
         self.docSaved.emit(self._name)
         self.accept()
 
@@ -370,7 +382,8 @@ class DocEditorDialog(QtWidgets.QDialog):
         except (OSError, RuntimeError) as exc:
             warn(self, "插入失败", str(exc))
             return
-        alt = os.path.basename(path)
+        # alt 取文件名，剥掉会破坏 markdown 图片语法的字符（[]、换行）
+        alt = re.sub(r"[\[\]\r\n]+", "", os.path.basename(path))
         self._inserted_assets.append(rel)
         self.editor.insertPlainText("![{}]({})".format(alt, rel))
 

@@ -302,7 +302,10 @@ def _hda_plan(manifest, members, existing):
         if any(n in existing for n in rec):
             hda_skip.append((arc, rec))
         else:
-            hda_import.append((arc, str((info or {}).get("original") or arc)))
+            # manifest 在可信边界之外：original 只取文件名（包作者可任意
+            # 伪造），防 ../ 相对路径与绝对路径把解包目标写出库目录之外
+            original = str((info or {}).get("original") or arc)
+            hda_import.append((arc, os.path.basename(original)))
     return hda_import, hda_skip
 
 

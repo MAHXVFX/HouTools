@@ -327,8 +327,8 @@ def _target_editor(kwargs: dict):
         under = hou.ui.paneTabUnderCursor()
         if under is not None and under.type() == hou.paneTabType.NetworkEditor:
             return under
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("paneTabUnderCursor failed: %s", exc)
 
     return hou.ui.paneTabOfType(hou.paneTabType.NetworkEditor)
 
@@ -337,7 +337,8 @@ def _paste_position(editor):
     """返回鼠标当前所在的网络坐标（限制在可视范围内）。"""
     try:
         return editor.cursorPosition()
-    except Exception:
+    except Exception as exc:
+        logger.debug("cursorPosition failed, using bounds center: %s", exc)
         bounds = editor.visibleBounds()
         return ((bounds[0] + bounds[2]) / 2.0, (bounds[1] + bounds[3]) / 2.0)
 
@@ -347,5 +348,5 @@ def _status(message: str):
     try:
         import hou
         hou.ui.setStatusMessage(message, hou.severityType.ImportantMessage)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("setStatusMessage failed: %s", exc)

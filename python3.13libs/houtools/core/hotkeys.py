@@ -47,6 +47,11 @@ def set_custom_key(symbol: str, key: str) -> None:
     _store().set(symbol, key)
 
 
+def clear_custom_key(symbol: str) -> None:
+    """删除用户自定义键位(回退 Hotkey Manager 已有键位 / 默认值)。"""
+    _store().remove(symbol)
+
+
 def install_defaults() -> list[str]:
     """分配所有默认键位,返回失败的条目描述列表(空 = 全部成功或已跳过)。"""
     import hou
@@ -61,8 +66,10 @@ def install_defaults() -> list[str]:
                 try:
                     if hou.hotkeys.assignments(context, symbol):
                         continue  # 已有键位(含用户自定义),不覆盖
-                except Exception:
-                    pass  # 查询失败不阻塞分配,由 addAssignment 的返回值兜底
+                except Exception as e:
+                    # 查询失败不阻塞分配,由 addAssignment 的返回值兜底
+                    logger.debug("assignments query failed for %s: %s",
+                                 symbol, e)
 
             if not hou.hotkeys.addAssignment(context, symbol, key):
                 failed.append(f"{symbol} <- {key}(符号未注册或键位无效)")
