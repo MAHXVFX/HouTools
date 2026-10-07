@@ -366,6 +366,7 @@ class _PreviewNameLabel(QtWidgets.QLabel):
 
     nameDoubleClicked = QtCore.Signal()
     _BAR_GAP = 6   # 竖条与名字的间距，同卡片行1
+    _INDENT = 8    # 整行（竖条+名字）相对面板左缘的缩进，不贴边
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -374,8 +375,8 @@ class _PreviewNameLabel(QtWidgets.QLabel):
     def set_bar_color(self, color):
         self._bar = QtGui.QColor(color) if color else None
         self.setContentsMargins(
-            (_CardDelegate.BAR_W + self._BAR_GAP) if self._bar else 0,
-            0, 0, 0)
+            (self._INDENT + _CardDelegate.BAR_W + self._BAR_GAP)
+            if self._bar else 0, 0, 0, 0)
         self.update()
 
     def paintEvent(self, event):
@@ -387,7 +388,8 @@ class _PreviewNameLabel(QtWidgets.QLabel):
                 fm = self.fontMetrics()
                 # 与首行文字等高的圆角竖条（卡片行1同款 y+1、高-2）；
                 # 布局按 heightForWidth 给高，首行贴 contentsRect 顶
-                p.drawRoundedRect(QtCore.QRectF(0, 1, _CardDelegate.BAR_W,
+                p.drawRoundedRect(QtCore.QRectF(self._INDENT, 1,
+                                                _CardDelegate.BAR_W,
                                                 fm.height() - 2), 1.5, 1.5)
         super().paintEvent(event)
 
@@ -1763,7 +1765,8 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.preview_label.setCursor(QtCore.Qt.ArrowCursor)
         self.preview_label.setToolTip("")
         self.preview_name.setText("")
-        self.preview_name.set_bar_color(None)
+        # 空态也保留竖条（默认色，位置同选中态）：名称行版式不跳动
+        self.preview_name.set_bar_color(_CardDelegate.BAR_DEFAULT)
         # 空态与选中态同版式：标签保留、值留空（用户指定）
         self.preview_meta.setText(
             "内部名称: \n类型: \n来源: ")
