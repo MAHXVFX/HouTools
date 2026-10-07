@@ -2045,23 +2045,23 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             return
         fav = metadata.is_favorite(info.name)
         menu = QtWidgets.QMenu(self)
-        act_fav = menu.addAction("取消收藏" if fav else "★ 收藏")
+        act_fav = menu.addAction("取消收藏" if fav else "收藏")
         menu.addSeparator()
         # 恢复默认显示名不进菜单：自定义显示名留空确认即恢复
-        act_rename = menu.addAction("自定义显示名...")
+        act_rename = menu.addAction("自定义显示名")
         menu.addSeparator()
-        act_doc = menu.addAction("编辑文档...")
-        act_thumb = menu.addAction("设置缩略图...")
+        act_doc = menu.addAction("编辑文档")
+        act_thumb = menu.addAction("设置缩略图")
         act_thumb_clear = None
         if metadata.get_thumb(info.name):
-            act_thumb_clear = menu.addAction("清除缩略图...")
+            act_thumb_clear = menu.addAction("清除缩略图")
         # 清除颜色不进菜单：颜色对话框里「恢复默认」+ 确认
-        act_color = menu.addAction("自定义颜色...")
+        act_color = menu.addAction("自定义颜色")
         act_copy = menu.addAction("复制内部名")
         menu.addSeparator()
         act_del = None
         if not info.under_hfs:
-            act_del = menu.addAction("删除 Recipe...")
+            act_del = menu.addAction("删除 Recipe")
         act = menu.exec_(self.list.mapToGlobal(pos))
         if act is act_fav:
             self._set_favorite(info, not fav)
