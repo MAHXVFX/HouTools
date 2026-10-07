@@ -44,6 +44,16 @@ def warn(parent, title, text):
     box.exec_()
 
 
+def info(parent, title, text):
+    """QMessageBox.information 的中文化版本（单按钮「确认」）。"""
+    box = QtWidgets.QMessageBox(parent)
+    box.setWindowTitle(title)
+    box.setText(text)
+    box.setStandardButtons(QtWidgets.QMessageBox.Ok)
+    localize_buttons(box)
+    box.exec_()
+
+
 # QColorDialog（DontUseNativeDialog）内部的英文部件文本 → 中文。
 # 按原文匹配改写（去助记符 & 后精确匹配，冒号保留），找不到的部件
 # 原样保留（Qt 版本间文案可能变化）。

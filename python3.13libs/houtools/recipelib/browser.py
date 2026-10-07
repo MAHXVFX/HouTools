@@ -1,8 +1,9 @@
 """Recipe Library 主窗口：基于官方 recipes 的资产浏览/应用/文档面板。
 
-布局：顶部工具栏（刷新/库目录/搜索/大小）+ 左侧树形栏（全部/收藏/节点参数/
+布局：顶部工具栏（刷新/设置/搜索/大小）+ 左侧树形栏（全部/收藏/节点参数/
 子菜单▸/标签▸/层级▸，段头整行点击折叠展开）+ 中部缩略图网格 + 右侧预览面板
-（动图预览/元信息/标签编辑）+ 底部状态栏。
+（动图预览/元信息/标签编辑）+ 底部状态栏。设置面板（ShareX 式左分类右内容）
+承载库目录管理与数据导入/导出（transfer.py，.zip 交换包），后续设置项往里加页。
 
 交互（四类 recipe 语义不同，见 store.apply_*）：
 - 双击卡片：Tool 按官方工具架体验立即在当前网络创建并框选（无二次点击）；
@@ -18,11 +19,12 @@ reload() 里经 store.list_recipes()（测试里打补丁替换）。
 """
 
 import os
+import time
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from houtools.core.log import get_logger
-from houtools.recipelib import metadata, store
+from houtools.recipelib import metadata, store, transfer
 from houtools.recipelib.crop import ThumbCropDialog
 from houtools.recipelib.docs import DocEditorDialog, MarkdownMediaView, MediaDialog
 from houtools.ui import fonts as tool_fonts
@@ -30,7 +32,7 @@ from houtools.ui.sidebar import (SIDEBAR_COUNT_ROLE, SIDEBAR_HEADER_ROLE,
                                  SIDEBAR_ICON_ROLE, SidebarDelegate,
                                  sidebar_icon_pixmap)
 from houtools.ui.badge import FavoriteBadge
-from houtools.ui.dialogs import localize_buttons, localize_color_dialog, warn
+from houtools.ui.dialogs import info, localize_buttons, localize_color_dialog, warn
 from houtools.ui.taskbar import apply_appwindow_flags
 from houtools.core.settings import JsonStore
 
@@ -300,6 +302,7 @@ _UI_SETTINGS = JsonStore("recipelib_ui.json", defaults={
     "grp_expanded": True,   # 「子菜单」段折叠状态，跨会话记忆
     "tag_expanded": True,   # 「标签」段折叠状态
     "level_expanded": True,   # 「层级」段折叠状态
+    "last_export_dir": "",  # 上次导出的目录（导出对话框起始位置）
 })
 
 
@@ -598,26 +601,23 @@ class _PromptDialog(QtWidgets.QDialog):
         return self.edit.text()
 
 
-class _LibraryDirsDialog(QtWidgets.QDialog):
-    """库文件夹管理对话框：可配置多个，列表即加载顺序。
+class _LibDirsPage(QtWidgets.QWidget):
+    """设置面板「库目录」页：可配置多个文件夹，列表即加载顺序。
 
+    原独立「库目录...」对话框迁入；改动即时生效（增删一行立即经
+    on_changed 回调落盘并重载主面板），无确认/取消语义。
     创建 recipe 用 Houdini 官方保存流程（位置指向库文件夹里的 .hda）；
     其余文件夹常用来挂共享库（队友/项目的 recipe .hda 直接丢进去就被扫描）。
     """
 
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Recipe 库文件夹")
-        self.resize(580, 340)
-
+    def __init__(self, on_changed=None):
+        super().__init__()
+        self._on_changed = on_changed
         self.list = QtWidgets.QListWidget()
         self.list.addItems(metadata.get_lib_dirs())
 
         add_btn = QtWidgets.QPushButton("添加文件夹...")
         rm_btn = QtWidgets.QPushButton("移除选中")
-        buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.Ok)
-        buttons.accepted.connect(self.accept)
         hint = QtWidgets.QLabel(
             "每个文件夹里任意层级的 .hda 都会被扫描加载（官方出厂 recipes "
             "不加载）。创建 recipe 用 Houdini 官方保存流程（网络编辑器右键 "
@@ -638,11 +638,9 @@ class _LibraryDirsDialog(QtWidgets.QDialog):
         lay = QtWidgets.QVBoxLayout(self)
         lay.addWidget(hint)
         lay.addLayout(body, 1)
-        lay.addWidget(buttons)
 
         add_btn.clicked.connect(self._add_dir)
         rm_btn.clicked.connect(self._remove_dir)
-        localize_buttons(self)   # Ok → 确认
 
     def _add_dir(self):
         start = self.list.currentItem().text() if self.list.currentItem() \
@@ -658,14 +656,251 @@ class _LibraryDirsDialog(QtWidgets.QDialog):
                 return
         self.list.addItem(d)
         self.list.setCurrentRow(self.list.count() - 1)
+        self._emit()
 
     def _remove_dir(self):
         row = self.list.currentRow()
         if row >= 0:
             self.list.takeItem(row)
+            self._emit()
+
+    def _emit(self):
+        if self._on_changed is not None:
+            self._on_changed(self.dirs())
 
     def dirs(self):
         return [self.list.item(i).text() for i in range(self.list.count())]
+
+
+class _DataPage(QtWidgets.QWidget):
+    """设置面板「数据」页：导出 / 导入 .zip 交换包（迁移与分享）。"""
+
+    def __init__(self, on_export=None, on_import=None):
+        super().__init__()
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setSpacing(6)
+
+        exp_title = QtWidgets.QLabel("导出")
+        exp_title.setStyleSheet("font-weight: bold; font-size: 13px;")
+        exp_hint = QtWidgets.QLabel(
+            "把当前库的全部积累（自定义显示名、标签、收藏、卡片颜色、"
+            "缩略图、Markdown 文档）打包成 zip，可带到其它电脑或与人分享；"
+            "可勾选连同 recipe 工具的 .hda 库文件一起打包。")
+        exp_hint.setWordWrap(True)
+        exp_hint.setStyleSheet("color: #888888;")
+        exp_btn = QtWidgets.QPushButton("导出...")
+        lay.addWidget(exp_title)
+        lay.addWidget(exp_hint)
+        lay.addWidget(exp_btn)
+
+        lay.addSpacing(20)
+
+        imp_title = QtWidgets.QLabel("导入")
+        imp_title.setStyleSheet("font-weight: bold; font-size: 13px;")
+        imp_hint = QtWidgets.QLabel(
+            "从导出的 zip 包合并导入：按配方内部名逐条覆盖同名条目，"
+            "本地独有内容保留；与本地同名的 .hda 库文件会跳过，"
+            "避免同名定义冲突。")
+        imp_hint.setWordWrap(True)
+        imp_hint.setStyleSheet("color: #888888;")
+        imp_btn = QtWidgets.QPushButton("导入...")
+        lay.addWidget(imp_title)
+        lay.addWidget(imp_hint)
+        lay.addWidget(imp_btn)
+
+        lay.addStretch(1)
+        exp_btn.clicked.connect(lambda: on_export(self) if on_export else None)
+        imp_btn.clicked.connect(lambda: on_import(self) if on_import else None)
+
+
+class _SettingsDialog(QtWidgets.QDialog):
+    """设置面板：左分类列表 + 右内容页（参考 ShareX 设置布局）。
+
+    本期两类：库目录（原独立对话框迁入，改动即时生效）、数据（导入/
+    导出交换包）。后续设置项往 _PAGES 追加 (名称, 页面工厂) 即可。
+    改动即时生效，底部只有「关闭」。
+    """
+
+    _PAGES = ("库目录", "数据")
+
+    def __init__(self, parent, on_lib_dirs_changed, on_export, on_import):
+        super().__init__(parent)
+        self.setWindowTitle("设置 - Recipe Library")
+        self.resize(680, 430)
+
+        self.cats = QtWidgets.QListWidget()
+        self.cats.setMinimumWidth(120)
+        self.cats.setMaximumWidth(150)
+        for label in self._PAGES:
+            self.cats.addItem(QtWidgets.QListWidgetItem(label))
+        self.stack = QtWidgets.QStackedWidget()
+        self.stack.addWidget(_LibDirsPage(on_lib_dirs_changed))
+        self.stack.addWidget(_DataPage(on_export, on_import))
+        self.cats.currentRowChanged.connect(self.stack.setCurrentIndex)
+
+        body = QtWidgets.QHBoxLayout()
+        body.addWidget(self.cats)
+        body.addWidget(self.stack, 1)
+
+        bbox = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Close)
+        bbox.rejected.connect(self.reject)
+
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.addLayout(body, 1)
+        lay.addWidget(bbox)
+        localize_buttons(self)   # Close → 关闭
+        self.cats.setCurrentRow(0)
+
+
+class _ExportDialog(QtWidgets.QDialog):
+    """导出选项：目标 zip 路径 + 是否连同 .hda 库文件一起打包。"""
+
+    def __init__(self, parent, recipe_count):
+        super().__init__(parent)
+        self.setWindowTitle("导出 Recipe 库")
+        self.setMinimumWidth(500)
+
+        self._path = QtWidgets.QLineEdit(self._default_zip_path())
+        browse = QtWidgets.QPushButton("浏览...")
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(QtWidgets.QLabel("保存到:"))
+        row.addWidget(self._path, 1)
+        row.addWidget(browse)
+
+        self._include_hda = QtWidgets.QCheckBox(
+            "连同 recipe 工具一起打包（.hda 库文件）")
+        self._include_hda.setChecked(True)
+
+        hint = QtWidgets.QLabel(
+            "将导出 {} 个配方的 显示名 / 标签 / 收藏 / 颜色 / 缩略图 / "
+            "Markdown 文档；.hda 是 recipe 本体，勾选后接收方无需重新"
+            "获取这些库文件。".format(recipe_count))
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #888888;")
+
+        bbox = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        bbox.accepted.connect(self.accept)
+        bbox.rejected.connect(self.reject)
+
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.addLayout(row)
+        lay.addWidget(self._include_hda)
+        lay.addWidget(hint)
+        lay.addWidget(bbox)
+        localize_buttons(self)
+        browse.clicked.connect(self._browse)
+
+    @staticmethod
+    def _default_zip_path():
+        name = "HouToolsRecipes_{}.zip".format(time.strftime("%Y%m%d"))
+        d = _UI_SETTINGS.get("last_export_dir") or ""
+        return os.path.join(d, name) if d else name
+
+    def _browse(self):
+        path, _f = QtWidgets.QFileDialog.getSaveFileName(
+            self, "选择导出位置",
+            self._path.text() or self._default_zip_path(), "Zip 包 (*.zip)")
+        if path:
+            self._path.setText(os.path.abspath(path))
+
+    def zip_path(self):
+        p = self._path.text().strip()
+        if p and not p.lower().endswith(".zip"):
+            p += ".zip"
+        return os.path.abspath(p)
+
+    def include_hda(self):
+        return self._include_hda.isChecked()
+
+
+class _ImportConfirmDialog(QtWidgets.QDialog):
+    """导入确认：内容摘要 + （包内带 .hda 时）目标库文件夹选择。"""
+
+    def __init__(self, parent, summary_text, needs_target):
+        super().__init__(parent)
+        self.setWindowTitle("导入 Recipe 包")
+        self.setMinimumWidth(540)
+
+        text = QtWidgets.QLabel(summary_text)
+        text.setWordWrap(True)
+
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.addWidget(text)
+        lay.addSpacing(8)
+
+        self._combo = None
+        if needs_target:
+            self._combo = QtWidgets.QComboBox()
+            self._combo.addItems(metadata.get_lib_dirs())
+            new_btn = QtWidgets.QPushButton("新建文件夹...")
+            row = QtWidgets.QHBoxLayout()
+            row.addWidget(QtWidgets.QLabel("复制 .hda 到库文件夹:"))
+            row.addWidget(self._combo, 1)
+            row.addWidget(new_btn)
+            hint = QtWidgets.QLabel(
+                "尚未配置库文件夹时点「新建文件夹...」选择一个位置，"
+                "将自动创建并加入库目录。")
+            hint.setWordWrap(True)
+            hint.setStyleSheet("color: #888888;")
+            lay.addLayout(row)
+            lay.addWidget(hint)
+            new_btn.clicked.connect(self._new_dir)
+
+        bbox = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        bbox.accepted.connect(self.accept)
+        bbox.rejected.connect(self.reject)
+        lay.addWidget(bbox)
+        localize_buttons(self)
+
+    def _new_dir(self):
+        d = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "选择或新建库文件夹",
+            self._combo.currentText() if self._combo.count() else "")
+        if not d:
+            return
+        d = os.path.abspath(d)
+        at = self._combo.findText(d)
+        if at < 0:
+            self._combo.addItem(d)
+            at = self._combo.count() - 1
+        self._combo.setCurrentIndex(at)
+
+    def target(self):
+        """选中的目标库文件夹（.hda 复制目的地；空串 = 未选）。"""
+        return os.path.abspath(self._combo.currentText()) \
+            if self._combo is not None and self._combo.currentText() else ""
+
+
+def _run_with_progress(parent, label, work):
+    """跑一个带进度/可取消的传输任务（transfer），返回结果或 None=取消。
+
+    work(report) 里 report(done, total, text) 由 transfer 每完成一个
+    文件调用一次，返回真值表示用户已点取消。QProgressDialog.setValue
+    在模态下自动处理事件，界面保持响应；「取消」置位后 transfer 在
+    下一文件边界抛 TransferCancelled。
+    """
+    dlg = QtWidgets.QProgressDialog(label, "取消", 0, 1, parent)
+    dlg.setWindowTitle("Recipe Library")
+    dlg.setWindowModality(QtCore.Qt.WindowModal)
+    dlg.setMinimumDuration(0)
+    dlg.setValue(0)
+    state = {"cancelled": False}
+    dlg.canceled.connect(lambda: state.update(cancelled=True))
+
+    def report(done, total, text):
+        dlg.setLabelText(text)
+        dlg.setMaximum(max(1, int(total)) + 1)   # +1：最后一步不触发自动关闭
+        dlg.setValue(min(int(done), int(total)))
+        return state["cancelled"]
+
+    try:
+        return work(report)
+    except transfer.TransferCancelled:
+        return None
+    finally:
+        dlg.close()
 
 
 class _RecipeLibraryWindow(QtWidgets.QWidget):
@@ -742,10 +977,9 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
 
         # ---- 顶部栏 ----
         self.refresh_btn = QtWidgets.QPushButton("刷新")
-        self.lib_btn = QtWidgets.QPushButton("库目录...")
-        self.lib_btn.setToolTip("管理 recipe 库文件夹（可多个，递归扫描其中的"
-                                " .hda；官方出厂 recipes 不加载。创建 recipe "
-                                "请用 Houdini 官方保存流程，把位置指到库文件夹）")
+        self.settings_btn = QtWidgets.QPushButton("设置...")
+        self.settings_btn.setToolTip(
+            "导入 / 导出与库目录设置（后续更多设置项在此面板增加）")
         self.search = QtWidgets.QLineEdit()
         self.search.setPlaceholderText("搜索 名称 / 标签 / 备注...（#前缀 仅搜标签）")
         self.search.setClearButtonEnabled(True)
@@ -761,7 +995,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         top = QtWidgets.QHBoxLayout()
         top.addWidget(self.refresh_btn)
         top.addSpacing(8)
-        top.addWidget(self.lib_btn)
+        top.addWidget(self.settings_btn)
         top.addSpacing(4)
         top.addWidget(self.search, 1)
         top.addSpacing(12)
@@ -962,7 +1196,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         lay.addWidget(self.status)
 
         self.refresh_btn.clicked.connect(self.reload)
-        self.lib_btn.clicked.connect(self._manage_lib_dirs)
+        self.settings_btn.clicked.connect(self._open_settings)
         self.pin_chk.toggled.connect(self._toggle_pin)
         self.size_slider.valueChanged.connect(self._on_size_changed)
         self.tags_apply_btn.clicked.connect(self._edit_tags)
@@ -993,7 +1227,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             self._recipes = []
             self._info_by_name = {}
             self._rebuild_sidebar()
-            self._apply_filter(note="；请先点「库目录...」设置库文件夹")
+            self._apply_filter(note="；请先在「设置 ▸ 库目录」配置库文件夹")
             return
         try:
             self._recipes = store.list_recipes(lib_dirs)
@@ -1007,12 +1241,126 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self._apply_filter(
             note="，共 {} 个".format(len(self._recipes)))
 
-    def _manage_lib_dirs(self):
-        dlg = _LibraryDirsDialog(self)
-        if dlg.exec_() == QtWidgets.QDialog.Accepted:
-            metadata.set_lib_dirs(dlg.dirs())
-            self._category_key = KEY_ALL
-            self.reload()
+    # ---------------- 设置面板：库目录 / 导入导出 ----------------
+
+    def _open_settings(self):
+        dlg = _SettingsDialog(
+            self,
+            on_lib_dirs_changed=self._apply_lib_dirs,
+            on_export=self._export_recipes,
+            on_import=self._import_recipes)
+        dlg.exec_()
+
+    def _apply_lib_dirs(self, dirs):
+        """设置面板改库目录即时生效：落盘并重载主面板（面板在模态下也照常刷）。"""
+        metadata.set_lib_dirs(dirs)
+        self._category_key = KEY_ALL
+        self.reload()
+
+    def _export_recipes(self, parent=None):
+        """导出向导：选项对话框 → 带进度打包（transfer.export_recipes）。
+
+        recipes 用当前枚举缓存 self._recipes——面板只从设置面板进入导出，
+        打开设置前必然已 reload 过，缓存即当前库。
+        """
+        parent = parent or self
+        if not self._recipes:
+            warn(parent, "导出", "当前库为空，没有可导出的内容。")
+            return
+        dlg = _ExportDialog(parent, len(self._recipes))
+        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+            return
+        zip_path = dlg.zip_path()
+        include_hda = dlg.include_hda()
+        recipes = list(self._recipes)
+        try:
+            summary = _run_with_progress(
+                parent, "正在打包导出...",
+                lambda report: transfer.export_recipes(
+                    recipes, zip_path, include_hda=include_hda,
+                    progress=report))
+        except (transfer.TransferError, OSError) as exc:
+            warn(parent, "导出失败", str(exc))
+            return
+        if summary is None:
+            self.status.setText("导出已取消")
+            return
+        _UI_SETTINGS.set("last_export_dir", os.path.dirname(zip_path))
+        msg = ("导出完成：{} 个配方（文档 {} 份、缩略图 {} 张、库文件 {} 个）\n{}"
+               .format(summary["recipes"], summary["docs"],
+                       summary["thumbs"], summary["hda"], summary["path"]))
+        self.status.setText("导出完成 → {}".format(summary["path"]))
+        info(parent, "导出完成", msg)
+
+    def _import_recipes(self, parent=None):
+        """导入流程：选包 → 校验 + 摘要确认（含 .hda 时选目标库文件夹）
+        → 带进度合并导入 → 落 lib_dirs 并 reload（新 .hda 由
+        ensure_libraries_installed 自动安装）。"""
+        parent = parent or self
+        path, _f = QtWidgets.QFileDialog.getOpenFileName(
+            parent, "选择导出包",
+            str(_UI_SETTINGS.get("last_export_dir") or ""),
+            "Zip 包 (*.zip);;全部文件 (*.*)")
+        if not path:
+            return
+        existing = set(self._info_by_name)
+        try:
+            s = transfer.inspect_package(path, existing)
+        except transfer.TransferError as exc:
+            warn(parent, "导入失败", str(exc))
+            return
+        if not s["recipes"] and not s["hda_import"]:
+            warn(parent, "导入失败", "包内没有可导入的内容。")
+            return
+
+        lines = ["包内共 {} 个配方（{} 个与本地同名，其标签/显示名/颜色/"
+                 "缩略图/文档将合并覆盖，本地独有内容不受影响）。"
+                 .format(len(s["recipes"]), len(s["conflicts"]))]
+        lines.append("文档 {} 份、缩略图 {} 张。"
+                     .format(len(s["docs"]), len(s["thumbs"])))
+        if s["hda_import"]:
+            lines.append("库文件 {} 个将复制到下方指定的库文件夹。"
+                         .format(len(s["hda_import"])))
+        if s["hda_skip"]:
+            lines.append("库文件 {} 个因含本地同名配方跳过（{}）；"
+                         "如需覆盖请先删除本地同名配方再导入。"
+                         .format(len(s["hda_skip"]),
+                                 "、".join(a for a, _r in s["hda_skip"])))
+        dlg = _ImportConfirmDialog(parent, "\n".join(lines),
+                                   bool(s["hda_import"]))
+        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+            return
+        lib_dir = dlg.target() if s["hda_import"] else None
+        if s["hda_import"] and not lib_dir:
+            warn(parent, "导入", "请先选择 .hda 的目标库文件夹"
+                                 "（或点「新建文件夹...」）。")
+            return
+
+        try:
+            result = _run_with_progress(
+                parent, "正在导入...",
+                lambda report: transfer.import_package(
+                    path, lib_dir=lib_dir, existing_names=existing,
+                    progress=report))
+        except (transfer.TransferError, OSError) as exc:
+            warn(parent, "导入失败", str(exc))
+            return
+        if result is None:
+            self.status.setText("导入已取消")
+            return
+        if lib_dir:
+            dirs = metadata.get_lib_dirs()
+            if lib_dir not in dirs:
+                metadata.set_lib_dirs(dirs + [lib_dir])
+        self.reload()
+        msg = ("导入完成：配方 {} 个、文档 {} 份、缩略图 {} 张、库文件 {} 个{}"
+               .format(len(s["recipes"]), result["docs"], result["thumbs"],
+                       len(result["hda_copied"]),
+                       ("；跳过库文件 {} 个（同名冲突）"
+                        .format(len(result["hda_skipped"]))
+                        if result["hda_skipped"] else "")))
+        self.status.setText("导入完成：配方 {} 个".format(len(s["recipes"])))
+        info(parent, "导入完成", msg)
 
     def _rebuild_sidebar(self):
         """树形侧栏：全部 / 收藏 / 节点参数 / 子菜单▸ / 标签▸ / 层级▸（可折叠）。

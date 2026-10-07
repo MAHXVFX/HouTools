@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -555,6 +556,175 @@ def main():
             assert rl_meta.read_doc(name).startswith("# My Setup")
             rl_meta.delete_doc_dir(name)
             assert not rl_meta.doc_exists(name)
+
+            # -------- 导入/导出（transfer）：交换包打包/合并往返 --------
+            import houtools.recipelib.transfer as rl_transfer
+
+            with tempfile.TemporaryDirectory() as texp:
+                exp_store = houtools.core.settings.JsonStore(
+                    "_smoke_transfer_src.json",
+                    defaults=dict(rl_meta._DEFAULTS))
+                with patch.object(rl_meta, "_SETTINGS", exp_store), \
+                     patch.object(rl_meta, "THUMBS_DIR",
+                                  Path(texp) / "thumbs"), \
+                     patch.object(rl_meta, "DOCS_DIR",
+                                  Path(texp) / "docs"):
+                    lib_dir = Path(texp) / "lib"
+                    lib_dir.mkdir()
+                    (lib_dir / "a.hda").write_bytes(b"fake-hda-a" * 10)
+                    (lib_dir / "c.hda").write_bytes(b"fake-hda-c" * 10)
+                    pack_infos = [
+                        rl_store.RecipeInfo(name="mahx::alpha",
+                                            category="tool",
+                                            library=str(lib_dir / "a.hda")),
+                        rl_store.RecipeInfo(name="mahx::beta",
+                                            category="tool",
+                                            library=str(lib_dir / "a.hda")),
+                        rl_store.RecipeInfo(name="mahx::gamma",
+                                            category="tool",
+                                            library=str(lib_dir / "c.hda")),
+                    ]
+                    # 积累：收藏/标签/显示名/颜色/缩略图/文档（含 asset）
+                    rl_meta.set_favorite("mahx::alpha", True)
+                    rl_meta.set_tags("mahx::alpha", ["常用", "pyro"])
+                    rl_meta.set_display_name("mahx::alpha", "阿尔法")
+                    rl_meta.set_color("mahx::alpha", "#8a5cf5")
+                    fake_img = Path(texp) / "src_img.png"
+                    fake_img.write_bytes(b"\x89PNG-not-really")
+                    rl_meta.set_thumb_from_file("mahx::alpha", str(fake_img))
+                    rl_meta.set_tags("mahx::gamma", ["旧标签"])
+                    # 陈旧条目（recipe 已不存在）：不得被导出
+                    rl_meta.set_tags("mahx::ghost", ["幽灵"])
+                    asset_src = Path(texp) / "pic.png"
+                    asset_src.write_bytes(b"asset-bytes")
+                    rl_meta.write_doc("mahx::alpha",
+                                      "# 阿尔法\n![图](assets/pic.png)")
+                    rl_meta.insert_asset("mahx::alpha", str(asset_src))
+
+                    zip_path = str(Path(texp) / "out" / "pack.zip")
+                    summary = rl_transfer.export_recipes(
+                        pack_infos, zip_path, include_hda=True)
+                    assert summary["recipes"] == 3 and summary["hda"] == 2 \
+                        and summary["docs"] == 1 and summary["thumbs"] == 1, \
+                        summary
+                    with zipfile.ZipFile(zip_path) as zf:
+                        arcs = set(zf.namelist())
+                        assert "manifest.json" in arcs
+                        assert "recipelib.json" in arcs
+                        assert "thumbs/mahx__alpha.png" in arcs
+                        assert "docs/mahx__alpha/doc.md" in arcs
+                        assert "docs/mahx__alpha/assets/pic.png" in arcs
+                        assert "recipes/a.hda" in arcs
+                        assert "recipes/c.hda" in arcs
+                        man = json.loads(zf.read("manifest.json"))
+                        assert man["hda_files"]["recipes/a.hda"]["recipes"] \
+                            == ["mahx::alpha", "mahx::beta"], man
+                        packed = json.loads(zf.read("recipelib.json"))
+                        assert packed["thumbs"]["mahx::alpha"] \
+                            == "thumbs/mahx__alpha.png"
+                        assert "mahx::ghost" not in packed["tags"]
+                        assert packed["favorites"] == ["mahx::alpha"]
+                    # 包内有 .hda 文件却不给目标目录 → 报错而非半途落盘
+                    try:
+                        rl_transfer.import_package(zip_path)
+                        raise AssertionError("missing lib_dir should fail")
+                    except rl_transfer.TransferError:
+                        pass
+
+                    # 不带 .hda 的导出：无 recipes/ 成员
+                    zip_meta_only = str(Path(texp) / "meta_only.zip")
+                    rl_transfer.export_recipes(pack_infos, zip_meta_only,
+                                               include_hda=False)
+                    with zipfile.ZipFile(zip_meta_only) as zf:
+                        assert not any(n.startswith("recipes/")
+                                       for n in zf.namelist())
+
+                    # 空 recipes 拒绝导出
+                    try:
+                        rl_transfer.export_recipes([], zip_path)
+                        raise AssertionError("empty export should fail")
+                    except rl_transfer.TransferError:
+                        pass
+
+                    # 取消：抛 TransferCancelled，目标 zip 与半成品均不存在
+                    cancel_path = str(Path(texp) / "cancelled.zip")
+                    try:
+                        rl_transfer.export_recipes(
+                            pack_infos, cancel_path,
+                            progress=lambda *a: True)
+                        raise AssertionError("cancel not raised")
+                    except rl_transfer.TransferCancelled:
+                        pass
+                    assert not os.path.exists(cancel_path)
+                    assert not os.path.exists(cancel_path + ".~part")
+
+                    # ---- 导入到全新环境（模拟另一台机器） ----
+                    with tempfile.TemporaryDirectory() as timp:
+                        dst_store = houtools.core.settings.JsonStore(
+                            "_smoke_transfer_dst.json",
+                            defaults=dict(rl_meta._DEFAULTS))
+                        with patch.object(rl_meta, "_SETTINGS", dst_store), \
+                             patch.object(rl_meta, "THUMBS_DIR",
+                                          Path(timp) / "thumbs"), \
+                             patch.object(rl_meta, "DOCS_DIR",
+                                          Path(timp) / "docs"):
+                            target_lib = Path(timp) / "newlib"
+                            # 本地已有同名 gamma（c.hda 应整体跳过）与
+                            # 包里没有的 delta（其颜色必须保留）
+                            rl_meta.set_tags("mahx::gamma", ["本地标签"])
+                            rl_meta.set_color("mahx::delta", "#111111")
+                            s = rl_transfer.inspect_package(
+                                zip_path, existing_names={"mahx::gamma"})
+                            assert s["conflicts"] == ["mahx::gamma"]
+                            assert [a for a, _o in s["hda_import"]] \
+                                == ["recipes/a.hda"]
+                            assert [a for a, _r in s["hda_skip"]] \
+                                == ["recipes/c.hda"]
+                            result = rl_transfer.import_package(
+                                zip_path, lib_dir=str(target_lib),
+                                existing_names={"mahx::gamma"})
+                            assert result["docs"] == 1
+                            assert result["thumbs"] == 1
+                            assert result["hda_copied"] == ["a.hda"]
+                            assert [a for a, _r in result["hda_skipped"]] \
+                                == ["recipes/c.hda"]
+                            # .hda：新配方所在文件已复制，冲突文件未复制
+                            assert (target_lib / "a.hda").is_file()
+                            assert not (target_lib / "c.hda").exists()
+                            # 元数据：包内覆盖同名，本地独有保留
+                            assert rl_meta.get_tags("mahx::alpha") \
+                                == ["常用", "pyro"]
+                            assert rl_meta.get_display_name("mahx::alpha") \
+                                == "阿尔法"
+                            assert rl_meta.get_color("mahx::alpha") \
+                                == "#8a5cf5"
+                            assert rl_meta.is_favorite("mahx::alpha")
+                            assert rl_meta.get_tags("mahx::gamma") \
+                                == ["旧标签"], "包内条目应覆盖本地同名"
+                            assert rl_meta.get_color("mahx::delta") \
+                                == "#111111", "本地独有条目不得被动"
+                            # 缩略图：文件落到（patch 过的）缩略图目录，
+                            # 记录为相对插件根的存储形式
+                            assert (Path(timp) / "thumbs"
+                                    / "mahx__alpha.png").is_file()
+                            assert dst_store.get("thumbs")["mahx::alpha"] \
+                                == os.path.join("settings", "recipe_thumbs",
+                                                "mahx__alpha.png")
+                            # 文档：整目录替换（含 asset），正文可读
+                            assert rl_meta.doc_exists("mahx::alpha")
+                            assert "阿尔法" in rl_meta.read_doc("mahx::alpha")
+                            assert (Path(rl_meta.doc_dir("mahx::alpha"))
+                                    / "assets" / "pic.png").is_file()
+
+                    # 坏包（无 manifest 的合法 zip）拒绝并给出中文原因
+                    bad = Path(texp) / "bad.zip"
+                    with zipfile.ZipFile(str(bad), "w") as zf:
+                        zf.writestr("hello.txt", "x")
+                    try:
+                        rl_transfer.inspect_package(str(bad))
+                        raise AssertionError("bad package should fail")
+                    except rl_transfer.TransferError as exc:
+                        assert "manifest" in str(exc)
 
             # 浏览器窗口：list_recipes / selected_nodes / 网络编辑器全部打桩
             infos = [

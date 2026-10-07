@@ -101,6 +101,41 @@ def migrate_legacy_thumb_paths():
 
 
 # --------------------------------------------------------------------------
+# 批量读写（导出打包 / 导入合并用，见 transfer.py）
+# --------------------------------------------------------------------------
+
+def all_metadata():
+    """五个内容键的副本（导出打包用；不含 lib_dirs——机器相关不带）。"""
+    return {
+        "favorites": list(_SETTINGS.get("favorites") or []),
+        "tags": dict(_SETTINGS.get("tags") or {}),
+        "thumbs": dict(_SETTINGS.get("thumbs") or {}),
+        "display_names": dict(_SETTINGS.get("display_names") or {}),
+        "colors": dict(_SETTINGS.get("colors") or {}),
+    }
+
+
+def bulk_set(favorites=None, tags=None, thumbs=None, display_names=None,
+             colors=None):
+    """按键整体覆盖写入（导入合并的结果一次落盘），None 的键不动。
+
+    thumbs 的值须已是"存储形式"（相对插件根，同 _to_stored 的产出）。
+    逐键 setter 一条一存，导入几百条会写盘几百次，故走这里。
+    """
+    if favorites is not None:
+        _SETTINGS.set("favorites", list(favorites), save=False)
+    if tags is not None:
+        _SETTINGS.set("tags", dict(tags), save=False)
+    if thumbs is not None:
+        _SETTINGS.set("thumbs", dict(thumbs), save=False)
+    if display_names is not None:
+        _SETTINGS.set("display_names", dict(display_names), save=False)
+    if colors is not None:
+        _SETTINGS.set("colors", dict(colors), save=False)
+    _SETTINGS.save()
+
+
+# --------------------------------------------------------------------------
 # 库文件夹
 # --------------------------------------------------------------------------
 
