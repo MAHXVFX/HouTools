@@ -33,6 +33,7 @@ Houdini 22 插件工具集，开发期支持**手动热加载**：改完代码�
 | 粘贴为 Object Merge | 网络编辑器 `HouTools` 菜单 / `Ctrl+Shift+V` | 复制节点后，按"目标上下文 × 源类别"在鼠标位置粘贴引用节点；键位在 `HouTools → Paste Hotkey Settings` 修改 |
 | 视频转序列图 | `HouTools → Video to Sequence` | ffmpeg 提取视频为 JPG 序列（帧级进度，质量/起始帧/位数/前缀可调），可选自动设置相机 Background Image |
 | Hdr Library | `HouTools → Hdr Library` | HDR 环境贴图库浏览器：缩略图网格（后台生成）、子文件夹分类 + 收藏，选中灯光后双击即贴图 |
+| Recipe Library | `HouTools → Recipe Library` | recipes 资产库浏览器：官方 recipes 卡片网格浏览（缩略图/标签/主题色），树形侧栏过滤，双击/拖拽应用到网络，Markdown 文档，数据导入/导出 |
 
 ### Automation
 
@@ -88,8 +89,26 @@ HDR 环境贴图库浏览器（独立窗口，进任务栏）。库按"总目录
 - **贴图**：选中一个或多个灯光后**双击缩略图**，把 HDR 路径批量写入灯光环境贴图参数——
   支持 OBJ `envlight`（Karma，自动关 skymap 程序化天空）、RenderMan dome 灯、
   LOP `domelight` 全家族（Solaris）；其余灯型在状态栏给出友好提示
-- **右键缩略图**：收藏 / 复制路径 / 打开所在文件夹；收藏项带 ★ 前缀并计入侧栏计数
-- 窗口可全局置顶；大小滑条只决定列数，网格自动拉伸铺满面板宽度
+- **右键缩略图**：收藏 / 复制路径 / 打开所在文件夹；收藏项缩略图右上角带角标并计入侧栏计数
+- 窗口可全局置顶；大小滑条决定缩略图尺寸，网格固定尺寸不随面板宽拉伸，面板宽窄只改变每列数量
+
+### Recipe Library
+
+Houdini 22 官方 recipes 资产库面板（独立窗口，进任务栏）。**只加载用户库**：在「设置 ▸ 库目录」
+配置若干文件夹（递归扫描 `.hda`），出厂库 / Labs / 其他偏好目录一律不显示；库启动时自动安装，
+Tab 菜单里的 session tool 从会话开始可用。recipe 的创建走 Houdini 官方保存流程，面板纯展示。
+
+- **浏览**：卡片网格显示缩略图、标签、版本、节点数，卡片支持自定义主题色与收藏角标；
+  树形侧栏按 全部 / 收藏 / 节点参数 / 子菜单 / 标签 / 网络层级 过滤；搜索框支持
+  `#` 前缀只搜标签、多词 AND 匹配；预览缩略图点击放大查看（滚轮缩放、中键平移）
+- **应用**：双击卡片 = 官方工具架体验（参数照抄，视角不拉远），拖拽到网络 = 在落点对齐创建；
+  应用前做网络层级匹配检查（如 SOP recipe 进 LOP 网络会给出中文提示）
+- **元数据**：自定义显示名（支持中文）、标签、颜色、收藏存 `settings/recipelib.json`，
+  缩略图存 `settings/recipe_thumbs/`（相对路径存储，项目挪动不失效）；无文档时预览回退官方备注
+- **文档**：每条 recipe 可配 Markdown 文档（存 `settings/recipe_docs/`），确认/取消模式编辑，
+  渲染支持 GIF 动图与视频播放
+- **数据交换**：「设置 ▸ 数据」导出/导入 zip 交换包（元数据 + 缩略图 + 文档 + HDA），
+  打包带走、分享；导入按内部名合并，与本地同名定义的 HDA 整文件跳过
 
 ## 新增一个工具
 
@@ -133,7 +152,8 @@ _houtools_dispatcher.run("<tool_id>")
 ```
 
 （按本机 Houdini 安装位置调整路径，须用 Houdini 自带的 Python 3.13。）
-无头验证菜单 XML、全包导入、各窗口实例化（Automation / Hdr Library 等）与 `reload_all()`。
+无头验证菜单 XML、全包导入、各窗口实例化（Automation / 视频转序列图 / Hdr Library / Recipe Library）
+与 `reload_all()`。
 
 ## 结构
 
@@ -148,15 +168,22 @@ HouTools/
 │   └── houtools/
 │       ├── dev/                   # 热加载框架（reloader / dispatcher，不参与重载）
 │       ├── core/                  # 路径常量 / 日志 / JSON 设置
-│       ├── ui/                    # window_manager 窗口登记 + taskbar 任务栏常驻
+│       ├── ui/                    # window_manager 窗口登记 + taskbar 任务栏常驻 + 字体/对话框/侧栏/角标等共享组件
 │       ├── automation/            # Automation（任务类型/持久化/执行引擎/窗口）
 │       ├── videoseq/              # 视频转序列图（ffmpeg 查找 + 窗口）
 │       ├── hdrlight/              # Hdr Library（HDR 库浏览 + 缩略图 + 灯光赋值）
+│       ├── recipelib/             # Recipe Library（资产库浏览/元数据/文档/数据导入导出/缩略图裁剪）
 │       ├── icons/                 # UI 图标（SVG）
+│       ├── fonts/                 # 工具统一显示字体（阿里妈妈数黑体 Bold）
 │       └── tools/                 # 工具入口（<tool_id>.py 暴露 run()）
 ├── tests/smoke_test.py
 └── settings/                      # 运行时生成（gitignored）
-    └── Automation_Config.json     # Automation 的 DW 软件路径等配置（缺失时自动补建）
+    ├── Automation_Config.json     # Automation 的 DW 软件路径等配置（缺失时自动补建）
+    ├── hotkeys.json               # Paste Hotkey Settings 自定义键位
+    ├── hdr_library.json           # Hdr Library 的库目录/缩略图大小/收藏
+    ├── recipelib.json             # Recipe Library 的库目录与元数据（标签/收藏/颜色/显示名）
+    ├── recipe_thumbs/             # Recipe Library 缩略图
+    └── recipe_docs/               # Recipe Library Markdown 文档
 ```
 
 ## 许可
