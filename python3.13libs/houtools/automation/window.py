@@ -1838,8 +1838,9 @@ class AutomationWindow(QWidget):
         try:
             with open(self._current_log_path, "a", encoding="utf-8") as f:
                 f.write(message + "\n")
-        except Exception:
-            pass  # 日志写入失败不影响主流程
+        except Exception as exc:
+            # 日志写入失败不影响主流程，但留一条诊断记录
+            logger.debug("写执行日志失败 %s: %s", self._current_log_path, exc)
 
     def _write_log_header(self):
         """写入日志头部（当前任务列表信息）。"""

@@ -118,11 +118,14 @@ class AutomationDataManager:
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     loaded = json.load(f)
-                if isinstance(loaded, dict):
-                    data = loaded
+                if not isinstance(loaded, dict):
+                    raise ValueError(
+                        "顶层必须是对象，实际为 " + type(loaded).__name__)
+                data = loaded
             except Exception as exc:
                 logger.warning("读取应用配置失败，将按默认值补建: %s (%s)", path, exc)
-                data = {}
+                # 与 load() 同语义：先留底再补建，原内容不随覆盖丢失
+                cls._backup_corrupt(path)
 
         # 空字符串/纯空白视同"未配置"——补写默认(与 load_dw_exe_path
         # 的"空值回默认"同语义)
@@ -188,7 +191,28 @@ class AutomationDataManager:
                 return []
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return data.get("tasks", [])
+            if not isinstance(data, dict):
+                logger.warning(
+                    "配置顶层不是对象（%s），留底后按空配置处理: %s",
+                    type(data).__name__, path,
+                )
+                cls._backup_corrupt(path)
+                return []
+            tasks = data.get("tasks", [])
+            if not isinstance(tasks, list):
+                # 不留底：顶层仍是合法对象，settings 可照常随下次 save 保留
+                logger.warning(
+                    "tasks 字段不是列表（%s），按空配置处理: %s",
+                    type(tasks).__name__, path,
+                )
+                return []
+            # 非 dict 元素（手改坏档）直接丢弃：面板槽渲染与保存透传都按
+            # dict 处理，混入会让加载崩掉
+            clean = [d for d in tasks if isinstance(d, dict)]
+            if len(clean) != len(tasks):
+                logger.warning(
+                    "丢弃 %d 个非对象的任务条目: %s", len(tasks) - len(clean), path)
+            return clean
         except json.JSONDecodeError as exc:
             logger.warning("JSON 解析失败: %s (%s)", path, exc)
             cls._backup_corrupt(path)
@@ -221,17 +245,20 @@ class AutomationDataManager:
         tmp_path = path + ".~tmp"  # 先于 try 定义,失败清理路径不会 NameError
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)  # 仅此处创建配置目录
-            # 读取现有数据（保留 settings）
+            # 读取现有数据（保留 settings）；读不出来先留底再覆盖，
+            # 尚可抢救的内容不随本次写入直接丢失
             existing_data = {}
             if os.path.exists(path):
                 try:
                     with open(path, "r", encoding="utf-8") as f:
-                        existing_data = json.load(f)
+                        loaded = json.load(f)
+                    if not isinstance(loaded, dict):
+                        raise ValueError(
+                            "顶层必须是对象，实际为 " + type(loaded).__name__)
+                    existing_data = loaded
                 except Exception as exc:
-                    logger.warning(
-                        "读取现有配置失败，其 settings 内容将随覆盖丢失: %s (%s)",
-                        path, exc,
-                    )
+                    logger.warning("读取现有配置失败: %s (%s)", path, exc)
+                    cls._backup_corrupt(path)
             # 合并数据
             existing_data["tasks"] = tasks_data
             # 临时文件 + 原子替换：写盘中途崩溃/断电不会截断原文件
@@ -267,7 +294,21 @@ class AutomationDataManager:
                 return {}
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return data.get("settings", {})
+            if not isinstance(data, dict):
+                logger.warning(
+                    "配置顶层不是对象（%s），留底后按空设置处理: %s",
+                    type(data).__name__, path,
+                )
+                cls._backup_corrupt(path)
+                return {}
+            settings = data.get("settings", {})
+            if not isinstance(settings, dict):
+                logger.warning(
+                    "settings 字段不是对象（%s），按空设置处理: %s",
+                    type(settings).__name__, path,
+                )
+                return {}
+            return settings
         except json.JSONDecodeError as exc:
             logger.warning("JSON 解析失败: %s (%s)", path, exc)
             cls._backup_corrupt(path)
@@ -290,17 +331,20 @@ class AutomationDataManager:
         tmp_path = path + ".~tmp"  # 先于 try 定义,失败清理路径不会 NameError
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
-            # 读取现有数据（保留 tasks）
+            # 读取现有数据（保留 tasks）；读不出来先留底再覆盖，
+            # 尚可抢救的内容不随本次写入直接丢失
             existing_data = {}
             if os.path.exists(path):
                 try:
                     with open(path, "r", encoding="utf-8") as f:
-                        existing_data = json.load(f)
+                        loaded = json.load(f)
+                    if not isinstance(loaded, dict):
+                        raise ValueError(
+                            "顶层必须是对象，实际为 " + type(loaded).__name__)
+                    existing_data = loaded
                 except Exception as exc:
-                    logger.warning(
-                        "读取现有配置失败，其 tasks 内容将随覆盖丢失: %s (%s)",
-                        path, exc,
-                    )
+                    logger.warning("读取现有配置失败: %s (%s)", path, exc)
+                    cls._backup_corrupt(path)
             # 合并数据
             existing_data["settings"] = settings_data
             # 临时文件 + 原子替换：写盘中途崩溃/断电不会截断原文件

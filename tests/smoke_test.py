@@ -1164,6 +1164,70 @@ def main():
     corrupt.path.unlink(missing_ok=True)
     print("corrupt settings backup OK")
 
+    # Automation 配置（get_data_path 打桩到临时目录）：save()/save_settings()
+    # 读到损坏文件时先留底 .bak 再覆盖，原内容不随写入丢失；load()/
+    # load_settings() 对合法 JSON 但错误 schema 容错——顶层非对象留底、
+    # 字段类型不符按空处理、非 dict 任务条目丢弃
+    from houtools.automation import data_manager as auto_dm
+    auto_dir = Path(tempfile.mkdtemp(prefix="houtools_smoke_auto_"))
+    atexit.register(shutil.rmtree, auto_dir, ignore_errors=True)
+    auto_path = auto_dir / "Automation.json"
+    with patch.object(
+            auto_dm.AutomationDataManager, "get_data_path",
+            staticmethod(lambda filename=None: str(auto_path))):
+        # save 读损坏文件 → 留底 .bak，新文件正常写入
+        auto_path.write_text('{"tasks": [', encoding="utf-8")
+        assert auto_dm.AutomationDataManager.save([{"type": "BUTTON_CLICK"}]), \
+            "save 应成功"
+        auto_bak = auto_path.with_name(auto_path.name + ".bak")
+        assert auto_bak.exists(), "损坏文件未留底 .bak"
+        assert auto_bak.read_text(encoding="utf-8") == '{"tasks": [', \
+            ".bak 应保留损坏原件"
+        assert auto_dm.AutomationDataManager.load() == [
+            {"type": "BUTTON_CLICK"}]
+
+        # 顶层不是对象 → 留底 + 按空配置
+        auto_bak.unlink()
+        auto_path.write_text('["not", "dict"]', encoding="utf-8")
+        assert auto_dm.AutomationDataManager.load() == []
+        assert auto_bak.exists(), "顶层非对象的文件未留底"
+
+        # tasks 字段类型错误 / 混入非对象元素 → 容错不崩
+        # （上一步 load 留底已把原文件改名，这里补写新内容）
+        auto_path.unlink(missing_ok=True)
+        auto_path.write_text('{"tasks": "abc"}', encoding="utf-8")
+        assert auto_dm.AutomationDataManager.load() == [], \
+            "tasks 非列表应返回空"
+        auto_path.write_text(
+            '{"tasks": ["x", {"type": "BUTTON_CLICK"}, 3]}', encoding="utf-8")
+        assert auto_dm.AutomationDataManager.load() == [{"type": "BUTTON_CLICK"}]
+
+        # settings 同套语义
+        auto_path.write_text('{"settings": ["bad"]}', encoding="utf-8")
+        assert auto_dm.AutomationDataManager.load_settings() == {}
+        auto_path.write_text('{"settings": {"log_to_disk": true}}',
+                             encoding="utf-8")
+        assert auto_dm.AutomationDataManager.load_settings() == {
+            "log_to_disk": True}
+
+        # save_settings 读损坏文件同样先留底
+        auto_bak.unlink()
+        auto_path.write_text('{"tasks": [}', encoding="utf-8")
+        assert auto_dm.AutomationDataManager.save_settings(
+            {"log_to_disk": True}), "save_settings 应成功"
+        assert auto_bak.exists(), "save_settings 未留底损坏文件"
+    print("automation corrupt backup + schema guard OK")
+
+    # 视频转序列图：输出前缀拒绝路径分隔符等 Windows 非法字符
+    from houtools.videoseq.window import prefix_error
+    assert prefix_error("cam") == ""
+    assert prefix_error("cam_01-2.3") == ""
+    assert "路径分隔符" in prefix_error("../evil")
+    assert "路径分隔符" in prefix_error("a\\b")
+    assert "冒号" in prefix_error("C:evil")
+    assert prefix_error('a"b') != ""
+    print("videoseq prefix guard OK")
+
     # 热键自定义存储 round-trip（打桩到临时 store，不触真实 settings/；
     # 此前直接删除真实 hotkeys.json，会把用户自定义键位一起删掉）
     from houtools.core import hotkeys

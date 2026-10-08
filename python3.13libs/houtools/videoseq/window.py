@@ -33,6 +33,24 @@ VIDEO_EXTENSIONS = [
     ".webm", ".m4v", ".mpg", ".mpeg", ".3gp", ".ts",
 ]
 
+# 输出前缀禁止的字符：Windows 文件名非法字符（含路径分隔符与盘符冒号）。
+# 前缀始终拼接 ".%0Nd.jpg" 后缀，单独的 ".." 无害，能把序列写出输出
+# 目录的只有分隔符/盘符这类字符
+_PREFIX_INVALID_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def prefix_error(prefix: str) -> str:
+    """检查输出文件名前缀合法性。合法返回空串，否则返回中文错误说明。"""
+    m = _PREFIX_INVALID_RE.search(prefix)
+    if not m:
+        return ""
+    ch = m.group()
+    if ch in "/\\":
+        return "前缀不能包含路径分隔符（/ 或 \\），否则序列会写到输出目录之外"
+    if ch == ":":
+        return "前缀不能包含冒号（Windows 保留字符）"
+    return f"前缀包含 Windows 文件名非法字符：{ch!r}"
+
 
 # ─── Styles ──────────────────────────────────────────────────────────
 
@@ -1093,6 +1111,13 @@ class _VideoToSequenceWindow(QDialog):
         start_frame = self._start_frame_spin.value()
         padding = self._padding_spin.value()
         prefix = self._prefix_edit.text().strip() or "cam"
+
+        # 前缀带路径分隔符/非法字符会把序列写出输出目录之外或产生
+        # 无效文件名，直接拦截
+        err = prefix_error(prefix)
+        if err:
+            dialogs.warn(self, "前缀不合法", f"{err}。\n请修改文件名前缀后重试。")
+            return
 
         # 起始帧位数超过帧号位数：文件名位数不统一，背景路径 $F{padding}
         # 的宽度语义也会与实际文件名失配
