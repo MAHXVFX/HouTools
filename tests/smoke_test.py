@@ -1164,6 +1164,30 @@ def main():
     pm.fill(QtGui.QColor("#204060"))
     canvas = rl_crop._CropCanvas(pm, rl_crop.TARGET_RATIO)
     canvas._sel = QtCore.QRect(150, 100, 300, 198)
+    # 白边框/三分线须真的画出来（曾因 setPen(NoPen) 后 pen() 改色样式
+    # 不变，整段笔画静默不可见）；用直接设定的确定坐标渲染断言。grab
+    # 输出是设备像素（真实平台下屏幕 DPR≠1），按 DPR 映射后 ±1px 窗口
+    # 取最大（分数缩放下笔画覆盖像素可能不满）
+    cimg = canvas.grab().toImage()
+    cs = canvas._sel.normalized()
+    cmid = (cs.top() + cs.bottom()) // 2
+    _dpr = cimg.devicePixelRatio() or 1.0
+
+    def _stroke_max(x, y):
+        best = 0
+        for ddx in (-1, 0, 1):
+            for ddy in (-1, 0, 1):
+                xi = int(round(x * _dpr)) + ddx
+                yi = int(round(y * _dpr)) + ddy
+                if 0 <= xi < cimg.width() and 0 <= yi < cimg.height():
+                    best = max(best, cimg.pixelColor(xi, yi).value())
+        return best
+
+    assert _stroke_max(cs.left(), cmid) > 200, "选框左边框不可见"
+    assert _stroke_max((cs.left() + cs.right()) // 2,
+                       cs.top()) > 200, "选框顶边框不可见"
+    assert _stroke_max(cs.left() + cs.width() // 3,
+                       cmid) > 110, "三分构图线不可见"
 
     def _drag(corner, to):
         canvas.mousePressEvent(QtGui.QMouseEvent(
@@ -1188,6 +1212,54 @@ def main():
     assert abs(ratio - rl_crop.TARGET_RATIO) < 0.02, ratio
     canvas.deleteLater()
     print("RecipeLibrary crop resize direction OK")
+
+    # 截取缩略图遮罩（capture.SnipOverlay）：比例锁定框选 + Enter 确认 /
+    # Esc 取消，无头模拟鼠标/键盘事件。语义固化：松手不确认、无选区
+    # Enter 忽略、按下即清旧选框、确认裁剪 ×DPR 回物理像素且 DPR 重置 1
+    from PySide6 import QtGui
+    from houtools.recipelib.capture import SnipOverlay
+    snip_src = QtGui.QPixmap(400, 300)
+    snip_src.fill(QtGui.QColor("#306040"))
+    ov = SnipOverlay(QtGui.QGuiApplication.primaryScreen(), snip_src)
+    snipped, cancelled = [], []
+    ov.confirmed.connect(snipped.append)
+    ov.cancelled.connect(lambda: cancelled.append(1))
+    # 无选区：Enter 忽略、Esc 取消（遮罩不自我关闭，收尾归调用方）
+    ov.keyPressEvent(QtGui.QKeyEvent(
+        QtCore.QEvent.KeyPress, QtCore.Qt.Key_Return, QtCore.Qt.NoModifier))
+    assert not snipped and not cancelled
+    ov.keyPressEvent(QtGui.QKeyEvent(
+        QtCore.QEvent.KeyPress, QtCore.Qt.Key_Escape, QtCore.Qt.NoModifier))
+    assert cancelled and not snipped
+    # 拖拽出锁比例选框（模拟鼠标事件，同 crop 测试手法）
+    ov.mousePressEvent(QtGui.QMouseEvent(
+        QtCore.QEvent.MouseButtonPress, QtCore.QPointF(60, 50),
+        QtCore.Qt.LeftButton, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier))
+    assert ov._sel is None, "按下即清旧选框，随 move 才生成"
+    ov.mouseMoveEvent(QtGui.QMouseEvent(
+        QtCore.QEvent.MouseMove, QtCore.QPointF(260, 200),
+        QtCore.Qt.NoButton, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier))
+    ov.mouseReleaseEvent(QtGui.QMouseEvent(
+        QtCore.QEvent.MouseButtonRelease, QtCore.QPointF(260, 200),
+        QtCore.Qt.LeftButton, QtCore.Qt.NoButton, QtCore.Qt.NoModifier))
+    sel = ov._sel
+    assert sel is not None and sel.width() >= 40, sel
+    assert abs(sel.width() / sel.height() - rl_crop.TARGET_RATIO) < 0.02, sel
+    # 选框夹屏内
+    sr = ov.rect()
+    assert sr.contains(sel), (sel, sr)
+    ov.grab()   # 完整绘制路径（压暗/边框/三分线/尺寸条/提示条）不崩溃
+    # 松手不确认；Enter 才裁剪（DPR=1 时与选框同尺寸、重置回纯像素）
+    assert not snipped
+    ov.keyPressEvent(QtGui.QKeyEvent(
+        QtCore.QEvent.KeyPress, QtCore.Qt.Key_Return, QtCore.Qt.NoModifier))
+    assert len(snipped) == 1
+    got = snipped[0]
+    assert got.size() == sel.size(), (got.size(), sel.size())
+    assert got.devicePixelRatio() == 1.0
+    assert got.toImage().pixelColor(0, 0).name() == "#306040"
+    ov.deleteLater()
+    print("RecipeLibrary snip overlay OK")
 
     summary = reloader.reload_all()
     print("reload_all ->", summary)

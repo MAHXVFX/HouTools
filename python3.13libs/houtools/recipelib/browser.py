@@ -26,6 +26,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from houtools.core.log import get_logger
 from houtools.recipelib import metadata, store, transfer
 from houtools.recipelib.crop import ThumbCropDialog
+from houtools.recipelib.capture import HIDE_DELAY_MS, SnipOverlay
 from houtools.recipelib.docs import DocEditorDialog, MarkdownMediaView, MediaDialog
 from houtools.ui import fonts as tool_fonts
 from houtools.ui.sidebar import (SIDEBAR_COUNT_ROLE, SIDEBAR_HEADER_ROLE,
@@ -1081,6 +1082,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self._doc_dialog = None
         self._preview_info = None
         self._drag_state = None     # 拖拽中: {name, ghost}
+        self._snip_overlay = None   # 截取缩略图的全屏遮罩（非 None 即截取中）
         self._placeholder = self._placeholder_icon()
         self._badge = FavoriteBadge()   # 收藏角标（共享组件，见 ui.badge；
                                         # delegate 画在卡片右上角，非合成进图标）
@@ -2245,6 +2247,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         menu.addSeparator()
         act_doc = menu.addAction("编辑文档")
         act_thumb = menu.addAction("设置缩略图")
+        act_thumb_snip = menu.addAction("截取缩略图")
         act_thumb_clear = None
         if metadata.get_thumb(info.name):
             act_thumb_clear = menu.addAction("清除缩略图")
@@ -2264,6 +2267,8 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             self._open_doc_for(info)
         elif act is act_thumb:
             self._set_thumb(info)
+        elif act is act_thumb_snip:
+            self._snip_thumb(info)
         elif act is not None and act is act_thumb_clear:
             self._clear_thumb(info, item)
         elif act is act_color:
@@ -2460,6 +2465,79 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         item.setIcon(self._base_icon(info))
         self._refresh_current_item()
 
+    # ---------------- 截取缩略图（屏幕框选，capture.SnipOverlay） ----------------
+
+    def _snip_thumb(self, info):
+        """截屏设缩略图：隐藏面板 → 延时抓屏 → 比例锁定遮罩框选。
+
+        隐藏面板避免把自己截进素材；hideEvent 会置 _need_reload，紧跟着
+        压掉（本次隐藏由截图引发，恢复时不做全量 reload，同 _toggle_pin
+        的豁免手法）。异步序列经 singleShot 续上，info 走闭包携带。
+        """
+        if self._snip_overlay is not None:
+            return
+        self.hide()
+        self._need_reload = False
+        QtCore.QTimer.singleShot(HIDE_DELAY_MS,
+                                 lambda: self._snip_begin_safe(info))
+
+    def _snip_begin_safe(self, info):
+        """singleShot 回调：等待期面板可能被 Reload 销毁。"""
+        try:
+            self._snip_begin(info)
+        except RuntimeError:
+            log.warning("recipe 面板已销毁，取消截取缩略图")
+
+    def _snip_begin(self, info):
+        screen = (QtGui.QGuiApplication.screenAt(QtGui.QCursor.pos())
+                  or QtGui.QGuiApplication.primaryScreen())
+        grab = screen.grabWindow(0)
+        if grab.isNull():
+            self._snip_restore_panel()
+            warn(self, "截取缩略图", "抓取屏幕失败，无法截取缩略图")
+            return
+        self._snip_overlay = SnipOverlay(screen, grab)
+        self._snip_overlay.confirmed.connect(
+            lambda pm: self._on_snip_confirmed(info, pm))
+        self._snip_overlay.cancelled.connect(self._on_snip_cancelled)
+        self._snip_overlay.begin()
+
+    def _on_snip_confirmed(self, info, pixmap):
+        # 先落库（纯磁盘/设置操作）再刷 UI——截图期间面板被 Reload 销毁的
+        # 极端时序下，落库不能丢，UI 刷新失败仅记日志
+        try:
+            stored = metadata.set_thumb_from_pixmap(info.name, pixmap)
+        except (OSError, RuntimeError) as exc:
+            self._snip_restore_panel()
+            warn(self, "截取缩略图", str(exc))
+            return
+        self._snip_restore_panel()
+        try:
+            self._thumb_cache.pop(info.name, None)
+            self._cover_cache.clear()
+            self._apply_filter()
+            self._update_preview(info)
+            self.status.setText("{}：缩略图已更新（{}）".format(
+                self._display_label(info), os.path.basename(stored)))
+        except RuntimeError:
+            log.warning("recipe 面板已销毁，跳过截取缩略图收尾刷新")
+
+    def _on_snip_cancelled(self):
+        self._snip_restore_panel()
+
+    def _snip_restore_panel(self):
+        self._teardown_snip_overlay()
+        self._need_reload = False   # 截图引发的隐藏/重显不触发 reload
+        self.show()
+
+    def _teardown_snip_overlay(self):
+        ov, self._snip_overlay = self._snip_overlay, None
+        if ov is not None:
+            try:
+                ov.close()   # WA_DeleteOnClose 自行 deleteLater
+            except RuntimeError:
+                pass
+
     def _open_doc_for(self, info):
         if self._doc_dialog is not None:
             try:
@@ -2555,6 +2633,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self._stop_preview_movie()
         if self._drag_state is not None:
             self._teardown_drag()
+        self._teardown_snip_overlay()
         super().closeEvent(event)
 
 

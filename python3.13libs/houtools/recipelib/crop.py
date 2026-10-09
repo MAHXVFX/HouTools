@@ -176,10 +176,10 @@ class _CropCanvas(QtWidgets.QWidget):
         p.drawRect(0, s.top(), s.left(), s.height())
         p.drawRect(s.right() + 1, s.top(),
                    r.width() - s.right() - 1, s.height())
-        # 边框 + 三分构图线
+        # 边框 + 三分构图线：显式构造 QPen——上面 setPen(NoPen) 之后
+        # pen() 取回的仍是 NoPen 样式，改色改宽不换样式、什么也画不出
         p.setBrush(QtCore.Qt.NoBrush)
-        pen = p.pen()
-        pen.setColor(QtGui.QColor("#ffffff"))
+        pen = QtGui.QPen(QtGui.QColor("#ffffff"))
         pen.setWidth(1)
         p.setPen(pen)
         p.drawRect(s)
