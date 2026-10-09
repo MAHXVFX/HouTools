@@ -2246,11 +2246,14 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         act_rename = menu.addAction("自定义显示名")
         menu.addSeparator()
         act_doc = menu.addAction("编辑文档")
+        menu.addSeparator()
+        # 缩略图相关一组：设置 / 截取 / 清除
         act_thumb = menu.addAction("设置缩略图")
         act_thumb_snip = menu.addAction("截取缩略图")
         act_thumb_clear = None
         if metadata.get_thumb(info.name):
             act_thumb_clear = menu.addAction("清除缩略图")
+        menu.addSeparator()
         # 清除颜色不进菜单：颜色对话框里「恢复默认」+ 确认
         act_color = menu.addAction("自定义颜色")
         act_copy = menu.addAction("复制内部名")

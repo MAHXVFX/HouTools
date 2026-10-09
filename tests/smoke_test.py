@@ -1215,7 +1215,8 @@ def main():
 
     # 截取缩略图遮罩（capture.SnipOverlay）：比例锁定框选 + Enter 确认 /
     # Esc 取消，无头模拟鼠标/键盘事件。语义固化：松手不确认、无选区
-    # Enter 忽略、按下即清旧选框、确认裁剪 ×DPR 回物理像素且 DPR 重置 1
+    # Enter 忽略、框内拖动移动、四角手柄按比例缩放、确认裁剪 ×DPR 回
+    # 物理像素且 DPR 重置 1
     from PySide6 import QtGui
     from houtools.recipelib.capture import SnipOverlay
     snip_src = QtGui.QPixmap(400, 300)
@@ -1224,6 +1225,22 @@ def main():
     snipped, cancelled = [], []
     ov.confirmed.connect(snipped.append)
     ov.cancelled.connect(lambda: cancelled.append(1))
+
+    def _spress(p):
+        ov.mousePressEvent(QtGui.QMouseEvent(
+            QtCore.QEvent.MouseButtonPress, QtCore.QPointF(p),
+            QtCore.Qt.LeftButton, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier))
+
+    def _smove(p):
+        ov.mouseMoveEvent(QtGui.QMouseEvent(
+            QtCore.QEvent.MouseMove, QtCore.QPointF(p),
+            QtCore.Qt.NoButton, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier))
+
+    def _srel(p):
+        ov.mouseReleaseEvent(QtGui.QMouseEvent(
+            QtCore.QEvent.MouseButtonRelease, QtCore.QPointF(p),
+            QtCore.Qt.LeftButton, QtCore.Qt.NoButton, QtCore.Qt.NoModifier))
+
     # 无选区：Enter 忽略、Esc 取消（遮罩不自我关闭，收尾归调用方）
     ov.keyPressEvent(QtGui.QKeyEvent(
         QtCore.QEvent.KeyPress, QtCore.Qt.Key_Return, QtCore.Qt.NoModifier))
@@ -1231,31 +1248,52 @@ def main():
     ov.keyPressEvent(QtGui.QKeyEvent(
         QtCore.QEvent.KeyPress, QtCore.Qt.Key_Escape, QtCore.Qt.NoModifier))
     assert cancelled and not snipped
-    # 拖拽出锁比例选框（模拟鼠标事件，同 crop 测试手法）
-    ov.mousePressEvent(QtGui.QMouseEvent(
-        QtCore.QEvent.MouseButtonPress, QtCore.QPointF(60, 50),
-        QtCore.Qt.LeftButton, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier))
-    assert ov._sel is None, "按下即清旧选框，随 move 才生成"
-    ov.mouseMoveEvent(QtGui.QMouseEvent(
-        QtCore.QEvent.MouseMove, QtCore.QPointF(260, 200),
-        QtCore.Qt.NoButton, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier))
-    ov.mouseReleaseEvent(QtGui.QMouseEvent(
-        QtCore.QEvent.MouseButtonRelease, QtCore.QPointF(260, 200),
-        QtCore.Qt.LeftButton, QtCore.Qt.NoButton, QtCore.Qt.NoModifier))
+    # 拖拽出锁比例选框
+    _spress(QtCore.QPoint(60, 50))
+    assert ov._sel is None, "框外按下即清旧选框，随 move 重新生成"
+    _smove(QtCore.QPoint(260, 200))
+    _srel(QtCore.QPoint(260, 200))
     sel = ov._sel
     assert sel is not None and sel.width() >= 40, sel
     assert abs(sel.width() / sel.height() - rl_crop.TARGET_RATIO) < 0.02, sel
     # 选框夹屏内
     sr = ov.rect()
     assert sr.contains(sel), (sel, sr)
-    ov.grab()   # 完整绘制路径（压暗/边框/三分线/尺寸条/提示条）不崩溃
-    # 松手不确认；Enter 才裁剪（DPR=1 时与选框同尺寸、重置回纯像素）
+    # 框内拖动 = 移动选框（对齐 ThumbCropDialog 手感）
+    c = sel.center()
+    _spress(c)
+    _smove(c + QtCore.QPoint(30, 20))
+    _srel(c + QtCore.QPoint(30, 20))
+    moved = ov._sel
+    assert moved.size() == sel.size(), (moved, sel)
+    assert moved.topLeft() == sel.topLeft() + QtCore.QPoint(30, 20), \
+        (moved, sel)
+    # 四角手柄：br 往里推变窄、往外拉变宽，比例始终锁定
+    _spress(QtCore.QPoint(moved.right(), moved.bottom()))
+    _smove(QtCore.QPoint(moved.right() - 50, moved.bottom() - 50))
+    _srel(QtCore.QPoint(moved.right() - 50, moved.bottom() - 50))
+    shrunk = ov._sel
+    assert shrunk.width() < moved.width(), (shrunk, moved)
+    assert abs(shrunk.width() / shrunk.height()
+               - rl_crop.TARGET_RATIO) < 0.02, shrunk
+    _spress(QtCore.QPoint(shrunk.right(), shrunk.bottom()))
+    _smove(QtCore.QPoint(shrunk.right() + 40, shrunk.bottom() + 40))
+    _srel(QtCore.QPoint(shrunk.right() + 40, shrunk.bottom() + 40))
+    grown = ov._sel
+    assert grown.width() > shrunk.width(), (grown, shrunk)
+    # 悬停光标：框内移动十字、角上缩放斜箭头
+    _smove(grown.center())
+    assert ov.cursor().shape() == QtCore.Qt.SizeAllCursor
+    _smove(QtCore.QPoint(grown.left(), grown.top()))
+    assert ov.cursor().shape() == QtCore.Qt.SizeFDiagCursor
+    ov.grab()   # 完整绘制路径（压暗/边框/三分线/手柄/尺寸条/提示条）不崩溃
+    # 松手不确认；Enter 才裁剪（×DPR 裁剪、DPR 重置回纯像素）
     assert not snipped
     ov.keyPressEvent(QtGui.QKeyEvent(
         QtCore.QEvent.KeyPress, QtCore.Qt.Key_Return, QtCore.Qt.NoModifier))
     assert len(snipped) == 1
     got = snipped[0]
-    assert got.size() == sel.size(), (got.size(), sel.size())
+    assert got.size() == ov._sel.size(), (got.size(), ov._sel.size())
     assert got.devicePixelRatio() == 1.0
     assert got.toImage().pixelColor(0, 0).name() == "#306040"
     ov.deleteLater()
