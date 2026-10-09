@@ -390,6 +390,8 @@ def read_doc(name):
     try:
         with open(path, encoding="utf-8") as f:
             return f.read()
+    except FileNotFoundError:
+        return ""   # 无文档是正常状态（首次创建/编辑器空白装载），不算异常
     except OSError as exc:
         log.warning("cannot read doc %s: %s", path, exc)
         return ""
