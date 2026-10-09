@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!--
+    节点右键菜单（OPmenu.xml）。
+
+    Houdini 沿 HOUDINI_PATH 搜索同名文件并与 $HH/OPmenu.xml 合并；包清单已把
+    仓库根放进 HOUDINI_PATH。菜单结构改动经 menurefresh 生效（H22 硬约束只针对
+    顶栏菜单；用户 pref 目录实测 menurefresh 可拾取新增文件）。
+
+    标签一律英文/ASCII：H22 实测中文 <label> 条目行出现但文字不渲染（与顶栏
+    菜单栏同款限制）；脚本内的中文字符串输出不受影响。
+
+    scriptCode 只写两行分发器，逻辑一律在 houtools/tools/ 与模块。
+-->
+<menuDocument>
+    <menu>
+        <scriptItem id="houtools_open_cache_folder">
+            <label>Open Cache Folder</label>
+            <context>
+                <expression>kwargs.get("node") is not None and kwargs["node"].parm("sopoutput") is not None</expression>
+            </context>
+            <scriptCode><![CDATA[import houtools.dev.dispatcher as _houtools_dispatcher
+_houtools_dispatcher.run("open_cache_folder", kwargs)
+]]></scriptCode>
+        </scriptItem>
+    </menu>
+</menuDocument>

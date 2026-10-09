@@ -9,6 +9,7 @@
 root/
 ├── MainMenuCommon.xml             # Houdini 顶部菜单（薄分发器 scriptItem）
 ├── NetworkViewMenu.xml            # 网络编辑器面板菜单栏（HouTools 顶层菜单，注入机制同主菜单）
+├── OPmenu.xml                     # 节点右键菜单（HOUDINI_PATH 同名合并；条目仍走两行分发器，标签英文）
 ├── HouTools.json                # 包清单副本（生效的一份在 Documents/houdini22.0/packages/）
 ├── python_panels/Automation.pypanel  # Automation 的 Python Panel 界面定义
 ├── python3.13libs/uiready.py      # UI 启动钩子：装默认键位 + 启动即装 recipe 库。官方机制是"Houdini 执行 Houdini 路径上所有 uiready.py"（docs: Python script locations），各包同名钩子互不遮蔽、HFS 自带那份自己会跑——严禁在此补执行/链式其他 uiready.py（曾因此双执行官方钩子+扩大扫描面，已删）
@@ -34,6 +35,7 @@ root/
 | 热加载机制 | `houtools/dev/reloader.py` | 按 sys.modules 插入序重载（=依赖序）；跳过 `houtools.dev*`；失败模块弹出 sys.modules 供下次重导 |
 | 菜单点击入口 | `houtools/dev/dispatcher.py` | `run(tool_id)` → `importlib.import_module("houtools.tools." + tool_id)` → 调其 `run()` |
 | 菜单定义 | `MainMenuCommon.xml` / `NetworkViewMenu.xml` | 顶层子菜单 id：`houtools_tools_menu` / `houtools_network_view_menu`；均插在 help_menu 前 |
+| 节点右键菜单 | 仓库根 `OPmenu.xml` + `houtools/tools/open_cache_folder.py` | Houdini 沿 HOUDINI_PATH 合并同名 OPmenu.xml（包清单已把仓库根挂进 HOUDINI_PATH）；条目 scriptCode 仍是两行分发器，`dispatcher.run(tool_id, kwargs)` 透传菜单 kwargs；现有条目 Open Cache Folder：右键带 `sopoutput` 的节点（context expression 判参数存在，`kwargs.get("node")` 防 None）→ sopoutput 求值取父目录 `os.startfile` 打开，目录不存在上溯最近存在祖先，相对路径按 $HIP 拼接；**标签一律英文/ASCII——H22 实测右键菜单中文 `<label>` 条目行出现但文字不渲染**（与顶栏菜单栏同款）；结构改动经 menurefresh 生效（新文件随启动加载；menurefresh 实测可拾取新增文件，用户 pref 目录验证） |
 | 新增工具 | `houtools/tools/<tool_id>.py` + 两份菜单 XML | 模块暴露 `run()`；菜单 scriptCode 只写两行分发器 |
 | 默认热键 | `houtools/core/hotkeys.py`（清单+自定义存储）+ `python3.13libs/uiready.py`（执行） | 菜单 item id 须为 `pane.wsheet.<name>` 前缀，热键符号才是 `h.pane.wsheet.<name>`；`settings/hotkeys.json` 的自定义键每次启动强制应用，其次尊重 Hotkey Manager 已有键位，最后落默认值 |
 | 工具统一字体 | `houtools/ui/fonts.py` + `houtools/fonts/` | 阿里妈妈数黑体 Bold（免费商用授权，用户指定）：`QFontDatabase.addApplicationFont` 私有加载（不装系统）；**会话实测（fxhoudini 探针）：Houdini 在应用层给控件类设了自家字体 SideFX Source Sans Pro，压过 Qt 的父子字体继承——只 setFont 窗口时子控件全是 SideFX**（`app.styleSheet()` 为空，非 QSS 所致；无头环境无此机制、会正常继承，故无头验证通过≠会话生效）。所以 `apply()` 必须**逐控件显式 setFont 刷整棵子树**（实测显式设置能压过应用级类字体，A/B 抓图逐像素验证），动态创建的子控件（右键菜单/对话框/Automation 运行时加任务槽）由装在 QApplication 上的全局 ChildAdded 过滤器兜底：新控件挂在带 `_houtools_tool_window` 属性标记的窗口子树内就整枝刷 `root.font()`；四个工具窗口（recipelib/hdrlight/videoseq/automation）构造时各调一次 apply——不动 QApplication 全局字体，Houdini 自身 UI 不受影响；字族名与过滤器安装标记挂 QApplication 动态属性（reload 不重复登记/装机）；**换字体后卡片度量基准必须跟窗口字体**：`_CardDelegate.text_block_height/_font` 走 `_win.font()`（曾用 QApplication.font()，换字体后 gridSize 与绘制错位）；新字重往 `_FONT_FILES` 追加同族文件（字体自带 Bold 字面，setBold 才真正可见） |
@@ -58,7 +60,7 @@ root/
 ## Conventions
 
 - **新增工具三步**：`houtools/tools/<tool_id>.py`（暴露 `run()`）→ 两份菜单 XML 各加 `scriptItem`（scriptCode 仅 `import houtools.dev.dispatcher` + `_houtools_dispatcher.run("<tool_id>")` 两行）→ 重启 Houdini 一次让菜单出现；此后该工具代码迭代全部走 Reload 热加载。
-- **菜单栏标签一律英文/ASCII**（H22 菜单栏对中文渲染不可靠）；工具窗口内部 UI 可用中文。
+- **菜单栏标签一律英文/ASCII**（H22 菜单栏对中文渲染不可靠；右键菜单 OPmenu 同款——中文 label 条目行出现但文字不渲染）；工具窗口内部 UI 可用中文。
 - **顶层窗口与 Python Panel**：独立 QDialog 必须经 `window_manager.open_window()` 创建（如视频转序列图），否则 Reload 无法自动关闭旧窗口；Automation 是 Python Panel 部件（pane 托管），**不得**注册进 window_manager。
 - **Reload 与 pypanel**：Reload Modules 不重建已打开的 Python Panel（避免丢弃未 Start 保存的编辑），由用户点面板工具条自带的刷新按钮重建界面。
 - **`import hou` 只放函数内**或 try/except，保证模块在 Houdini 外可导入（冒烟测试依赖这一点）。

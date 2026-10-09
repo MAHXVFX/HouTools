@@ -22,8 +22,13 @@ from PySide6.QtWidgets import (
     QLineEdit, QStackedWidget, QCheckBox, QWidget, QScrollArea, QSizePolicy,
     QGraphicsDropShadowEffect, QApplication, QMenu,
 )
-from PySide6.QtCore import Qt, Signal, QPoint, QSize, QRect, QEvent, QTimer, QObject
-from PySide6.QtGui import QColor, QIcon, QKeySequence, QShortcut
+from PySide6.QtCore import Qt, Signal, QPoint, QSize, QRect, QRectF, QEvent, QTimer, QObject
+from PySide6.QtGui import QColor, QIcon, QKeySequence, QShortcut, QPainter, QPixmap
+
+try:
+    from PySide6 import QtSvg
+except ImportError:  # QtSvg 缺失时跳转按钮回退文字箭头（正常环境都有）
+    QtSvg = None
 
 from houtools.automation.data_manager import AutomationDataManager
 from houtools.automation.task_types import (
@@ -157,6 +162,32 @@ def _release_engine(engine: "ExecutionEngine"):
         _LIVE_ENGINES.remove(engine)
     except ValueError:
         pass
+
+
+def _render_jump_icon() -> QIcon | None:
+    """任务槽跳转按钮图标：官方 ``BUTTONS/jump.svg``（弧形箭头）。
+
+    素材取自 Houdini 自带 ``$HFS/houdini/config/Icons/icons.zip``，与参数
+    面板官方跳转按钮同源。经 QSvgRenderer 离屏渲染成 16/32 两档位图组装
+    QIcon（不依赖 Qt 的 svg icon 插件，32 档供 2x DPR 取用）；QtSvg 缺失
+    或 SVG 损坏时返回 None，按钮回退文字箭头。
+    """
+    if QtSvg is None:
+        return None
+    svg_path = Path(__file__).resolve().parent.parent / "icons" / "jump.svg"
+    renderer = QtSvg.QSvgRenderer(str(svg_path))
+    if not renderer.isValid():
+        logger.warning("jump.svg 无法渲染: %s", svg_path)
+        return None
+    icon = QIcon()
+    for size in (16, 32):
+        pm = QPixmap(size, size)
+        pm.fill(Qt.transparent)
+        painter = QPainter(pm)
+        renderer.render(painter, QRectF(0, 0, size, size))
+        painter.end()
+        icon.addPixmap(pm)
+    return icon
 
 
 # ── Parm Path 编解码 ──────────────────────────────────────────
@@ -1116,13 +1147,18 @@ class AutomationWindow(QWidget):
             node_path = _split_parm_path(parm_path_le.text())[0]
             self._jump_to_node(node_path)
 
-        jump_btn = QPushButton("→")
+        jump_btn = QPushButton()
         jump_btn.setObjectName("slotJumpBtn")
         jump_btn.setFixedSize(22, 22)
         jump_btn.setToolTip("在网络编辑器中跳转到该任务的目标节点")
+        jump_icon = _render_jump_icon()
+        if jump_icon is not None:
+            jump_btn.setIcon(jump_icon)
+            jump_btn.setIconSize(QSize(16, 16))
+        else:  # QtSvg 缺失/渲染失败：回退旧文字箭头
+            jump_btn.setText("→")
         jump_btn.setStyleSheet(
-            "QPushButton { border: none; padding: 0px; background: transparent;"
-            " color: #0d6399; font-weight: bold; font-size: 18px; }"
+            "QPushButton { border: none; padding: 0px; background: transparent; }"
             "QPushButton:hover { background: rgba(255,255,255,0.15); border-radius: 3px; }"
         )
         jump_btn.clicked.connect(lambda: _on_jump())

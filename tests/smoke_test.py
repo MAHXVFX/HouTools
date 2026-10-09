@@ -57,7 +57,7 @@ atexit.register(lambda: [p.unlink(missing_ok=True) for p in _CLEANUP_FILES])
 
 
 def main():
-    for menu_file in ("MainMenuCommon.xml", "NetworkViewMenu.xml"):
+    for menu_file in ("MainMenuCommon.xml", "NetworkViewMenu.xml", "OPmenu.xml"):
         ET.parse(ROOT / menu_file)
     print("menu XMLs: well-formed")
 
@@ -82,6 +82,14 @@ def main():
     assert 'id="houtools.networkview.recipe_library"' in nv_xml
     print("recipe_library menu wiring: consistent")
 
+    # OPmenu（节点右键菜单）：仓库根随 HOUDINI_PATH 加载；条目走两行分发器，
+    # 标签英文/ASCII（H22 实测中文 label 条目行出现但文字不渲染）
+    op_xml = (ROOT / "OPmenu.xml").read_text(encoding="utf-8")
+    assert 'id="houtools_open_cache_folder"' in op_xml
+    assert '_houtools_dispatcher.run("open_cache_folder", kwargs)' in op_xml
+    assert '<label>Open Cache Folder</label>' in op_xml
+    print("OPmenu wiring: consistent")
+
     ET.parse(ROOT / "python_panels" / "Automation.pypanel")
     print("Automation.pypanel: well-formed")
 
@@ -92,6 +100,7 @@ def main():
     import houtools.dev.dispatcher  # noqa: F401
     import houtools.tools.paste_as_object_merge
     import houtools.tools.paste_hotkey_settings  # noqa: F401
+    import houtools.tools.open_cache_folder  # noqa: F401
     import houtools.tools.automation  # noqa: F401
     import houtools.automation.window  # noqa: F401
     import houtools.videoseq.window  # noqa: F401
@@ -1270,6 +1279,44 @@ def main():
     assert "冒号" in prefix_error("C:evil")
     assert prefix_error('a"b') != ""
     print("videoseq prefix guard OK")
+
+    # 打开缓存文件夹：sopoutput 求值取父目录 + 目录缺失上溯最近存在祖先
+    # （fake 节点鸭子类型，无 hou 依赖；相对路径的 $HIP 分支需 hou，无头不覆盖）
+    from houtools.tools import open_cache_folder as ocf
+
+    class _FakeParmEval:
+        def __init__(self, value):
+            self._value = value
+        def evalAsString(self):
+            return self._value
+
+    class _FakeCacheNode:
+        def __init__(self, path, sopoutput=None):
+            self._path = path
+            self._sopoutput = sopoutput
+        def path(self):
+            return self._path
+        def parm(self, name):
+            if name == "sopoutput" and self._sopoutput is not None:
+                return _FakeParmEval(self._sopoutput)
+            return None
+
+    with tempfile.TemporaryDirectory() as tmp:
+        good = Path(tmp, "geo", "cache_v1")
+        good.mkdir(parents=True)
+        node = _FakeCacheNode("/obj/geo1/filecache1",
+                              str(good / "out.$F4.bgeo.sc"))
+        assert os.path.normpath(ocf.resolve_folder(node)) == str(good)
+        node = _FakeCacheNode("/obj/geo1/filecache1",
+                              str(Path(tmp, "no", "such") / "f.bgeo.sc"))
+        assert os.path.normpath(ocf.resolve_folder(node)) \
+            == os.path.normpath(str(tmp))
+    try:
+        ocf.resolve_folder(_FakeCacheNode("/obj/geo1/box1"))
+        raise AssertionError("missing sopoutput should fail")
+    except RuntimeError as exc:
+        assert "sopoutput" in str(exc)
+    print("open_cache_folder resolve OK")
 
     # 热键自定义存储 round-trip（打桩到临时 store，不触真实 settings/；
     # 此前直接删除真实 hotkeys.json，会把用户自定义键位一起删掉）
