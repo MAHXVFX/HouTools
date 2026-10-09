@@ -653,11 +653,33 @@ class _ParmPathLineEdit(QLineEdit):
         path = _extract_parm_path(text) if text else ""
         if path:
             self.setText(path)
+        else:
+            # 提取失败不再静默:记下格式名清单,便于排查 Houdini 自定义 MIME 变化
+            logger.info("参数拖放未提取到路径, MIME formats: %s",
+                        [str(f) for f in mime.formats()])
         # 无论是否命中路径，都向拖放源上报"取消"而非"成功落地"：实测
         # Houdini 收到"节点拖放成功落入外部窗口"时，会把视窗待定的工具
         # 快捷方式泄漏到 3D 视窗（Houdini 内部面板、拒绝拖放的外部程序
         # 如记事本均无此问题）。数据已读取完毕，上报取消不影响填值。
         event.ignore()
+
+
+def _plausible_text(raw: bytes) -> bool:
+    """判断 MIME 原始字节是否"像文本"（按内容过滤，不看格式名）。
+
+    Windows 上 Houdini 的自定义剪贴板格式经 Qt 暴露为
+    ``application/x-qt-windows-mime;value="<原名>"``，原名不可预知，
+    无法按前缀白名单筛选；二进制载荷（图片/颜色等）靠内容特征排除：
+    含 NUL、过长或可打印率低于 90% 都不算文本。
+    """
+    if not raw or len(raw) > 65536 or b"\x00" in raw:
+        return False
+    text = raw.decode("utf-8", errors="replace")
+    if not text.strip():
+        return False
+    sample = text[:512]
+    printable = sum(1 for ch in sample if ch.isprintable() or ch in "\t\r\n")
+    return printable / len(sample) >= 0.9
 
 
 def _extract_drag_text(mime) -> str:
@@ -666,8 +688,11 @@ def _extract_drag_text(mime) -> str:
     优先级:
     1. ``text/plain``(普通文本 / 外部文本拖入)
     2. ``text/uri-list``(文件 URL)
-    3. 任意格式的 raw bytes(``application/x-houdini-*`` 等自定义 MIME,
-       Houdini 拖参数可能用这些,内容仍是 UTF-8 文本)
+    3. 其余任意格式按内容判断(``_plausible_text``):Houdini 拖参数用
+       自定义 MIME(格式名经 Qt 的 windows-mime 映射不可预知),内容是
+       ``hou.parm('...')`` 这样的 UTF-8 文本 —— 曾按
+       ``application/x-houdini-`` 前缀白名单筛选,但 Qt 暴露的格式名
+       不带该前缀,参数拖放因此静默失效(d4d8e1e 引入的回归)。
     """
     if mime.hasText():
         return mime.text()
@@ -675,19 +700,16 @@ def _extract_drag_text(mime) -> str:
         urls = mime.urls()
         if urls:
             return urls[0].toString()
-    # 兜底:只遍历 Houdini 自有 MIME 前缀(application/x-houdini-*),解码
-    # raw bytes —— Houdini 自定义 MIME 内容通常仍是 UTF-8 文本
-    # (``hou.parm('...')`` 表达式)。任意格式都解码会把图片/颜色等二进制
-    # 格式的乱码当文本塞进输入框,故收窄为前缀白名单。
     for fmt in mime.formats():
-        if not fmt.startswith("application/x-houdini-"):
-            continue
         try:
-            data = bytes(mime.data(fmt)).decode("utf-8", errors="ignore").strip()
-            if data:
-                return data
-        except Exception:  # noqa: BLE001
+            raw = bytes(mime.data(fmt))
+        except Exception:  # noqa: BLE001 — 单格式失败不阻塞其余格式
             continue
+        if not _plausible_text(raw):
+            continue
+        data = raw.decode("utf-8", errors="ignore").strip()
+        if data:
+            return data
     return ""
 
 
