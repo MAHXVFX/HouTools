@@ -7,6 +7,7 @@ Automation — 主界面（Python Panel 部件）
 提供任务槽列表编辑、持久化保存、ExecutionEngine 集成。
 """
 
+import functools
 import logging
 import os
 import re
@@ -2199,10 +2200,15 @@ class AutomationWindow(QWidget):
 
         self._engine = ExecutionEngine(task_items)
         _LIVE_ENGINES.append(self._engine)
+        # QThread.finished 无参发射，而 PySide6 在发射时才检查槽的参数个数
+        # （连接时不查），直连单参普通函数会在每次线程收尾时报 TypeError 且
+        # _release_engine 从不执行——用 partial 在连接时绑死 engine。
         # 显式 DirectConnection：finished 连普通函数（无 QObject 接收者）时
         # AutoConnection 在 PySide6 下不会触发；Direct 则在线程收尾时直接执行，
         # _release_engine 只做 list.remove，跨线程安全，且不依赖窗口存活
-        self._engine.finished.connect(_release_engine, Qt.DirectConnection)
+        self._engine.finished.connect(
+            functools.partial(_release_engine, self._engine), Qt.DirectConnection
+        )
         self._engine.task_started.connect(self._on_task_started)
         self._engine.task_completed.connect(self._on_task_completed)
         self._engine.all_completed.connect(self._on_all_completed)
