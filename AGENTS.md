@@ -11,7 +11,7 @@ root/
 ├── NetworkViewMenu.xml            # 网络编辑器面板菜单栏（HouTools 顶层菜单，注入机制同主菜单）
 ├── HouTools.json                # 包清单副本（生效的一份在 Documents/houdini22.0/packages/）
 ├── python_panels/Automation.pypanel  # Automation 的 Python Panel 界面定义
-├── python3.13libs/uiready.py      # UI 启动钩子：装默认键位；链式执行路径上全部其他 uiready.py（逐个异常隔离）
+├── python3.13libs/uiready.py      # UI 启动钩子：装默认键位 + 启动即装 recipe 库。官方机制是"Houdini 执行 Houdini 路径上所有 uiready.py"（docs: Python script locations），各包同名钩子互不遮蔽、HFS 自带那份自己会跑——严禁在此补执行/链式其他 uiready.py（曾因此双执行官方钩子+扩大扫描面，已删）
 ├── python3.13libs/houtools/           # 核心 Python 包（python3.13libs 由 Houdini 自动加入 sys.path）
 │   ├── dev/                       # ★ 热加载框架：reloader / dispatcher（永不参与重载）
 │   ├── core/                      # constants（路径自算）/ log / settings(JsonStore)
