@@ -14,6 +14,7 @@
                         路径追加 ``/render``，指向其内部缓存 ROP）
   规则 9    SOP → COP   sopimport ``SOP_XXX``（soppath；仅新 COP，且需置 usesoppath=1）
   规则 10   OBJ → LOP   sopimport ``SOP_XXX``（soppath，可填 obj 路径）
+  规则 11   OBJ → SOP   object_merge ``Merge_XXX``（objpath1 指向物体）
 
 前置规则：粘贴出的节点颜色与源节点一致（规则 2 的 geo 容器同样着色）。
 未列出的"目标 × 源"组合一律跳过，未覆盖的上下文静默不动。每个引用节点
@@ -84,7 +85,7 @@ def _paste_as_merge(context, context_type, position):
 def _reference_rules() -> dict:
     """目标网络类别 → {源节点类别: (节点类型, 路径参数, 名称前缀, 附加参数)}。
 
-    覆盖命名规则 3/4/6/7/8/9/10；规则 1/2 在 _paste_into_sop /
+    覆盖命名规则 3/4/6/7/8/9/10；规则 1/2/11 在 _paste_into_sop /
     _paste_into_obj 里单独处理（SOP 网络有内部剪贴板兜底、OBJ 网络要建
     geo 容器）。名称前缀为空串表示直接用源节点名；附加参数在路径参数
     之前设置。
@@ -118,7 +119,7 @@ def _reference_rules() -> dict:
 
 
 def _paste_into_sop(context, position):
-    """SOP 网络：SOP 源 → object_merge（规则 1），LOP 源 → lopimport（规则 5）。"""
+    """SOP 网络：SOP/OBJ 源 → object_merge（规则 1/11），LOP 源 → lopimport（规则 5）。"""
     import hou
 
     src_items = _source_items(context, position)
@@ -136,6 +137,11 @@ def _paste_into_sop(context, position):
             merge = context.createNode("lopimport", "LOP_" + basename)
             merge.parm("loppath").set(str(item))
         elif src.type().category() == hou.sopNodeTypeCategory():
+            merge = context.createNode("object_merge", "Merge_" + basename)
+            merge.parm("objpath1").set(_objpath_for(merge, item))
+        elif src.type().category() == hou.objNodeTypeCategory():
+            # 规则 11：OBJ 源 → object_merge 引用整个物体（objpath1 指向 /obj 节点，
+            # 坐标变换走节点默认的 Into This Object，与规则 1 行为一致）
             merge = context.createNode("object_merge", "Merge_" + basename)
             merge.parm("objpath1").set(_objpath_for(merge, item))
         else:

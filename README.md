@@ -62,6 +62,7 @@ Hotkey Manager 中修改，符号为 `h.pane.wsheet.houtools_paste_as_object_mer
 | SOP → COP | sopimport `SOP_XXX`（仅新 COP，需置 usesoppath=1） |
 | SOP → DOP | staticobject `Object_XXX` |
 | SOP → ROP | fetch `SOP_XXX`（源为 File Cache 时路径追加 `/render`） |
+| OBJ → SOP | object_merge `Merge_XXX` |
 | OBJ → LOP | sopimport `SOP_XXX` |
 | LOP → SOP | lopimport `LOP_XXX` |
 | LOP → LOP | fetch `LOP_XXX` |
