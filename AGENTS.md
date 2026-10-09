@@ -9,7 +9,7 @@
 root/
 ├── MainMenuCommon.xml             # Houdini 顶部菜单（薄分发器 scriptItem）
 ├── NetworkViewMenu.xml            # 网络编辑器面板菜单栏（HouTools 顶层菜单，注入机制同主菜单）
-├── OPmenu.xml                     # 节点右键菜单（HOUDINI_PATH 同名合并；条目仍走两行分发器，标签英文）
+├── OPmenu.xml                     # 节点右键菜单（HOUDINI_PATH 同名合并；自有条目分割线+[HT] 后缀，标签英文）
 ├── HouTools.json                # 包清单副本（生效的一份在 Documents/houdini22.0/packages/）
 ├── python_panels/Automation.pypanel  # Automation 的 Python Panel 界面定义
 ├── python3.13libs/uiready.py      # UI 启动钩子：装默认键位 + 启动即装 recipe 库。官方机制是"Houdini 执行 Houdini 路径上所有 uiready.py"（docs: Python script locations），各包同名钩子互不遮蔽、HFS 自带那份自己会跑——严禁在此补执行/链式其他 uiready.py（曾因此双执行官方钩子+扩大扫描面，已删）
@@ -35,7 +35,7 @@ root/
 | 热加载机制 | `houtools/dev/reloader.py` | 按 sys.modules 插入序重载（=依赖序）；跳过 `houtools.dev*`；失败模块弹出 sys.modules 供下次重导 |
 | 菜单点击入口 | `houtools/dev/dispatcher.py` | `run(tool_id)` → `importlib.import_module("houtools.tools." + tool_id)` → 调其 `run()` |
 | 菜单定义 | `MainMenuCommon.xml` / `NetworkViewMenu.xml` | 顶层子菜单 id：`houtools_tools_menu` / `houtools_network_view_menu`；均插在 help_menu 前 |
-| 节点右键菜单 | 仓库根 `OPmenu.xml` + `houtools/tools/open_cache_folder.py` | Houdini 沿 HOUDINI_PATH 合并同名 OPmenu.xml（包清单已把仓库根挂进 HOUDINI_PATH）；条目 scriptCode 仍是两行分发器，`dispatcher.run(tool_id, kwargs)` 透传菜单 kwargs；现有条目 Open Cache Folder：右键带 `sopoutput` 的节点（context expression 判参数存在，`kwargs.get("node")` 防 None）→ sopoutput 求值取父目录 `os.startfile` 打开，目录不存在上溯最近存在祖先，相对路径按 $HIP 拼接；**标签一律英文/ASCII——H22 实测右键菜单中文 `<label>` 条目行出现但文字不渲染**（与顶栏菜单栏同款）；结构改动经 menurefresh 生效（新文件随启动加载；menurefresh 实测可拾取新增文件，用户 pref 目录验证） |
+| 节点右键菜单 | 仓库根 `OPmenu.xml` + `houtools/tools/open_cache_folder.py` | Houdini 沿 HOUDINI_PATH 合并同名 OPmenu.xml（包清单已把仓库根挂进 HOUDINI_PATH）；条目 scriptCode 仍是两行分发器，`dispatcher.run(tool_id, kwargs)` 透传菜单 kwargs；**HouTools 自有条目约定：条目块以 `<separatorItem/>` 起头与系统项隔开（官方文件同样把 separatorItem 与 context 条目相邻放置，悬空分割线由菜单系统自动收起）+ 标签尾部 `[HT]` 后缀**；现有条目 Open Cache Folder：右键带 `sopoutput` 的节点（context expression 判参数存在，`kwargs.get("node")` 防 None）→ sopoutput 求值（`parm.evalAsString()`，**没有 evaluatedString()**）取父目录 `os.startfile` 打开，目录不存在上溯最近存在祖先，相对路径按 $HIP 拼接；**标签一律英文/ASCII——H22 实测右键菜单中文 `<label>` 条目行出现但文字不渲染**（与顶栏菜单栏同款）；结构改动需重启 Houdini（menurefresh 实测刷不出 OPmenu，2026-10 验证，旧说法"menurefresh 覆盖右键菜单"不成立）；scriptCode 引用的工具代码仍走 Reload 热加载（菜单每次点击时才 import 工具模块） |
 | 新增工具 | `houtools/tools/<tool_id>.py` + 两份菜单 XML | 模块暴露 `run()`；菜单 scriptCode 只写两行分发器 |
 | 默认热键 | `houtools/core/hotkeys.py`（清单+自定义存储）+ `python3.13libs/uiready.py`（执行） | 菜单 item id 须为 `pane.wsheet.<name>` 前缀，热键符号才是 `h.pane.wsheet.<name>`；`settings/hotkeys.json` 的自定义键每次启动强制应用，其次尊重 Hotkey Manager 已有键位，最后落默认值 |
 | 工具统一字体 | `houtools/ui/fonts.py` + `houtools/fonts/` | 阿里妈妈数黑体 Bold（免费商用授权，用户指定）：`QFontDatabase.addApplicationFont` 私有加载（不装系统）；**会话实测（fxhoudini 探针）：Houdini 在应用层给控件类设了自家字体 SideFX Source Sans Pro，压过 Qt 的父子字体继承——只 setFont 窗口时子控件全是 SideFX**（`app.styleSheet()` 为空，非 QSS 所致；无头环境无此机制、会正常继承，故无头验证通过≠会话生效）。所以 `apply()` 必须**逐控件显式 setFont 刷整棵子树**（实测显式设置能压过应用级类字体，A/B 抓图逐像素验证），动态创建的子控件（右键菜单/对话框/Automation 运行时加任务槽）由装在 QApplication 上的全局 ChildAdded 过滤器兜底：新控件挂在带 `_houtools_tool_window` 属性标记的窗口子树内就整枝刷 `root.font()`；四个工具窗口（recipelib/hdrlight/videoseq/automation）构造时各调一次 apply——不动 QApplication 全局字体，Houdini 自身 UI 不受影响；字族名与过滤器安装标记挂 QApplication 动态属性（reload 不重复登记/装机）；**换字体后卡片度量基准必须跟窗口字体**：`_CardDelegate.text_block_height/_font` 走 `_win.font()`（曾用 QApplication.font()，换字体后 gridSize 与绘制错位）；新字重往 `_FONT_FILES` 追加同族文件（字体自带 Bold 字面，setBold 才真正可见） |
@@ -67,7 +67,7 @@ root/
 - **Houdini MCP（fxhoudini）使用协议**：需要连 GUI 会话前，先向用户说明本次要在 Houdini 里做什么，等用户手动打开 MCP 再动；GUI 内探针一律小步拆分、先无头（hython + 隔离 `HOUDINI_USER_PREF_DIR`）验证，把会话里长/重的操作（HDA destroy、全量 rescan 等）放在无头环境做——曾有 destroy 链路把 GUI 会话搞崩的先例。测试用节点/配方用完即清，用户设置（lib_dirs 等）测前测后保持一致。
 - **线程**：QThread + Signal；任何回改 Houdini 的调用经 `hdefereval.executeDeferred` 派发主线程（参考 `execution_engine._run_deferred`）。
 - **Automation 的同步等待是有意设计，勿"修复"**：引擎对主线程调用做**无超时**阻塞等待（`execution_engine._run_deferred` 的 `ready.wait()`）。本工具本质是逐个触发 Houdini 按钮，顺序执行的唯一保证是"上一任务的主线程调用返回后再派发下一个"——主线程被解算/缓存阻塞多久就等多久（数小时是正常值），加超时会在任务实际完成前放行下一任务、破坏顺序语义；模态对话框等阻塞在本语义下同样属于"当前任务未完成，继续等"。取消是协作式，仅在任务边界生效、在途任务不可打断；因此 UI（`window._cancel_execution`）**不立即复位**：按钮保持「停止中…」并禁用，直到引擎真正发出 `all_completed` 才回空闲——否则留下"假取消"窗口，期间二次 Start 会被旧引擎迟到的 `all_completed` 打翻新引擎状态。运行中引擎由 `window._LIVE_ENGINES` 模块级留引用（引擎无 parent），防 GC 销毁运行中的 QThread。已知会弹阻塞对话框的按钮逐案消除弹框根源（`dl_Submit` 点击前强制存盘），不改等待机制。
-- **菜单结构改动**（增删菜单项）需重启 Houdini——H22 硬约束，`menurefresh` 只覆盖 OPmenu/PARMmenu 等右键菜单。
+- **菜单结构改动**（增删菜单项）需重启 Houdini——H22 硬约束；顶栏菜单与节点右键菜单 OPmenu 实测均如此（2026-10：menurefresh 刷不出 OPmenu 改动，旧说法"menurefresh 覆盖 OPmenu/PARMmenu 等右键菜单"对 OPmenu 不成立，PARMmenu 未复验）；右键菜单条目背后的工具代码仍走 Reload 热加载。
 - **reload 语义**：`houtools/dev` 自身永不重载（改 dev 框架需重启）；重载前自动 close 所有登记窗口；状态反馈走 `hou.ui.setStatusMessage`（`houtools.dev.status`）。
 - **二进制不入库**：`*.exe` 已被 .gitignore 排除。
 - **提交**：git 仓库在 gitcode（`mahx-vfx/HouTools`，SSH 远程），main 分支；无构建步骤，纯 Python 即发布。

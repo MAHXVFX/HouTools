@@ -4,18 +4,22 @@
     节点右键菜单（OPmenu.xml）。
 
     Houdini 沿 HOUDINI_PATH 搜索同名文件并与 $HH/OPmenu.xml 合并；包清单已把
-    仓库根放进 HOUDINI_PATH。菜单结构改动经 menurefresh 生效（H22 硬约束只针对
-    顶栏菜单；用户 pref 目录实测 menurefresh 可拾取新增文件）。
+    仓库根放进 HOUDINI_PATH。**菜单结构改动需重启 Houdini**（menurefresh 实测
+    刷不出 OPmenu，2026-10 会话验证）；scriptCode 引用的工具模块代码仍走
+    Reload 热加载（菜单每次点击时才 import 工具模块）。
 
-    标签一律英文/ASCII：H22 实测中文 <label> 条目行出现但文字不渲染（与顶栏
-    菜单栏同款限制）；脚本内的中文字符串输出不受影响。
+    HouTools 自有条目统一约定：条目块以 <separatorItem/> 起头，与系统自带项
+    隔开（官方文件同样把 separatorItem 与 context 条目相邻放置，悬空分割线由
+    菜单系统自动收起）；标签尾部加 [HT] 后缀；标签一律英文/ASCII——H22 实测
+    中文 <label> 条目行出现但文字不渲染（与顶栏菜单栏同款限制）。
 
     scriptCode 只写两行分发器，逻辑一律在 houtools/tools/ 与模块。
 -->
 <menuDocument>
     <menu>
+        <separatorItem/>
         <scriptItem id="houtools_open_cache_folder">
-            <label>Open Cache Folder</label>
+            <label>Open Cache Folder [HT]</label>
             <context>
                 <expression>kwargs.get("node") is not None and kwargs["node"].parm("sopoutput") is not None</expression>
             </context>

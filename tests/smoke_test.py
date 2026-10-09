@@ -87,7 +87,8 @@ def main():
     op_xml = (ROOT / "OPmenu.xml").read_text(encoding="utf-8")
     assert 'id="houtools_open_cache_folder"' in op_xml
     assert '_houtools_dispatcher.run("open_cache_folder", kwargs)' in op_xml
-    assert '<label>Open Cache Folder</label>' in op_xml
+    assert '<label>Open Cache Folder [HT]</label>' in op_xml
+    assert '<separatorItem/>' in op_xml  # 自有条目与系统项之间有分割线
     print("OPmenu wiring: consistent")
 
     ET.parse(ROOT / "python_panels" / "Automation.pypanel")
