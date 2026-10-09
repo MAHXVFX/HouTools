@@ -309,6 +309,7 @@ _UI_SETTINGS = JsonStore("recipelib_ui.json", defaults={
     "tag_expanded": True,   # 「标签」段折叠状态
     "level_expanded": True,   # 「层级」段折叠状态
     "last_export_dir": "",  # 上次导出的目录（导出对话框起始位置）
+    "hide_nodeparm_in_all": False,  # 「常规」设置：全部视图隐藏节点参数类型
 })
 
 
@@ -709,6 +710,78 @@ class _LibDirsPage(QtWidgets.QWidget):
         return [self.list.item(i).text() for i in range(self.list.count())]
 
 
+class _ClickToggleLabel(QtWidgets.QLabel):
+    """点击等同切换目标勾选框的标签（勾选文案拆段后保持整体可点）。"""
+
+    def __init__(self, target):
+        super().__init__()
+        self._target = target
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            self._target.toggle()
+        super().mouseReleaseEvent(event)
+
+
+class _GeneralPage(QtWidgets.QWidget):
+    """设置面板「常规」页：显示过滤偏好。
+
+    勾选文案"隐藏全部分组中的节点参数类型"里「全部」要求带侧栏分组
+    板块同款图标——QCheckBox 的文本画不了图，行拆四段横排、段距统一：
+    无文字勾选指示器 / 「隐藏」/ 图标 / 「全部分组中的节点参数类型」，
+    后三段均为 _ClickToggleLabel（点击等同切换勾选框）。「隐藏」不能
+    写进 QCheckBox：Houdini 样式下勾选框给文本多占一段虚宽，图标前
+    会空一大截、与图标后间距失衡（实测截图）。
+    """
+
+    def __init__(self, on_hide_nodeparm_changed=None):
+        super().__init__()
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setSpacing(6)
+
+        title = QtWidgets.QLabel("显示")
+        title.setStyleSheet("font-weight: bold; font-size: 13px;")
+        lay.addWidget(title)
+
+        chk = QtWidgets.QCheckBox()
+        # 指示器宽度钉死为原生指标（+2 留描边余量）：勾选框的 sizeHint
+        # 带样式不可控的虚宽，不钉死则指示器与「隐藏」之间会多出空隙
+        chk.setFixedWidth(chk.style().pixelMetric(
+            QtWidgets.QStyle.PM_IndicatorWidth, None, chk) + 2)
+        # 只在连接信号前回填持久化状态：toggled 只上报用户操作
+        chk.setChecked(bool(_UI_SETTINGS.get("hide_nodeparm_in_all")))
+        text = _ClickToggleLabel(chk)
+        text.setText("隐藏")
+        icon = _ClickToggleLabel(chk)
+        # 侧栏「全部」行同款图标（grid 种类，尺寸对齐 SidebarDelegate.ICON_PX）
+        icon.setPixmap(sidebar_icon_pixmap(
+            "grid", 14, self.devicePixelRatioF()))
+        body = _ClickToggleLabel(chk)
+        body.setText("全部分组中的节点参数类型")
+        row = QtWidgets.QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)   # 四段等距（间距全部交给布局，见类 docstring）
+        row.addWidget(chk)
+        row.addWidget(text)
+        row.addWidget(icon)
+        row.addWidget(body)
+        row.addStretch(1)
+        lay.addLayout(row)
+
+        hint = QtWidgets.QLabel(
+            "勾选后，「全部」分组不再显示「节点参数」类型的卡片，"
+            "「节点参数」等其余分组不受影响。")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #888888;")
+        lay.addWidget(hint)
+        lay.addStretch(1)
+
+        self.hide_chk = chk   # 测试入口
+        self.icon_lbl = icon
+        if on_hide_nodeparm_changed is not None:
+            chk.toggled.connect(on_hide_nodeparm_changed)
+
+
 class _DataPage(QtWidgets.QWidget):
     """设置面板「数据」页：导出 / 导入 .zip 交换包（迁移与分享）。"""
 
@@ -753,14 +826,16 @@ class _DataPage(QtWidgets.QWidget):
 class _SettingsDialog(QtWidgets.QDialog):
     """设置面板：左分类列表 + 右内容页（参考 ShareX 设置布局）。
 
-    本期两类：库目录（原独立对话框迁入，改动即时生效）、数据（导入/
-    导出交换包）。后续设置项往 _PAGES 追加 (名称, 页面工厂) 即可。
+    三类：库目录（原独立对话框迁入，改动即时生效）、常规（显示过滤
+    偏好，勾选即时生效）、数据（导入/导出交换包）。后续设置项往
+    _PAGES 追加名称，并在 __init__ 里按同序 addWidget 对应页面即可。
     改动即时生效，底部只有「关闭」。
     """
 
-    _PAGES = ("库目录", "数据")
+    _PAGES = ("库目录", "常规", "数据")
 
-    def __init__(self, parent, on_lib_dirs_changed, on_export, on_import):
+    def __init__(self, parent, on_lib_dirs_changed, on_general_changed,
+                 on_export, on_import):
         super().__init__(parent)
         self.setWindowTitle("设置 - Recipe Library")
         self.resize(680, 430)
@@ -772,6 +847,7 @@ class _SettingsDialog(QtWidgets.QDialog):
             self.cats.addItem(QtWidgets.QListWidgetItem(label))
         self.stack = QtWidgets.QStackedWidget()
         self.stack.addWidget(_LibDirsPage(on_lib_dirs_changed))
+        self.stack.addWidget(_GeneralPage(on_general_changed))
         self.stack.addWidget(_DataPage(on_export, on_import))
         self.cats.currentRowChanged.connect(self.stack.setCurrentIndex)
 
@@ -1293,6 +1369,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         dlg = _SettingsDialog(
             self,
             on_lib_dirs_changed=self._apply_lib_dirs,
+            on_general_changed=self._apply_general_settings,
             on_export=self._export_recipes,
             on_import=self._import_recipes)
         dlg.exec_()
@@ -1302,6 +1379,16 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         metadata.set_lib_dirs(dirs)
         self._category_key = KEY_ALL
         self.reload()
+
+    def _apply_general_settings(self, hide_nodeparm):
+        """设置面板「常规」页即时生效：落盘并按新过滤重建侧栏与网格。
+
+        只改显示过滤、不涉及 recipe 枚举，走轻量重建（rebuild +
+        apply_filter），不做整趟 reload（不重扫库文件）。
+        """
+        _UI_SETTINGS.set("hide_nodeparm_in_all", bool(hide_nodeparm))
+        self._rebuild_sidebar()
+        self._apply_filter()
 
     def _export_recipes(self, parent=None):
         """导出向导：选项对话框 → 带进度打包（transfer.export_recipes）。
@@ -1466,6 +1553,12 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             if metadata.is_favorite(r.name):
                 fav_count += 1
 
+        # 「常规」设置勾选时全部视图不含「节点参数」类型：行计数同步
+        # 扣减，保持"计数 = 该组实际显示条数"
+        all_count = len(self._recipes)
+        if _UI_SETTINGS.get("hide_nodeparm_in_all"):
+            all_count -= ungrouped
+
         self.sidebar.blockSignals(True)
         self.sidebar.clear()
 
@@ -1487,7 +1580,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
                 parent.addChild(item)
             return item
 
-        _add(None, "全部", len(self._recipes), KEY_ALL, "grid")
+        _add(None, "全部", all_count, KEY_ALL, "grid")
         _add(None, "收藏", fav_count, KEY_FAV, "star")
         _add(None, "节点参数", ungrouped, CAT_PREFIX, "sliders")
         if cat_counts:
@@ -1605,6 +1698,11 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
     def _match_category(self, info):
         key = self._category_key
         if key in (KEY_ALL, None):
+            # 「常规」设置勾选时全部视图隐藏「节点参数」类型（无 submenu
+            # 的 recipe）；其余分组不受影响
+            if _UI_SETTINGS.get("hide_nodeparm_in_all") \
+                    and not self._submenus_of(info):
+                return False
             return True
         if key == KEY_FAV:
             return metadata.is_favorite(info.name)

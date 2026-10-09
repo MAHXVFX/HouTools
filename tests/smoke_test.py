@@ -907,6 +907,49 @@ def main():
                 win.search.setText("")
                 win._apply_filter()
                 assert win.list.count() == 3
+                # 「常规」设置：全部视图隐藏「节点参数」类型（默认不勾选；
+                # 勾选即时生效——KEY_ALL 过滤 + 侧栏全部行计数同步扣减，
+                # 「节点参数」等其余分组不受影响）。_UI_SETTINGS 打桩到
+                # 临时 store，不写真实 settings/
+                gen_store = houtools.core.settings.JsonStore(
+                    "_smoke_rl_general.json",
+                    defaults={"hide_nodeparm_in_all": False})
+                _track_rm(gen_store.path)
+                with patch.object(rl_browser, "_UI_SETTINGS", gen_store):
+                    win._select_category(rl_browser.KEY_ALL)
+                    assert win.list.count() == 3, win.list.count()
+                    win._apply_general_settings(True)
+                    assert win.list.count() == 2, win.list.count()
+                    names = {win.list.item(i).data(QtCore.Qt.UserRole)
+                             for i in range(win.list.count())}
+                    assert "houtools::plain::c" not in names, names
+                    all_item = win.sidebar.topLevelItem(0)
+                    assert all_item.data(0, QtCore.Qt.UserRole) \
+                        == rl_browser.KEY_ALL
+                    assert all_item.data(0, rl_browser.SIDEBAR_COUNT_ROLE) \
+                        == 2, all_item.data(0, rl_browser.SIDEBAR_COUNT_ROLE)
+                    win._select_category("cat::")   # 节点参数分组照常显示
+                    assert win.list.count() == 1, win.list.count()
+                    win._select_category(rl_browser.KEY_ALL)
+                    win._apply_general_settings(False)
+                    assert win.list.count() == 3, win.list.count()
+
+                    # 设置对话框：三页（库目录/常规/数据）；常规页勾选文案
+                    # 带「全部」行同款 grid 图标，勾选切换即发回调
+                    gen_pages = []
+                    dlg = rl_browser._SettingsDialog(
+                        win, on_lib_dirs_changed=lambda _d: None,
+                        on_general_changed=gen_pages.append,
+                        on_export=None, on_import=None)
+                    assert [dlg.cats.item(i).text() for i in range(3)] \
+                        == ["库目录", "常规", "数据"]
+                    page = dlg.stack.widget(1)
+                    assert not page.icon_lbl.pixmap().isNull()
+                    page.hide_chk.setChecked(True)
+                    assert gen_pages == [True], gen_pages
+                    page.hide_chk.setChecked(False)
+                    assert gen_pages == [True, False], gen_pages
+                    dlg.deleteLater()
                 # 预览面板联动：选中后名称/元信息/按钮就绪；
                 # 名称走显示链，元信息第一行是内部名称
                 win.list.setCurrentRow(0)
