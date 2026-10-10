@@ -1,4 +1,4 @@
-"""Open the About page (docs/about.html) in the default web browser.
+"""Open the About page (docs/index.html) in the default web browser.
 
 The page is a single self-contained HTML file (styles inlined, no CDN,
 no external assets) so it works on offline workstations. Opened via
@@ -14,7 +14,7 @@ from houtools.core.log import get_logger
 
 log = get_logger("tools.about_houtools")
 
-ABOUT_PAGE = PROJECT_ROOT / "docs" / "about.html"
+ABOUT_PAGE = PROJECT_ROOT / "docs" / "index.html"
 
 
 def _status(message, error=False):

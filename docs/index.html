@@ -367,24 +367,25 @@
       <div class="slide-cap"><strong>Paste as Object Merge</strong><span>跨上下文粘贴引用节点,颜色随源</span></div>
     </a>
 
-    <a class="slide" href="#alembic-dragdrop">
-      <svg viewBox="0 0 880 320" role="img" aria-label="拖放导入 Alembic 界面示意">
+    <a class="slide" href="#dragdrop-import">
+      <svg viewBox="0 0 880 320" role="img" aria-label="拖放导入 .abc/.fbx 界面示意">
         <rect width="880" height="320" fill="#241d1c"/>
         <rect width="880" height="40" fill="#201a19"/>
         <circle cx="22" cy="20" r="6" fill="#d1283e" opacity=".8"/><circle cx="42" cy="20" r="6" fill="#c9a53e" opacity=".8"/><circle cx="62" cy="20" r="6" fill="#3f9d58" opacity=".8"/>
-        <text x="88" y="26" font-family="Segoe UI, sans-serif" font-size="14" fill="#c9c9d0">External Drag &amp; Drop — .abc</text>
+        <text x="88" y="26" font-family="Segoe UI, sans-serif" font-size="14" fill="#c9c9d0">External Drag &amp; Drop — .abc / .fbx</text>
         <g font-family="Segoe UI, sans-serif">
           <rect x="80" y="90" width="170" height="140" rx="10" fill="#2a2a2f" stroke="#e2571b" stroke-width="2" stroke-dasharray="7 5"/>
           <path d="M214 90 L250 90 L250 126 Z" fill="#3f3f47"/>
-          <text x="165" y="170" text-anchor="middle" font-size="26" font-weight="bold" fill="#f5c9a8">.abc</text>
-          <text x="165" y="200" text-anchor="middle" font-size="12" fill="#8a8a92">building_v3.abc</text>
+          <text x="165" y="168" text-anchor="middle" font-size="24" font-weight="bold" fill="#f5c9a8">.abc</text>
+          <text x="165" y="198" text-anchor="middle" font-size="24" font-weight="bold" fill="#f5c9a8">.fbx</text>
+          <text x="165" y="222" text-anchor="middle" font-size="12" fill="#8a8a92">building_v3</text>
           <path d="M290 160 L420 160" stroke="#f2a33c" stroke-width="3" stroke-dasharray="9 7" fill="none"/>
           <polygon points="420,150 444,160 420,170" fill="#f2a33c"/>
           <text x="367" y="142" text-anchor="middle" font-size="12" fill="#8a8a92">drop</text>
           <rect x="470" y="70" width="300" height="62" rx="6" fill="#2a2a2f" stroke="#c8102e" stroke-width="2"/>
           <rect x="470" y="70" width="300" height="22" rx="6" fill="#c8102e" opacity=".3"/>
           <text x="484" y="87" font-size="13" fill="#e4e4e7">building_v3</text>
-          <text x="484" y="119" font-size="11" fill="#8a8a92">Alembic Archive · 自动构建层级</text>
+          <text x="484" y="119" font-size="11" fill="#8a8a92">Alembic Archive / FBX 子网 · 自动命名</text>
           <g font-size="12" fill="#b8b8c0">
             <rect x="496" y="150" width="220" height="30" rx="5" fill="#2f2f35"/><circle cx="510" cy="165" r="4" fill="#6a6a72"/><text x="524" y="170">facade_geo</text>
             <rect x="496" y="188" width="220" height="30" rx="5" fill="#2f2f35"/><circle cx="510" cy="203" r="4" fill="#6a6a72"/><text x="524" y="208">interior_geo</text>
@@ -392,7 +393,7 @@
           </g>
         </g>
       </svg>
-      <div class="slide-cap"><strong>Alembic Drag &amp; Drop</strong><span>拖 .abc 即落点创建导入节点</span></div>
+      <div class="slide-cap"><strong>Drag &amp; Drop Import</strong><span>拖 .abc / .fbx 即落点创建导入节点</span></div>
     </a>
 
     <a class="slide" href="#video-to-sequence">
@@ -420,7 +421,7 @@
   <div class="nav-title">工具目录</div>
   <a href="#automation">Automation</a>
   <a href="#paste-as-object-merge">粘贴为 Object Merge</a>
-  <a href="#alembic-dragdrop">拖放导入 Alembic</a>
+  <a href="#dragdrop-import">拖放导入 .abc/.fbx</a>
   <a href="#video-to-sequence">视频转序列图</a>
   <a href="#hdr-library">Hdr Library</a>
   <a href="#recipe-library">Recipe Library</a>
@@ -481,21 +482,21 @@
   </ul>
 </section>
 
-<!-- ============ 拖放导入 Alembic ============ -->
-<section id="alembic-dragdrop">
-  <h2>Alembic Drag &amp; Drop<span class="zh">拖放导入 Alembic</span></h2>
-  <p class="entry">入口:从资源管理器把 <code>.abc</code> 文件拖到网络编辑器</p>
+<!-- ============ 拖放导入 .abc/.fbx ============ -->
+<section id="dragdrop-import">
+  <h2>Drag &amp; Drop Import<span class="zh">拖放导入 .abc / .fbx</span></h2>
+  <p class="entry">入口:从资源管理器把 <code>.abc</code> / <code>.fbx</code> 文件拖到网络编辑器</p>
   <p>松手即在鼠标位置创建导入节点,免去 File → Import 的多步操作(基于 Houdini 官方 externaldragdrop 钩子):</p>
   <table>
-    <tr><th>拖放落点</th><th>创建的节点(名称取文件名主干)</th></tr>
-    <tr><td>Object 层级(<code>/obj</code>)</td><td>Alembic Archive,自动构建层级(等价 File &gt; Import &gt; Alembic Scene...)</td></tr>
-    <tr><td>SOP 层级(geo 内部)</td><td>alembic SOP 节点</td></tr>
+    <tr><th>拖放落点</th><th>.abc 创建的节点</th><th>.fbx 创建的节点</th></tr>
+    <tr><td>Object 层级(<code>/obj</code>)</td><td>Alembic Archive,自动构建层级(等价 File &gt; Import &gt; Alembic Scene...)</td><td>FBX 子网,官方导入器自动命名(等价 File &gt; Import &gt; Filmbox FBX...)</td></tr>
+    <tr><td>SOP 层级(geo 内部)</td><td>alembic SOP 节点</td><td>file SOP 节点</td></tr>
   </table>
   <ul>
-    <li>支持一次拖入<strong>多个文件</strong>,纵向排开;整批一个 undo 槽。</li>
-    <li>节点名自动清洗:中文等非法字符替换为 <code>_</code>,同名自动加数字后缀。</li>
-    <li>非 <code>.abc</code> 文件不受影响;拖到参数框、视口等其他面板的行为与原生完全一致。</li>
-    <li>文件损坏时由节点的错误旗标反馈(坏文件拖到 obj 层级可能静默不建子节点),创建操作本身不会失败。</li>
+    <li>支持一次拖入<strong>多个文件</strong>(<code>.abc</code>/<code>.fbx</code> 可混拖),纵向排开;<code>.abc</code> 整批一个 undo 槽。</li>
+    <li>节点名自动清洗:中文等非法字符替换为 <code>_</code>,同名自动加数字后缀(FBX 子网由官方导入器命名)。</li>
+    <li>非 <code>.abc</code>/<code>.fbx</code> 文件不受影响;拖到参数框、视口等其他面板的行为与原生完全一致。</li>
+    <li>文件损坏时由节点的错误旗标反馈(坏文件拖到 obj 层级可能静默不建子节点;坏 .fbx 走状态栏提示+日志),创建操作本身不会失败。</li>
   </ul>
 </section>
 

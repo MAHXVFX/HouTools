@@ -92,7 +92,7 @@ def main():
     # （<a href="https://...">）不是资源加载，离线打开不受影响，允许
     assert 'id="houtools.about"' in main_xml
     assert 'id="houtools.about"' not in nv_xml
-    about_html = ROOT / "docs" / "about.html"
+    about_html = ROOT / "docs" / "index.html"
     assert about_html.is_file()
     about_src = about_html.read_text(encoding="utf-8")
     assert "<style>" in about_src
@@ -156,7 +156,7 @@ def main():
     assert pam._HOU_NODE_RE.match("hou.parm('/obj/x')") is None
     print("paste_as_object_merge parsing OK")
 
-    # About 页面 run():打桩 os.startfile 验证打开的是 docs/about.html
+    # About 页面 run():打桩 os.startfile 验证打开的是 docs/index.html
     # （真开浏览器是无头环境不可接受的外部副作用）
     from unittest.mock import patch
     from houtools.tools import about_houtools as about_mod
@@ -165,7 +165,7 @@ def main():
         fake_start.assert_called_once_with(str(about_mod.ABOUT_PAGE))
     # 页面缺失分支：日志+状态栏告警，不抛异常、不开浏览器
     with patch.object(about_mod, "ABOUT_PAGE",
-                      Path("Z:/nope/about.html")), \
+                      Path("Z:/nope/index.html")), \
          patch("os.startfile") as fake_start:
         about_mod.run()
         fake_start.assert_not_called()
@@ -1643,25 +1643,32 @@ def main():
         assert "sopoutput" in str(exc)
     print("open_cache_folder resolve OK")
 
-    # 外部拖放导入（dragdrop）：.abc 过滤 / file:// URL 解码 / 节点名清洗
-    # （纯函数，无 hou 依赖）；无 .abc 早退分支不触 hou；无 hou 环境（或
-    # 任何异常）也不裸抛——吞掉并接管，防 .abc 被原生当 hip 文件打开
+    # 外部拖放导入（dragdrop）：.abc/.fbx 过滤 / file:// URL 解码 / 节点名清洗
+    # （纯函数，无 hou 依赖）；无目标扩展名早退分支不触 hou；无 hou 环境（或
+    # 任何异常）也不裸抛——吞掉并接管，防拖入文件被原生当 hip 文件打开
     from houtools import dragdrop as dd
-    assert dd._extract_abc_files([]) == []
-    assert dd._extract_abc_files(["a.txt", "b.hip"]) == []
-    assert dd._extract_abc_files(["x.abc", "y.ABC", "z.txt"]) \
+    assert dd._extract_ext_files([], dd._ABC_EXT) == []
+    assert dd._extract_ext_files(["a.txt", "b.hip"], dd._ABC_EXT) == []
+    assert dd._extract_ext_files(["x.abc", "y.ABC", "z.txt"], dd._ABC_EXT) \
         == ["x.abc", "y.ABC"]
-    assert dd._extract_abc_files(["file:///C:/lib/a%20b.abc"]) \
+    assert dd._extract_ext_files(["file:///C:/lib/a%20b.abc"], dd._ABC_EXT) \
         == ["C:\\lib\\a b.abc"]
+    assert dd._extract_ext_files(["a.fbx", "B.FBX", "c.txt"], dd._FBX_EXT) \
+        == ["a.fbx", "B.FBX"]
     assert dd._clean_name("cam.abc") == "cam"
     assert dd._clean_name("角色A_v2.abc") == "A_v2"
     assert dd._clean_name("my big shot!.abc") == "my_big_shot"
     assert dd._clean_name("123.abc") == "abc_123"
     assert dd._clean_name("###.abc") == "abc_import"
+    assert dd._clean_name("robot.fbx") == "robot"
+    assert dd._clean_name("角色A_v2.fbx") == "A_v2"
+    assert dd._clean_name("123.fbx") == "fbx_123"
+    assert dd._clean_name("###.fbx") == "fbx_import"
     assert dd.drop_accept(["a.txt"]) is False
     assert dd.drop_accept([]) is False
     assert dd.drop_accept(["x.abc"]) is True
-    print("dragdrop abc import guard OK")
+    assert dd.drop_accept(["x.fbx"]) is True
+    print("dragdrop abc/fbx import guard OK")
 
     # 热键自定义存储 round-trip（打桩到临时 store，不触真实 settings/；
     # 此前直接删除真实 hotkeys.json，会把用户自定义键位一起删掉）

@@ -31,11 +31,11 @@ Houdini 22 插件工具集，开发期支持**手动热加载**：改完代码�
 |------|--------|------|
 | Automation | `HouTools → Automation`（Python Panel） | 自动化批处理：节点按钮点击 / Flipbook 拍屏 / HomeAssistant Webhook / 打开DW |
 | 粘贴为 Object Merge | 网络编辑器 `HouTools` 菜单 / `Ctrl+Shift+V` | 复制节点后，按"目标上下文 × 源类别"在鼠标位置粘贴引用节点；键位在 `HouTools → Paste Hotkey Settings` 修改 |
-| 拖放导入 Alembic | 拖 `.abc` 文件到网络编辑器 | 松手即在鼠标位置创建导入节点：obj 层级 = Alembic Archive（自动构建层级），SOP 层级 = alembic 节点；支持多文件（基于 Houdini 官方 externaldragdrop 钩子） |
+| 拖放导入 Alembic / FBX | 拖 `.abc`/`.fbx` 文件到网络编辑器 | 松手即在鼠标位置创建导入节点：obj 层级 = Alembic Archive（自动构建层级）/ FBX 子网（官方导入器），SOP 层级 = alembic / file 节点；支持多文件混拖（基于 Houdini 官方 externaldragdrop 钩子） |
 | 视频转序列图 | `HouTools → Video to Sequence` | ffmpeg 提取视频为 JPG 序列（帧级进度，质量/起始帧/位数/前缀可调），可选自动设置相机 Background Image |
 | Hdr Library | `HouTools → Hdr Library` | HDR 环境贴图库浏览器：缩略图网格（后台生成）、子文件夹分类 + 收藏，选中灯光后双击即贴图 |
 | Recipe Library | `HouTools → Recipe Library` | recipes 资产库浏览器：官方 recipes 卡片网格浏览（缩略图/标签/主题色），树形侧栏过滤，双击/拖拽应用到网络，Markdown 文档，数据导入/导出 |
-| About HouTools | `HouTools → About HouTools` | 用默认浏览器打开离线使用手册（`docs/about.html` + 本地截图，零外部网络资源）：全部工具的功能与用法 |
+| About HouTools | `HouTools → About HouTools` | 用默认浏览器打开离线使用手册（`docs/index.html` + 本地截图，零外部网络资源）：全部工具的功能与用法 |
 
 ### Automation
 
@@ -79,20 +79,20 @@ ffmpeg 说明：优先使用 Houdini 自带的 `$HFS/bin/hffmpeg`，**无需单�
 只放 `ffmpeg.exe` 一个文件也可以：视频信息探测会自动借用 Houdini 自带的
 `hffprobe`（或 PATH 上的 ffprobe），无需一并放置。
 
-### 拖放导入 Alembic
+### 拖放导入 Alembic / FBX
 
-从资源管理器把 `.abc` 文件拖到网络编辑器，松手即在鼠标位置创建导入节点
-（基于 Houdini 官方 `externaldragdrop` 钩子；obj 层级等价
-File > Import > Alembic Scene...）：
+从资源管理器把 `.abc` / `.fbx` 文件拖到网络编辑器，松手即在鼠标位置创建导入节点
+（基于 Houdini 官方 `externaldragdrop` 钩子；obj 层级分别等价
+File > Import > Alembic Scene... / File > Import > Filmbox FBX...）：
 
-| 拖放落点 | 创建的节点（名称取文件名主干） |
-|------|------|
-| Object 层级（`/obj`） | Alembic Archive，自动构建层级 |
-| SOP 层级（geo 内部） | alembic SOP 节点 |
+| 拖放落点 | `.abc` 创建的节点 | `.fbx` 创建的节点（名称取文件名主干） |
+|------|------|------|
+| Object 层级（`/obj`） | Alembic Archive，自动构建层级 | FBX 子网（官方导入器，自动命名/重名加后缀） |
+| SOP 层级（geo 内部） | alembic SOP 节点 | file SOP 节点 |
 
-- 支持一次拖入多个文件，纵向排开；整批一个 undo 槽
+- 支持一次拖入多个文件（可 `.abc`/`.fbx` 混拖），纵向排开；`.abc` 整批一个 undo 槽
 - 节点名取文件名主干，中文等非法字符自动替换为 `_`，同名自动加数字后缀
-- 非 `.abc` 文件，以及拖到参数框、视口等其他面板的行为与原生完全一致，不受影响
+- 非 `.abc`/`.fbx` 文件，以及拖到参数框、视口等其他面板的行为与原生完全一致，不受影响
 - 拖放钩子文件是 `scripts/externaldragdrop.py`（两行分发器），逻辑在
   `houtools/dragdrop.py`，改代码走 `Reload Modules (Dev)` 热加载，无需重启
 
@@ -175,7 +175,7 @@ _houtools_dispatcher.run("<tool_id>")
 
 （按本机 Houdini 安装位置调整路径，须用 Houdini 自带的 Python 3.13。）
 无头验证菜单 XML、全包导入、各窗口实例化（Automation / 视频转序列图 / Hdr Library / Recipe Library）、
-拖放导入的 .abc 过滤与节点名清洗，以及 `reload_all()`。
+拖放导入的 .abc/.fbx 过滤与节点名清洗，以及 `reload_all()`。
 
 ## 结构
 
@@ -184,9 +184,9 @@ HouTools/
 ├── MainMenuCommon.xml             # 顶部菜单（Houdini 规定文件名）
 ├── NetworkViewMenu.xml            # 网络编辑器面板菜单栏（HouTools 顶层菜单，注入机制同上）
 ├── HouTools.json                # 包清单副本（生效的一份在 packages/ 下）
-├── scripts/externaldragdrop.py  # 官方拖放钩子分发器（拖 .abc 导入，逻辑在 houtools/dragdrop.py）
+├── scripts/externaldragdrop.py  # 官方拖放钩子分发器（拖 .abc/.fbx 导入，逻辑在 houtools/dragdrop.py）
 ├── docs/                         # 离线使用手册（About HouTools 菜单用默认浏览器打开，零外部网络资源）
-│   ├── about.html                # 手册页面（样式/轮播 JS 内联，轮播含工具截图）
+│   ├── index.html                # 手册页面（样式/轮播 JS 内联，轮播含工具截图）
 │   └── about_shots/              # 轮播工具截图（tests/gen_about_shots.py 离屏生成，窗口 UI 变更后重跑）
 ├── python_panels/Automation.pypanel  # Automation 的 Python Panel 界面
 ├── python3.13libs/

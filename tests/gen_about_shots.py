@@ -287,7 +287,7 @@ def main():
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     # 离屏环境没有 Houdini 的全局暗色样式,Qt 默认调色板是浅色的——
     # 未显式铺底的窗口(如 Automation 主背景)会发白,这里模拟暗色主题
-    # (暖黑,与 about.html 的 --bg/--card 色系一致)
+    # (暖黑,与 index.html 的 --bg/--card 色系一致)
     pal = app.palette()
     pal.setColor(QtGui.QPalette.Window, QtGui.QColor("#201a19"))
     pal.setColor(QtGui.QPalette.WindowText, QtGui.QColor("#ece5df"))

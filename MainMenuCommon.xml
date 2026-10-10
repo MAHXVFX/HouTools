@@ -67,7 +67,7 @@ _houtools_dispatcher.run("paste_hotkey_settings")
 
       <separatorItem/>
 
-      <!-- About 页面:默认浏览器打开 docs/about.html(离线单文件,零外部依赖) -->
+      <!-- About 页面:默认浏览器打开 docs/index.html(离线单文件,零外部依赖) -->
       <scriptItem id="houtools.about">
         <label>About HouTools</label>
         <scriptCode><![CDATA[
