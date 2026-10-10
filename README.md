@@ -92,6 +92,7 @@ File > Import > Alembic Scene... / File > Import > Filmbox FBX...）：
 
 - 支持一次拖入多个文件（可 `.abc`/`.fbx` 混拖），纵向排开；`.abc` 整批一个 undo 槽
 - 节点名取文件名主干，中文等非法字符自动替换为 `_`，同名自动加数字后缀
+- 导入的 FBX 节点自动解冻：官方 File > Import > Filmbox FBX... 默认锁定导入的 file 节点（冻结样式、参数只读），拖放导入统一解锁，落网即可编辑
 - 非 `.abc`/`.fbx` 文件，以及拖到参数框、视口等其他面板的行为与原生完全一致，不受影响
 - 拖放钩子文件是 `scripts/externaldragdrop.py`（两行分发器），逻辑在
   `houtools/dragdrop.py`，改代码走 `Reload Modules (Dev)` 热加载，无需重启

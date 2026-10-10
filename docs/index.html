@@ -495,6 +495,7 @@
   <ul>
     <li>支持一次拖入<strong>多个文件</strong>(<code>.abc</code>/<code>.fbx</code> 可混拖),纵向排开;<code>.abc</code> 整批一个 undo 槽。</li>
     <li>节点名自动清洗:中文等非法字符替换为 <code>_</code>,同名自动加数字后缀(FBX 子网由官方导入器命名)。</li>
+    <li>导入的 FBX 节点<strong>自动解冻</strong>:官方 File &gt; Import &gt; Filmbox FBX... 默认锁定导入的 file 节点(冻结样式、参数只读),拖放导入统一解锁,落网即可编辑。</li>
     <li>非 <code>.abc</code>/<code>.fbx</code> 文件不受影响;拖到参数框、视口等其他面板的行为与原生完全一致。</li>
     <li>文件损坏时由节点的错误旗标反馈(坏文件拖到 obj 层级可能静默不建子节点;坏 .fbx 走状态栏提示+日志),创建操作本身不会失败。</li>
   </ul>
@@ -615,7 +616,6 @@
 <footer>
   <p>HouTools 以 <a href="../LICENSE">GPL-3.0</a> 协议开源,Copyright (c) 2026 mahx_vfx。二次分发须同样以 GPL-3.0 开源并保留版权声明。</p>
   <p>本项目为个人开发的第三方工具,与 SideFX 无关、非官方产品;Houdini 及相关商标归 SideFX Software 所有。运行本项目需要使用者自行持有合法的 Houdini 授权。</p>
-  <p>本页为离线文档(样式/脚本内联,配图为仓库内本地截图,零外部网络资源),由主菜单 <code>HouTools → About HouTools</code> 在默认浏览器中打开。</p>
 </footer>
 
 </div>
