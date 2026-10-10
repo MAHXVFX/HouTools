@@ -323,18 +323,38 @@ def set_thumb_from_file(name, src):
     return dst
 
 
-def set_thumb_from_pixmap(name, pixmap):
-    """把裁剪结果（QPixmap）存为缩略图（PNG 无损），返回绝对路径。
+def thumb_format_for_source(src):
+    """裁剪路径的缩略图存储格式：尊重源图格式，不可写/不适合的回退 PNG。
 
-    裁剪比例与卡片缩略图区一致（crop.TARGET_RATIO），铺满显示无灰边；
-    GIF 动图不经此路径（Qt 无 GIF 编码器，走 set_thumb_from_file 原样复制）。
+    jpg → JPEG（质量 90，见 set_thumb_from_pixmap）、png → PNG；
+    webp（Houdini Qt 无 webp 编码器，实测 QImageWriter 不列）、bmp
+    （无损但臃肿）等一律回退 PNG（无损、必有编码器）。
+    """
+    ext = os.path.splitext(src)[1].lower()
+    if ext in (".jpg", ".jpeg"):
+        return "JPEG"
+    return "PNG"
+
+
+def set_thumb_from_pixmap(name, pixmap, fmt="PNG"):
+    """把裁剪结果（QPixmap）存为缩略图，返回绝对路径。
+
+    默认 PNG 无损（裁剪对话框路径）；截取缩略图走 fmt="JPEG"（屏幕
+    照片类内容体积小得多，质量 90）。裁剪比例与卡片缩略图区一致
+    （crop.TARGET_RATIO），铺满显示无灰边；GIF 动图不经此路径（Qt 无
+    GIF 编码器，走 set_thumb_from_file 原样复制）。换格式时旧扩展名
+    文件由 _clean_stale_thumbs 按前缀清理。
     """
     if pixmap is None or pixmap.isNull():
         raise RuntimeError("缩略图内容为空")
+    if fmt.upper() == "JPEG":
+        ext, save_args = ".jpg", ("JPEG", 90)
+    else:
+        ext, save_args = ".png", ("PNG",)
     THUMBS_DIR.mkdir(parents=True, exist_ok=True)
-    dst = str(THUMBS_DIR / (safe_name(name) + ".png"))
+    dst = str(THUMBS_DIR / (safe_name(name) + ext))
     _clean_stale_thumbs(name, skip={dst})   # 换扩展名重设前清掉旧文件
-    if not pixmap.save(dst, "PNG"):
+    if not pixmap.save(dst, *save_args):
         raise RuntimeError("缩略图保存失败: {}".format(dst))
     thumbs = dict(_SETTINGS.get("thumbs") or {})
     thumbs[name] = _to_stored(dst)

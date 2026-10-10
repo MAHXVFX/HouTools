@@ -42,6 +42,10 @@ if _pyside_dir.exists():
 _qt_bin = HOUDINI_ROOT / "bin"
 if _qt_bin.exists():
     os.add_dll_directory(str(_qt_bin))
+    # 注意：不要试图把 $HFS/bin 加进 PATH 或 QT_PLUGIN_PATH 来补图片编
+    # 解码插件（qjpeg）——前者会劫持 PySide6 自己的 Qt DLL 解析直接
+    # ImportError，后者加载 qjpeg 仍因依赖解析失败（裸环境限制，GUI
+    # 会话环境完整无此问题）；JPEG 相关断言按 QImageWriter 能力分流
 
 
 # 任一 assert 失败会中断 main()，行内 unlink 全部跳过 —— 统一登记 +
@@ -556,18 +560,41 @@ def main():
                 assert rl_meta.get_thumb("legacy")
                 rl_meta.clear_thumb("legacy")
                 assert not legacy.exists()
-                # 裁剪流程：QPixmap 落盘为 PNG（相对路径存储；比例由
-                # crop 对话框锁定，存储层只管收图）
+                # 裁剪流程：QPixmap 落盘（相对路径存储；比例由 crop
+                # 对话框锁定，存储层只管收图）；格式尊重源图（jpg→
+                # JPEG、png→PNG，webp 等 Qt 不可写的回退 PNG）
                 from PySide6 import QtGui
                 pm = QtGui.QPixmap(150, 99)
                 pm.fill(QtGui.QColor("#36c8b7"))
+                assert rl_meta.thumb_format_for_source("a.jpg") == "JPEG"
+                assert rl_meta.thumb_format_for_source("b.JPEG") == "JPEG"
+                assert rl_meta.thumb_format_for_source("c.png") == "PNG"
+                assert rl_meta.thumb_format_for_source("d.webp") == "PNG"
                 stored_pm = rl_meta.set_thumb_from_pixmap(name, pm)
                 raw_pm = rl_meta._SETTINGS.get("thumbs")[name]
                 assert not os.path.isabs(raw_pm) \
                     and raw_pm.endswith(".png"), raw_pm
-                assert Path(stored_pm).exists()
-                rl_meta.clear_thumb(name)
-                assert not Path(stored_pm).exists()
+                # JPEG 落盘按编解码器能力分流：有 qjpeg（GUI 会话）时
+                # 断言 .jpg 落盘并清掉旧 PNG（换格式自愈）；裸 python
+                # 环境缺插件则保存失败抛 RuntimeError 是预期行为
+                _jpg_ok = b"jpeg" in [
+                    f.data() for f in
+                    QtGui.QImageWriter.supportedImageFormats()]
+                if _jpg_ok:
+                    stored_jpg = rl_meta.set_thumb_from_pixmap(
+                        name, pm, fmt="JPEG")
+                    assert stored_jpg.endswith(".jpg"), stored_jpg
+                    assert Path(stored_pm).exists() is False
+                    assert Path(stored_jpg).exists()
+                    rl_meta.clear_thumb(name)
+                    assert not Path(stored_jpg).exists()
+                else:
+                    try:
+                        rl_meta.set_thumb_from_pixmap(name, pm, fmt="JPEG")
+                        raise AssertionError("无 JPEG 编解码器却保存成功")
+                    except RuntimeError:
+                        pass
+                    rl_meta.clear_thumb(name)
             rl_meta.clear_thumb(name)
             assert rl_meta.get_thumb(name) == ""
 

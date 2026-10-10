@@ -2433,8 +2433,10 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
                 dlg.deleteLater()   # exec_ 的模态框用完即释放，防积存
                 if not accepted:
                     return
+                # 尊重源图格式：jpg 存 JPEG、png 存 PNG（其余回退 PNG）
                 stored = metadata.set_thumb_from_pixmap(
-                    info.name, dlg.result_pixmap())
+                    info.name, dlg.result_pixmap(),
+                    fmt=metadata.thumb_format_for_source(path))
         except (OSError, RuntimeError) as exc:
             QtWidgets.QMessageBox.warning(self, "设置缩略图", str(exc))
             return
@@ -2509,7 +2511,8 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         # 先落库（纯磁盘/设置操作）再刷 UI——截图期间面板被 Reload 销毁的
         # 极端时序下，落库不能丢，UI 刷新失败仅记日志
         try:
-            stored = metadata.set_thumb_from_pixmap(info.name, pixmap)
+            stored = metadata.set_thumb_from_pixmap(info.name, pixmap,
+                                                    fmt="JPEG")
         except (OSError, RuntimeError) as exc:
             self._snip_restore_panel()
             warn(self, "截取缩略图", str(exc))
