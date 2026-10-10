@@ -229,7 +229,44 @@ def main():
     print("OPEN_DW task + app config OK")
 
     # ffmpeg 查找函数可执行（无头环境找不到也不算失败）
-    print("find_ffmpeg ->", houtools.videoseq.ffmpeg.find_ffmpeg())
+    ffc = houtools.videoseq.ffmpeg
+    found = ffc.find_ffmpeg()
+    print("find_ffmpeg ->", found)
+
+    # ffprobe 推导：同目录优先（ffmpeg/ffprobe 配套版本，含 hffmpeg->
+    # hffprobe 名字映射），缺失时才回退 $HFS/bin 与 PATH。
+    # 临时目录造空文件仿真实布局，断言不依赖环境里装了什么。
+    suffix = ".exe" if os.name == "nt" else ""
+    ffmpeg_name, ffprobe_name = "ffmpeg" + suffix, "ffprobe" + suffix
+    hffmpeg_name, hffprobe_name = "hffmpeg" + suffix, "hffprobe" + suffix
+    with tempfile.TemporaryDirectory() as td:
+        # 仿 $HFS/bin 布局（hffmpeg + hffprobe，无通用 ffprobe）：
+        # hffmpeg -> hffprobe 同目录名字映射命中（既有行为回归）
+        hfs_like = os.path.join(td, "hfs_bin")
+        os.mkdir(hfs_like)
+        for name in (hffmpeg_name, hffprobe_name):
+            open(os.path.join(hfs_like, name), "wb").close()
+        assert ffc.find_ffprobe(
+            os.path.join(hfs_like, hffmpeg_name)) == os.path.join(
+                hfs_like, hffprobe_name)
+
+        # 仿完整构建布局（ffmpeg + ffprobe）：同目录同名命中
+        full_like = os.path.join(td, "full_bin")
+        os.mkdir(full_like)
+        for name in (ffmpeg_name, ffprobe_name):
+            open(os.path.join(full_like, name), "wb").close()
+        assert ffc.find_ffprobe(
+            os.path.join(full_like, ffmpeg_name)) == os.path.join(
+                full_like, ffprobe_name)
+
+        # 目录里只有 ffmpeg.exe（项目根只放一个文件的场景）：
+        # 回退链（$HFS/bin -> PATH）只返回真实存在的文件
+        lone_dir = os.path.join(td, "lone")
+        os.mkdir(lone_dir)
+        open(os.path.join(lone_dir, ffmpeg_name), "wb").close()
+        probe = ffc.find_ffprobe(os.path.join(lone_dir, ffmpeg_name))
+        assert probe is None or os.path.isfile(probe)
+    print("find_ffprobe: same-dir pairing + fallback OK")
 
     # 真实实例化 Automation 界面（捕获 __init__ 结构损伤）
     from PySide6.QtWidgets import (

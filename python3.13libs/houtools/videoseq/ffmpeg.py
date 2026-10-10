@@ -39,7 +39,13 @@ def find_ffmpeg() -> Optional[str]:
 
 
 def find_ffprobe(ffmpeg_path: str) -> Optional[str]:
-    """从 ffmpeg 路径推导同目录 ffprobe 路径（兼容 hffmpeg -> hffprobe）。"""
+    """从 ffmpeg 路径推导同目录 ffprobe 路径（兼容 hffmpeg -> hffprobe）。
+
+    同目录没有时回退借用 ``$HFS/bin`` 与 PATH 上的 hffprobe/ffprobe
+    （hffprobe 优先，与 find_ffmpeg 的 h 优先惯例一致）——例如项目根只放
+    ffmpeg.exe 的场景：探测读的是容器元数据，对构建版本不敏感，借用
+    hffprobe 比退回"正则解析 ffmpeg -i 输出"更准。
+    """
     if not ffmpeg_path:
         return None
     directory = os.path.dirname(ffmpeg_path)
@@ -56,6 +62,21 @@ def find_ffprobe(ffmpeg_path: str) -> Optional[str]:
         candidate = os.path.join(directory, probe_name)
         if os.path.exists(candidate):
             return candidate
+
+    if os.name == "nt":
+        probe_names = ("hffprobe.exe", "ffprobe.exe")
+    else:
+        probe_names = ("hffprobe", "ffprobe")
+    hfs = os.environ.get("HFS", "")
+    if hfs:
+        for name in probe_names:
+            candidate = os.path.join(hfs, "bin", name)
+            if os.path.exists(candidate):
+                return candidate
+    for name in probe_names:
+        found = shutil.which(name)
+        if found:
+            return found
     return None
 
 

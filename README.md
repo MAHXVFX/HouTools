@@ -76,6 +76,8 @@ Hotkey Manager 中修改，符号为 `h.pane.wsheet.houtools_paste_as_object_mer
 
 ffmpeg 说明：优先使用 Houdini 自带的 `$HFS/bin/hffmpeg`，**无需单独安装**；如需指定版本，
 把 `ffmpeg.exe` 放到项目根目录即可（已被 `.gitignore` 排除，不入库）。
+只放 `ffmpeg.exe` 一个文件也可以：视频信息探测会自动借用 Houdini 自带的
+`hffprobe`（或 PATH 上的 ffprobe），无需一并放置。
 
 ### 拖放导入 Alembic
 
