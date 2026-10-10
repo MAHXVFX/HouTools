@@ -107,6 +107,7 @@ def main():
     import houtools.tools.paste_hotkey_settings  # noqa: F401
     import houtools.tools.open_cache_folder  # noqa: F401
     import houtools.tools.automation  # noqa: F401
+    import houtools.dragdrop  # noqa: F401
     import houtools.automation.window  # noqa: F401
     import houtools.videoseq.window  # noqa: F401
     import houtools.videoseq.ffmpeg
@@ -1455,6 +1456,26 @@ def main():
     except RuntimeError as exc:
         assert "sopoutput" in str(exc)
     print("open_cache_folder resolve OK")
+
+    # 外部拖放导入（dragdrop）：.abc 过滤 / file:// URL 解码 / 节点名清洗
+    # （纯函数，无 hou 依赖）；无 .abc 早退分支不触 hou；无 hou 环境（或
+    # 任何异常）也不裸抛——吞掉并接管，防 .abc 被原生当 hip 文件打开
+    from houtools import dragdrop as dd
+    assert dd._extract_abc_files([]) == []
+    assert dd._extract_abc_files(["a.txt", "b.hip"]) == []
+    assert dd._extract_abc_files(["x.abc", "y.ABC", "z.txt"]) \
+        == ["x.abc", "y.ABC"]
+    assert dd._extract_abc_files(["file:///C:/lib/a%20b.abc"]) \
+        == ["C:\\lib\\a b.abc"]
+    assert dd._clean_name("cam.abc") == "cam"
+    assert dd._clean_name("角色A_v2.abc") == "A_v2"
+    assert dd._clean_name("my big shot!.abc") == "my_big_shot"
+    assert dd._clean_name("123.abc") == "abc_123"
+    assert dd._clean_name("###.abc") == "abc_import"
+    assert dd.drop_accept(["a.txt"]) is False
+    assert dd.drop_accept([]) is False
+    assert dd.drop_accept(["x.abc"]) is True
+    print("dragdrop abc import guard OK")
 
     # 热键自定义存储 round-trip（打桩到临时 store，不触真实 settings/；
     # 此前直接删除真实 hotkeys.json，会把用户自定义键位一起删掉）
