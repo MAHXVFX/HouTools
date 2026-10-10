@@ -13,10 +13,10 @@ Houdini 对每一次文件拖放（落到主窗口任意面板）都会查找 HO
       .abc → 逐文件创建 ``alembicarchive`` 并触发其 ``buildHierarchy``
              按钮参数（等价 File > Import > Alembic Scene...）；
       .fbx → 逐文件调官方 ``hou.hipFile.importFBX``（等价 File > Import >
-             Filmbox FBX...，恒定导入到 /obj 根），再把返回的 subnet 挪到
-             落点处（官方 API 无落点参数，建完重摆），最后解冻整棵导入
-             子树——官方导入默认给 file 节点加 Lock 旗标（网络编辑器黄橙
-             冻结样式、参数不可改），按用户需求导入即解锁；
+             Filmbox FBX...，恒定导入到 /obj 根），并把对话框同款的
+             Unlock Geometry/Deformation File SOPs 两项打开（导入即不
+             冻结，官方选项内建能力，非事后遍历解锁），再把返回的 subnet
+             挪到落点处（官方 API 无落点参数，建完重摆）；
   - Sop 层级：
       .abc → 逐文件创建 SOP ``alembic`` 节点（等价 Tab 菜单 alembic）；
       .fbx → 逐文件创建 SOP ``file`` 节点（file SOP 原生可读 .fbx）；
@@ -32,9 +32,10 @@ Houdini 对每一次文件拖放（落到主窗口任意面板）都会查找 HO
     且不污染场景；文件缺失才抛 OperationFailed；subnet 以文件自动命名、
     重名自动加后缀；无论当前 pwd 是什么都导入到 /obj 根（嵌套 Object 网络
     里落点摆不了，留官方默认位置）；suppress_save_prompt=True 避免拖放流
-    中途弹"保存场景"模态框；官方导入会把子树里的 file 节点打上
-    ``hou.nodeFlag.Lock`` 旗标（冻结样式），经 ``setGenericFlag`` 解开、
-    存盘重开不回锁；
+    中途弹"保存场景"模态框；官方导入默认给 file 节点加 ``hou.nodeFlag.Lock``
+    旗标（冻结样式），对应导入对话框的 Unlock Geometry/Deformation File
+    SOPs 两项——``unlock_geometry=True, unlock_deformations=True`` 传参后
+    导入即无锁（无头实测零锁节点、cook 正常），无需事后遍历解锁；
   - 钩子内裸抛异常时 Houdini 会把拖入文件当 hip 文件打开（弹错误框），因此
     drop_accept 全程兜底：记日志 + 状态栏提示 + return True。
 """
@@ -163,7 +164,8 @@ def _import_fbx_scenes(context, position, files, stack_from=0):
     官方 API 无落点参数、恒定导入到 /obj 根，建完把返回的 subnet 挪到落点
     （嵌套 Object 网络落点摆不到，留官方默认位置）。importFBX 不参与 undo，
     故不加 undo 组；坏文件返回 (None, 错误串)，按 None 计失败继续下一文件。
-    导入后解冻整棵子树（官方默认锁定 file 节点，用户要求导入即可编辑）。
+    unlock_geometry/unlock_deformations 即导入对话框同名的两个勾选项，
+    打开后导入本身就是不冻结状态（官方选项内建能力）。
     """
     import hou
 
@@ -173,8 +175,9 @@ def _import_fbx_scenes(context, position, files, stack_from=0):
     landing = context.path() if context.path() == "/obj" else "/obj"
     for i, path in enumerate(files):
         try:
-            parent, messages = hou.hipFile.importFBX(path,
-                                                     suppress_save_prompt=True)
+            parent, messages = hou.hipFile.importFBX(
+                path, suppress_save_prompt=True,
+                unlock_geometry=True, unlock_deformations=True)
         except hou.OperationFailed as exc:
             failed.append((path, str(exc)))
             continue
@@ -183,7 +186,6 @@ def _import_fbx_scenes(context, position, files, stack_from=0):
             continue
         if messages:
             logger.warning("fbx import messages (%s):\n%s", path, messages)
-        _unlock_imported(parent)
         if context.path() == "/obj":
             _width, height = parent.size()
             parent.setPosition(hou.Vector2(
@@ -198,21 +200,6 @@ def _import_fbx_scenes(context, position, files, stack_from=0):
     if failed:
         _status("%d 个 .fbx 未能导入（文件损坏或不受支持），详见日志" % len(failed))
     return True
-
-
-def _unlock_imported(parent):
-    """解冻 importFBX 产出的整棵子树。
-
-    官方导入默认给子树里的 file 节点打 ``hou.nodeFlag.Lock`` 旗标（网络
-    编辑器黄橙冻结样式、参数不可改），这里逐个解开；无锁节点零开销跳过。
-    解锁后节点正常 cook，存盘重开不回锁（H22.0.429 无头实测）。
-    """
-    import hou
-
-    # allSubChildren 不含 parent 自身，subnet 本体一并纳入
-    for node in [parent] + list(parent.allSubChildren()):
-        if node.isGenericFlagSet(hou.nodeFlag.Lock):
-            node.setGenericFlag(hou.nodeFlag.Lock, False)
 
 
 def _import_nodes(context, position, files, node_type, parm_name, label,
