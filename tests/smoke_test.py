@@ -86,6 +86,17 @@ def main():
     assert 'id="houtools.networkview.recipe_library"' in nv_xml
     print("recipe_library menu wiring: consistent")
 
+    # About 页面:仅主菜单注册（全局性条目，不进网络编辑器菜单）；
+    # 手册是离线单文件（无互联网工作站），样式内联、不得引用外部 URL 资源
+    assert 'id="houtools.about"' in main_xml
+    assert 'id="houtools.about"' not in nv_xml
+    about_html = ROOT / "docs" / "about.html"
+    assert about_html.is_file()
+    about_src = about_html.read_text(encoding="utf-8")
+    assert "<style>" in about_src
+    assert 'src="http' not in about_src and 'href="http' not in about_src
+    print("about menu wiring: consistent")
+
     # OPmenu（节点右键菜单）：仓库根随 HOUDINI_PATH 加载；条目走两行分发器，
     # 标签英文/ASCII（H22 实测中文 label 条目行出现但文字不渲染）
     op_xml = (ROOT / "OPmenu.xml").read_text(encoding="utf-8")
@@ -106,6 +117,7 @@ def main():
     import houtools.tools.paste_as_object_merge
     import houtools.tools.paste_hotkey_settings  # noqa: F401
     import houtools.tools.open_cache_folder  # noqa: F401
+    import houtools.tools.about_houtools  # noqa: F401
     import houtools.tools.automation  # noqa: F401
     import houtools.dragdrop  # noqa: F401
     import houtools.automation.window  # noqa: F401
@@ -138,6 +150,21 @@ def main():
         == "/obj/grid1"
     assert pam._HOU_NODE_RE.match("hou.parm('/obj/x')") is None
     print("paste_as_object_merge parsing OK")
+
+    # About 页面 run():打桩 os.startfile 验证打开的是 docs/about.html
+    # （真开浏览器是无头环境不可接受的外部副作用）
+    from unittest.mock import patch
+    from houtools.tools import about_houtools as about_mod
+    with patch("os.startfile") as fake_start:
+        about_mod.run()
+        fake_start.assert_called_once_with(str(about_mod.ABOUT_PAGE))
+    # 页面缺失分支：日志+状态栏告警，不抛异常、不开浏览器
+    with patch.object(about_mod, "ABOUT_PAGE",
+                      Path("Z:/nope/about.html")), \
+         patch("os.startfile") as fake_start:
+        about_mod.run()
+        fake_start.assert_not_called()
+    print("about_houtools run OK")
 
     # 打开DW：任务序列化 + 应用级配置文件读写
     dw_item = task_types.TaskItem.from_dict(

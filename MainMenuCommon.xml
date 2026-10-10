@@ -64,6 +64,17 @@ import houtools.dev.dispatcher as _houtools_dispatcher
 _houtools_dispatcher.run("paste_hotkey_settings")
         ]]></scriptCode>
       </scriptItem>
+
+      <separatorItem/>
+
+      <!-- About 页面:默认浏览器打开 docs/about.html(离线单文件,零外部依赖) -->
+      <scriptItem id="houtools.about">
+        <label>About HouTools</label>
+        <scriptCode><![CDATA[
+import houtools.dev.dispatcher as _houtools_dispatcher
+_houtools_dispatcher.run("about_houtools")
+        ]]></scriptCode>
+      </scriptItem>
     </subMenu>
   </menuBar>
 </mainMenu>

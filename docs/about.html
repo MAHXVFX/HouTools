@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HouTools — 使用手册</title>
+<style>
+  /* HouTools 暗色主题(与工具窗口共用一套配色),零外部依赖、完全离线可用 */
+  :root {
+    --bg: #18181b;
+    --card: #1d1d20;
+    --border: #2d2d2d;
+    --blue: #0d6399;
+    --blue-bright: #4da3d8;
+    --purple: #8a5cf5;
+    --text: #e4e4e7;
+    --muted: #a1a1aa;
+    --mono: Consolas, "Courier New", monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.75;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 24px 64px; }
+
+  /* ---- 头部 ---- */
+  header {
+    background: linear-gradient(135deg, #0d6399 0%, #1d1d20 55%, #8a5cf5 130%);
+    padding: 48px 24px 36px;
+    border-bottom: 1px solid var(--border);
+  }
+  header .inner { max-width: 880px; margin: 0 auto; }
+  header h1 {
+    margin: 0 0 6px;
+    font-size: 34px;
+    letter-spacing: 1px;
+  }
+  header h1 .v { font-size: 15px; color: #cfd6dd; font-weight: normal; margin-left: 10px; }
+  header p.sub { margin: 0 0 18px; color: #d7dbe0; }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; }
+  .badge {
+    display: inline-block;
+    padding: 2px 12px;
+    border-radius: 999px;
+    font-size: 12.5px;
+    background: rgba(24, 24, 27, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    color: #e8ebef;
+  }
+
+  /* ---- 目录 ---- */
+  nav {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin: 22px 0 8px;
+  }
+  nav .nav-title { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+  nav a {
+    display: inline-block;
+    margin: 2px 6px 2px 0;
+    padding: 3px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--text);
+    text-decoration: none;
+    font-size: 13.5px;
+  }
+  nav a:hover { border-color: var(--blue-bright); color: var(--blue-bright); }
+
+  /* ---- 章节 ---- */
+  section {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 22px 26px;
+    margin: 22px 0;
+  }
+  section:target { border-color: var(--blue); }
+  h2 {
+    margin: 0 0 4px;
+    font-size: 21px;
+    line-height: 1.4;
+  }
+  h2 .zh { font-size: 14.5px; font-weight: normal; color: var(--muted); margin-left: 10px; }
+  .entry {
+    margin: 10px 0 4px;
+    font-size: 13.5px;
+    color: var(--muted);
+  }
+  .entry code { color: var(--blue-bright); }
+  h3 { font-size: 15.5px; margin: 18px 0 6px; }
+  ul { margin: 8px 0; padding-left: 22px; }
+  li { margin: 4px 0; }
+  li::marker { color: var(--purple); }
+  code {
+    font-family: var(--mono);
+    font-size: 13px;
+    background: #18181b;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    white-space: nowrap;
+  }
+  a { color: var(--blue-bright); }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 13.5px;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 6px 12px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: #232327; color: #d8d8de; font-weight: 600; }
+  td code { white-space: normal; }
+
+  .note {
+    border-left: 3px solid var(--purple);
+    background: #232329;
+    border-radius: 0 6px 6px 0;
+    padding: 8px 14px;
+    margin: 12px 0;
+    font-size: 13.5px;
+    color: #cfcfd6;
+  }
+
+  /* ---- 页脚 ---- */
+  footer {
+    margin-top: 40px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.9;
+  }
+  .top-link {
+    position: fixed;
+    right: 22px;
+    bottom: 22px;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--blue);
+    color: #fff;
+    text-align: center;
+    line-height: 40px;
+    text-decoration: none;
+    font-size: 18px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+  }
+  .top-link:hover { background: var(--blue-bright); }
+
+  /* ---- 工具轮播(纯内联 SVG 示意图,零外部资源) ---- */
+  .carousel {
+    position: relative;
+    overflow: hidden;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin: 28px 0 0;
+  }
+  .car-track { display: flex; transition: transform 0.5s ease; }
+  .slide {
+    flex: 0 0 100%;
+    min-width: 0;
+    display: block;
+    position: relative;
+    text-decoration: none;
+  }
+  .slide svg { display: block; width: 100%; height: auto; }
+  .slide-cap {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding: 48px 26px 14px;
+    background: linear-gradient(rgba(24, 24, 27, 0), rgba(24, 24, 27, 0.92) 65%);
+  }
+  .slide-cap strong { font-size: 18px; color: var(--text); }
+  .slide-cap span { font-size: 13.5px; color: var(--muted); }
+  .car-btn {
+    position: absolute;
+    top: 42%;
+    transform: translateY(-50%);
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: rgba(24, 24, 27, 0.72);
+    color: var(--text);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0.72;
+  }
+  .car-btn:hover { opacity: 1; border-color: var(--blue-bright); color: var(--blue-bright); }
+  .car-prev { left: 12px; }
+  .car-next { right: 12px; }
+  .car-dots {
+    position: absolute;
+    right: 16px; bottom: 14px;
+    display: flex;
+    gap: 8px;
+  }
+  .car-dot {
+    width: 9px; height: 9px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: #4a4a52;
+    cursor: pointer;
+  }
+  .car-dot.on { background: var(--blue-bright); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="inner">
+    <h1>HouTools<span class="v">v1.2.0</span></h1>
+    <p class="sub">Houdini 22 插件工具集 — 使用手册</p>
+    <div class="badges">
+      <span class="badge">Houdini 22.0</span>
+      <span class="badge">Python 3.13</span>
+      <span class="badge">Windows</span>
+      <span class="badge">完全离线</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+<!-- ============ 工具轮播(示意画面,点击跳对应章节) ============ -->
+<div class="carousel" id="carousel">
+  <div class="car-track">
+
+    <a class="slide" href="#automation">
+      <svg viewBox="0 0 880 320" role="img" aria-label="Automation 界面示意">
+        <rect width="880" height="320" fill="#232327"/>
+        <rect width="880" height="40" fill="#1d1d20"/>
+        <circle cx="22" cy="20" r="6" fill="#d1283e" opacity=".8"/><circle cx="42" cy="20" r="6" fill="#c9a53e" opacity=".8"/><circle cx="62" cy="20" r="6" fill="#3f9d58" opacity=".8"/>
+        <text x="88" y="26" font-family="Segoe UI, sans-serif" font-size="14" fill="#c9c9d0">Automation</text>
+        <g font-family="Segoe UI, sans-serif" font-size="12">
+          <rect x="30" y="58" width="540" height="50" rx="6" fill="#2a2a2f"/>
+          <rect x="42" y="72" width="92" height="22" rx="4" fill="#0d6399"/><text x="88" y="87" text-anchor="middle" fill="#eaf2f8">BUTTON</text>
+          <rect x="150" y="68" width="220" height="9" rx="4" fill="#3f3f47"/><rect x="150" y="84" width="290" height="9" rx="4" fill="#33333a"/>
+          <circle cx="548" cy="83" r="10" fill="#3f9d58"/>
+          <rect x="30" y="116" width="540" height="50" rx="6" fill="#2a2a2f"/>
+          <rect x="42" y="130" width="92" height="22" rx="4" fill="#8a5cf5"/><text x="88" y="145" text-anchor="middle" fill="#f0eafb">FLIPBOOK</text>
+          <rect x="150" y="126" width="260" height="9" rx="4" fill="#3f3f47"/><rect x="150" y="142" width="240" height="9" rx="4" fill="#33333a"/>
+          <circle cx="548" cy="141" r="10" fill="#3f9d58"/>
+          <rect x="30" y="174" width="540" height="50" rx="6" fill="#2a2a2f"/>
+          <rect x="42" y="188" width="92" height="22" rx="4" fill="#5c5c66"/><text x="88" y="203" text-anchor="middle" fill="#e8e8ec">WEBHOOK</text>
+          <rect x="150" y="184" width="200" height="9" rx="4" fill="#3f3f47"/><rect x="150" y="200" width="260" height="9" rx="4" fill="#33333a"/>
+          <circle cx="548" cy="199" r="10" fill="#3f9d58"/>
+          <rect x="30" y="232" width="540" height="50" rx="6" fill="#2a2a2f"/>
+          <rect x="42" y="246" width="170" height="22" rx="4" fill="#d1283e"/><text x="127" y="261" text-anchor="middle" font-size="10" fill="#fbeaee">DEADLINE WORKER</text>
+          <rect x="150" y="242" width="240" height="9" rx="4" fill="#3f3f47"/><rect x="150" y="258" width="210" height="9" rx="4" fill="#33333a"/>
+          <circle cx="548" cy="257" r="10" fill="#6a6a72"/>
+          <rect x="30" y="296" width="380" height="8" rx="4" fill="#33333a"/><rect x="30" y="296" width="226" height="8" rx="4" fill="#0d6399"/>
+          <rect x="610" y="58" width="240" height="64" rx="8" fill="#0d6399"/><text x="730" y="97" text-anchor="middle" font-size="20" fill="#ffffff">START</text>
+          <rect x="610" y="136" width="240" height="56" rx="8" fill="#3a3a41"/><text x="730" y="170" text-anchor="middle" font-size="16" fill="#d8d8de">Stop</text>
+          <rect x="610" y="206" width="240" height="76" rx="8" fill="#26262b"/>
+          <text x="624" y="230" font-size="11" fill="#8a8a92">15:32:01  cache_01 done</text>
+          <text x="624" y="250" font-size="11" fill="#8a8a92">15:35:47  cache_02 running</text>
+          <text x="624" y="270" font-size="11" fill="#5f9c6d">15:35:47  progress 60%</text>
+        </g>
+      </svg>
+      <div class="slide-cap"><strong>Automation</strong><span>任务队列一键依序执行,收工挂机跑缓存</span></div>
+    </a>
+
+    <a class="slide" href="#paste-as-object-merge">
+      <svg viewBox="0 0 880 320" role="img" aria-label="粘贴为 Object Merge 界面示意">
+        <defs>
+          <linearGradient id="c2-line" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="#8a5cf5"/><stop offset="1" stop-color="#0d6399"/>
+          </linearGradient>
+        </defs>
+        <rect width="880" height="320" fill="#232327"/>
+        <rect width="880" height="40" fill="#1d1d20"/>
+        <circle cx="22" cy="20" r="6" fill="#d1283e" opacity=".8"/><circle cx="42" cy="20" r="6" fill="#c9a53e" opacity=".8"/><circle cx="62" cy="20" r="6" fill="#3f9d58" opacity=".8"/>
+        <text x="88" y="26" font-family="Segoe UI, sans-serif" font-size="14" fill="#c9c9d0">Network Editor — Paste as Object Merge</text>
+        <g stroke="#2d2d2d" stroke-width="1">
+          <path d="M0 80 H880 M0 140 H880 M0 200 H880 M0 260 H880"/>
+          <path d="M110 40 V320 M260 40 V320 M410 40 V320 M560 40 V320 M710 40 V320"/>
+        </g>
+        <g font-family="Segoe UI, sans-serif" font-size="13">
+          <rect x="70" y="112" width="170" height="76" rx="6" fill="#2a2a2f" stroke="#8a5cf5" stroke-width="2"/>
+          <rect x="70" y="112" width="170" height="24" rx="6" fill="#8a5cf5" opacity=".3"/>
+          <text x="82" y="129" fill="#e4e4e7">grid1</text>
+          <circle cx="76" cy="158" r="4" fill="#6a6a72"/><circle cx="76" cy="174" r="4" fill="#6a6a72"/>
+          <path d="M240 150 C 290 150, 285 150, 334 150" stroke="url(#c2-line)" stroke-width="2.5" fill="none"/>
+          <rect x="334" y="112" width="200" height="76" rx="6" fill="#2a2a2f" stroke="#0d6399" stroke-width="2"/>
+          <rect x="334" y="112" width="200" height="24" rx="6" fill="#0d6399" opacity=".3"/>
+          <text x="346" y="129" fill="#e4e4e7">Merge_grid1</text>
+          <circle cx="340" cy="150" r="4" fill="#6a6a72"/><circle cx="340" cy="170" r="4" fill="#6a6a72"/>
+          <path d="M534 150 C 580 150, 575 150, 618 150" stroke="#6a6a72" stroke-width="2" fill="none"/>
+          <rect x="618" y="112" width="180" height="76" rx="6" fill="#2a2a2f" stroke="#5c5c66" stroke-width="2"/>
+          <rect x="618" y="112" width="180" height="24" rx="6" fill="#5c5c66" opacity=".3"/>
+          <text x="630" y="129" fill="#e4e4e7">OUT</text>
+          <circle cx="624" cy="150" r="4" fill="#6a6a72"/>
+          <rect x="640" y="238" width="200" height="34" rx="17" fill="#26262b" stroke="#0d6399"/>
+          <text x="740" y="260" text-anchor="middle" font-size="14" fill="#4da3d8">Ctrl + Shift + V</text>
+          <text x="70" y="260" font-size="12" fill="#8a8a92">引用而非副本 · 颜色随源 · 单 undo 槽</text>
+        </g>
+      </svg>
+      <div class="slide-cap"><strong>Paste as Object Merge</strong><span>跨上下文粘贴引用节点,颜色随源</span></div>
+    </a>
+
+    <a class="slide" href="#alembic-dragdrop">
+      <svg viewBox="0 0 880 320" role="img" aria-label="拖放导入 Alembic 界面示意">
+        <rect width="880" height="320" fill="#232327"/>
+        <rect width="880" height="40" fill="#1d1d20"/>
+        <circle cx="22" cy="20" r="6" fill="#d1283e" opacity=".8"/><circle cx="42" cy="20" r="6" fill="#c9a53e" opacity=".8"/><circle cx="62" cy="20" r="6" fill="#3f9d58" opacity=".8"/>
+        <text x="88" y="26" font-family="Segoe UI, sans-serif" font-size="14" fill="#c9c9d0">External Drag &amp; Drop — .abc</text>
+        <g font-family="Segoe UI, sans-serif">
+          <rect x="80" y="90" width="170" height="140" rx="10" fill="#2a2a2f" stroke="#8a5cf5" stroke-width="2" stroke-dasharray="7 5"/>
+          <path d="M214 90 L250 90 L250 126 Z" fill="#3f3f47"/>
+          <text x="165" y="170" text-anchor="middle" font-size="26" font-weight="bold" fill="#c9b6f5">.abc</text>
+          <text x="165" y="200" text-anchor="middle" font-size="12" fill="#8a8a92">building_v3.abc</text>
+          <path d="M290 160 L420 160" stroke="#4da3d8" stroke-width="3" stroke-dasharray="9 7" fill="none"/>
+          <polygon points="420,150 444,160 420,170" fill="#4da3d8"/>
+          <text x="367" y="142" text-anchor="middle" font-size="12" fill="#8a8a92">drop</text>
+          <rect x="470" y="70" width="300" height="62" rx="6" fill="#2a2a2f" stroke="#0d6399" stroke-width="2"/>
+          <rect x="470" y="70" width="300" height="22" rx="6" fill="#0d6399" opacity=".3"/>
+          <text x="484" y="87" font-size="13" fill="#e4e4e7">building_v3</text>
+          <text x="484" y="119" font-size="11" fill="#8a8a92">Alembic Archive · 自动构建层级</text>
+          <g font-size="12" fill="#b8b8c0">
+            <rect x="496" y="150" width="220" height="30" rx="5" fill="#2f2f35"/><circle cx="510" cy="165" r="4" fill="#6a6a72"/><text x="524" y="170">facade_geo</text>
+            <rect x="496" y="188" width="220" height="30" rx="5" fill="#2f2f35"/><circle cx="510" cy="203" r="4" fill="#6a6a72"/><text x="524" y="208">interior_geo</text>
+            <rect x="496" y="226" width="220" height="30" rx="5" fill="#2f2f35"/><circle cx="510" cy="241" r="4" fill="#6a6a72"/><text x="524" y="246">cam_rig</text>
+          </g>
+        </g>
+      </svg>
+      <div class="slide-cap"><strong>Alembic Drag &amp; Drop</strong><span>拖 .abc 即落点创建导入节点</span></div>
+    </a>
+
+    <a class="slide" href="#video-to-sequence">
+      <svg viewBox="0 0 880 320" role="img" aria-label="视频转序列图界面示意">
+        <defs>
+          <linearGradient id="c4-a" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1d3a55"/><stop offset="1" stop-color="#0d6399"/></linearGradient>
+          <linearGradient id="c4-b" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#33265e"/><stop offset="1" stop-color="#8a5cf5"/></linearGradient>
+        </defs>
+        <rect width="880" height="320" fill="#232327"/>
+        <rect width="880" height="40" fill="#1d1d20"/>
+        <circle cx="22" cy="20" r="6" fill="#d1283e" opacity=".8"/><circle cx="42" cy="20" r="6" fill="#c9a53e" opacity=".8"/><circle cx="62" cy="20" r="6" fill="#3f9d58" opacity=".8"/>
+        <text x="88" y="26" font-family="Segoe UI, sans-serif" font-size="14" fill="#c9c9d0">Video to Sequence</text>
+        <g font-family="Segoe UI, sans-serif">
+          <rect x="60" y="66" width="320" height="188" rx="8" fill="url(#c4-a)"/>
+          <polygon points="205,145 205,175 232,160" fill="#ffffff" opacity=".9"/>
+          <rect x="72" y="224" width="296" height="7" rx="3" fill="#18181b" opacity=".65"/>
+          <rect x="72" y="224" width="118" height="7" rx="3" fill="#4da3d8"/>
+          <path d="M410 160 L448 160" stroke="#4da3d8" stroke-width="3" fill="none"/>
+          <polygon points="448,152 462,160 448,168" fill="#4da3d8"/>
+          <g>
+            <rect x="486" y="66" width="170" height="88" rx="6" fill="url(#c4-b)"/><text x="496" y="170" font-size="11" fill="#8a8a92" font-family="Segoe UI, sans-serif">shot.0001.jpg</text>
+            <rect x="672" y="66" width="170" height="88" rx="6" fill="url(#c4-a)"/><text x="682" y="170" font-size="11" fill="#8a8a92" font-family="Segoe UI, sans-serif">shot.0002.jpg</text>
+            <rect x="486" y="184" width="170" height="88" rx="6" fill="url(#c4-a)" opacity=".82"/><text x="496" y="288" font-size="11" fill="#8a8a92" font-family="Segoe UI, sans-serif">shot.0003.jpg</text>
+            <rect x="672" y="184" width="170" height="88" rx="6" fill="url(#c4-b)" opacity=".85"/><text x="682" y="288" font-size="11" fill="#8a8a92" font-family="Segoe UI, sans-serif">shot.0004.jpg</text>
+          </g>
+          <rect x="60" y="288" width="360" height="10" rx="5" fill="#33333a"/>
+          <rect x="60" y="288" width="184" height="10" rx="5" fill="#0d6399"/>
+          <text x="430" y="297" font-size="12" fill="#8a8a92" font-family="Segoe UI, sans-serif">124 / 240 frames</text>
+        </g>
+      </svg>
+      <div class="slide-cap"><strong>Video to Sequence</strong><span>ffmpeg 提取视频为帧序列,可直连相机背景</span></div>
+    </a>
+
+    <a class="slide" href="#hdr-library">
+      <svg viewBox="0 0 880 320" role="img" aria-label="Hdr Library 界面示意">
+        <defs>
+          <linearGradient id="c5-sky1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#28527a"/><stop offset="1" stop-color="#e0a45c"/></linearGradient>
+          <linearGradient id="c5-sky2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1d1d3a"/><stop offset="1" stop-color="#4a5a9c"/></linearGradient>
+          <linearGradient id="c5-sky3" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5c6a72"/><stop offset="1" stop-color="#c9c9c9"/></linearGradient>
+          <linearGradient id="c5-sky4" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0d3b4a"/><stop offset="1" stop-color="#2a8a8a"/></linearGradient>
+          <linearGradient id="c5-sky5" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3a2a5c"/><stop offset="1" stop-color="#c96a8a"/></linearGradient>
+          <linearGradient id="c5-sky6" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#264a2f"/><stop offset="1" stop-color="#a4c96a"/></linearGradient>
+        </defs>
+        <rect width="880" height="320" fill="#232327"/>
+        <rect width="880" height="40" fill="#1d1d20"/>
+        <circle cx="22" cy="20" r="6" fill="#d1283e" opacity=".8"/><circle cx="42" cy="20" r="6" fill="#c9a53e" opacity=".8"/><circle cx="62" cy="20" r="6" fill="#3f9d58" opacity=".8"/>
+        <text x="88" y="26" font-family="Segoe UI, sans-serif" font-size="14" fill="#c9c9d0">Hdr Library</text>
+        <rect x="30" y="56" width="190" height="236" rx="8" fill="#26262b"/>
+        <g font-family="Segoe UI, sans-serif" font-size="13">
+          <rect x="38" y="64" width="174" height="36" rx="6" fill="#0d6399" opacity=".55"/><rect x="50" y="76" width="90" height="10" rx="4" fill="#e4e4e7"/>
+          <rect x="50" y="116" width="70" height="10" rx="4" fill="#8a8a92"/><text x="196" y="126" text-anchor="end" font-size="11" fill="#a8824e">24</text>
+          <rect x="50" y="154" width="88" height="10" rx="4" fill="#8a8a92"/><text x="196" y="164" text-anchor="end" font-size="11" fill="#a8824e">12</text>
+          <rect x="50" y="192" width="60" height="10" rx="4" fill="#8a8a92"/><text x="196" y="202" text-anchor="end" font-size="11" fill="#a8824e">7</text>
+          <rect x="50" y="230" width="80" height="10" rx="4" fill="#8a8a92"/><text x="196" y="240" text-anchor="end" font-size="11" fill="#a8824e">3</text>
+        </g>
+        <g font-family="Segoe UI, sans-serif" font-size="11" fill="#8a8a92">
+          <rect x="250" y="56" width="188" height="106" rx="6" fill="url(#c5-sky1)"/><text x="260" y="152" fill="#f0e4d4">sunset_field.hdr</text>
+          <rect x="452" y="56" width="188" height="106" rx="6" fill="url(#c5-sky2)"/><text x="462" y="152">night_city.exr</text>
+          <rect x="654" y="56" width="188" height="106" rx="6" fill="url(#c5-sky3)"/><text x="664" y="152">overcast.hdr</text>
+          <rect x="250" y="186" width="188" height="106" rx="6" fill="url(#c5-sky4)"/><text x="260" y="282">studio_soft.hdr</text>
+          <rect x="452" y="186" width="188" height="106" rx="6" fill="url(#c5-sky5)"/><text x="462" y="282">dusk_park.exr</text>
+          <rect x="654" y="186" width="188" height="106" rx="6" fill="url(#c5-sky6)"/><text x="664" y="282">forest_morn.hdr</text>
+        </g>
+        <text x="826" y="82" font-size="18" fill="#e8c14a" font-family="Segoe UI, sans-serif">★</text>
+      </svg>
+      <div class="slide-cap"><strong>Hdr Library</strong><span>缩略图网格浏览,双击赋给选中灯光</span></div>
+    </a>
+
+    <a class="slide" href="#recipe-library">
+      <svg viewBox="0 0 880 320" role="img" aria-label="Recipe Library 界面示意">
+        <defs>
+          <linearGradient id="c6-t1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0d6399"/><stop offset="1" stop-color="#1d2a3a"/></linearGradient>
+          <linearGradient id="c6-t2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8a5cf5"/><stop offset="1" stop-color="#2a1d4a"/></linearGradient>
+          <linearGradient id="c6-t3" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2a8a6a"/><stop offset="1" stop-color="#1a2f28"/></linearGradient>
+        </defs>
+        <rect width="880" height="320" fill="#232327"/>
+        <rect width="880" height="40" fill="#1d1d20"/>
+        <circle cx="22" cy="20" r="6" fill="#d1283e" opacity=".8"/><circle cx="42" cy="20" r="6" fill="#c9a53e" opacity=".8"/><circle cx="62" cy="20" r="6" fill="#3f9d58" opacity=".8"/>
+        <text x="88" y="26" font-family="Segoe UI, sans-serif" font-size="14" fill="#c9c9d0">Recipe Library</text>
+        <g font-family="Segoe UI, sans-serif">
+          <rect x="60" y="60" width="240" height="112" rx="8" fill="#2a2a2f" stroke="#0d6399" stroke-width="2"/>
+          <rect x="60" y="60" width="240" height="64" rx="8" fill="url(#c6-t1)"/>
+          <rect x="72" y="134" width="120" height="10" rx="4" fill="#e4e4e7"/><rect x="72" y="152" width="80" height="8" rx="4" fill="#6a6a72"/>
+          <rect x="222" y="70" width="18" height="18" rx="4" fill="#0d6399" opacity=".01"/>
+          <text x="278" y="82" font-size="16" fill="#e8c14a">★</text>
+          <rect x="322" y="60" width="240" height="112" rx="8" fill="#2a2a2f"/>
+          <rect x="322" y="60" width="240" height="64" rx="8" fill="url(#c6-t2)"/>
+          <rect x="334" y="134" width="130" height="10" rx="4" fill="#e4e4e7"/><rect x="334" y="152" width="70" height="8" rx="4" fill="#6a6a72"/>
+          <rect x="584" y="60" width="240" height="112" rx="8" fill="#2a2a2f"/>
+          <rect x="584" y="60" width="240" height="64" rx="8" fill="url(#c6-t3)"/>
+          <rect x="596" y="134" width="110" height="10" rx="4" fill="#e4e4e7"/><rect x="596" y="152" width="90" height="8" rx="4" fill="#6a6a72"/>
+          <rect x="60" y="188" width="240" height="104" rx="8" fill="#2a2a2f"/>
+          <rect x="60" y="188" width="240" height="58" rx="8" fill="url(#c6-t2)" opacity=".85"/>
+          <rect x="72" y="256" width="140" height="10" rx="4" fill="#e4e4e7"/><rect x="72" y="274" width="60" height="8" rx="4" fill="#6a6a72"/>
+          <rect x="322" y="188" width="240" height="104" rx="8" fill="#2a2a2f"/>
+          <rect x="322" y="188" width="240" height="58" rx="8" fill="url(#c6-t1)" opacity=".85"/>
+          <rect x="334" y="256" width="120" height="10" rx="4" fill="#e4e4e7"/><rect x="334" y="274" width="84" height="8" rx="4" fill="#6a6a72"/>
+          <rect x="584" y="188" width="240" height="104" rx="8" fill="#2a2a2f"/>
+          <rect x="584" y="188" width="240" height="58" rx="8" fill="url(#c6-t3)" opacity=".85"/>
+          <rect x="596" y="256" width="100" height="10" rx="4" fill="#e4e4e7"/><rect x="596" y="274" width="72" height="8" rx="4" fill="#6a6a72"/>
+          <rect x="740" y="196" width="64" height="18" rx="9" fill="#8a5cf5" opacity=".4"/><text x="772" y="209" text-anchor="middle" font-size="10" fill="#e8e0fb">#pyro</text>
+        </g>
+      </svg>
+      <div class="slide-cap"><strong>Recipe Library</strong><span>recipes 资产卡片浏览,双击/拖拽入网</span></div>
+    </a>
+
+  </div>
+  <button class="car-btn car-prev" type="button" aria-label="上一张">‹</button>
+  <button class="car-btn car-next" type="button" aria-label="下一张">›</button>
+  <div class="car-dots"></div>
+</div>
+
+<nav>
+  <div class="nav-title">工具目录</div>
+  <a href="#automation">Automation</a>
+  <a href="#paste-as-object-merge">粘贴为 Object Merge</a>
+  <a href="#alembic-dragdrop">拖放导入 Alembic</a>
+  <a href="#video-to-sequence">视频转序列图</a>
+  <a href="#hdr-library">Hdr Library</a>
+  <a href="#recipe-library">Recipe Library</a>
+  <a href="#paste-hotkey-settings">Paste Hotkey Settings</a>
+  <a href="#open-cache-folder">Open Cache Folder</a>
+  <a href="#reload-dev">Reload Modules (Dev)</a>
+  <a href="#install">安装</a>
+</nav>
+
+<!-- ============ Automation ============ -->
+<section id="automation">
+  <h2>Automation<span class="zh">自动化批处理</span></h2>
+  <p class="entry">入口:<code>HouTools → Automation</code>(以 Python Panel 浮动面板打开,可停靠进任意面板布局)</p>
+  <p>把要执行的操作排成任务队列,点 <strong>Start</strong> 后依序自动触发,适合收工挂机跑缓存、批处理等重复劳动。</p>
+  <h3>任务类型</h3>
+  <ul>
+    <li><strong>按钮点击</strong> — 对指定节点的指定参数(按钮)模拟点击,如 ROP 渲染、File Cache 写盘。</li>
+    <li><strong>Flipbook</strong> — 按帧范围对视口拍屏输出序列图。</li>
+    <li><strong>Webhook</strong> — 向指定 URL 发送请求,可用于联动智能家居(如跑完灯光提醒)。</li>
+    <li><strong>打开DW</strong> — 启动外部 Deadline Worker 处理当前工程。</li>
+  </ul>
+  <h3>使用要点</h3>
+  <ul>
+    <li>后台线程执行,不阻塞 Houdini 界面;对 Houdini 的调用统一派发主线程,<strong>上一任务真正完成后才派发下一个</strong>——顺序语义有保证,主线程被解算阻塞多久就等多久。</li>
+    <li>取消是协作式的,只在任务边界生效;点停止后按钮显示「停止中…」直到当前任务结束。</li>
+    <li>节点可直接<strong>拖入参数路径框</strong>(原生投递)。</li>
+    <li>配置 JSON 存 <code>$HIP/HouTools_cfg/Automation_json/</code>(跟工程走,多配置文件可切换),执行日志存 <code>$HIP/HouTools_cfg/Automation_logs/</code>。</li>
+    <li>「打开DW」任务的软件路径在 <code>settings/Automation_Config.json</code> 配置(缺失时自动按默认值补建,可直接编辑);该任务执行前会强制保存当前工程。</li>
+    <li>Flipbook 帧范围支持灵活写法,解析失败时沿用场景当前范围并告警。</li>
+  </ul>
+  <div class="note">菜单 <code>Reload Modules (Dev)</code> 不会自动重建已打开的 Automation 面板(避免丢弃未保存的编辑),请点面板工具条自带的刷新按钮重建界面。</div>
+</section>
+
+<!-- ============ 粘贴为 Object Merge ============ -->
+<section id="paste-as-object-merge">
+  <h2>Paste as Object Merge<span class="zh">粘贴为 Object Merge</span></h2>
+  <p class="entry">入口:网络编辑器 <code>HouTools</code> 菜单 / 快捷键 <code>Ctrl+Shift+V</code></p>
+  <p>在网络编辑器里 <code>Ctrl+C</code> 复制节点后,切到目标网络按 <code>Ctrl+Shift+V</code>,在鼠标位置创建<strong>引用节点</strong>(而非副本),颜色随源节点。按「目标上下文 × 源类别」自动选择引用方式:</p>
+  <table>
+    <tr><th>复制的源 → 粘贴目标</th><th>创建的节点(XXX = 源节点名)</th></tr>
+    <tr><td>SOP → SOP</td><td>object_merge <code>Merge_XXX</code></td></tr>
+    <tr><td>SOP → OBJ</td><td>geo <code>XXX</code>,内含 object_merge <code>Merge_XXX</code></td></tr>
+    <tr><td>SOP → LOP</td><td>sopimport <code>SOP_XXX</code></td></tr>
+    <tr><td>SOP → COP</td><td>sopimport <code>SOP_XXX</code>(仅新 COP,置 usesoppath=1)</td></tr>
+    <tr><td>SOP → DOP</td><td>staticobject <code>Object_XXX</code></td></tr>
+    <tr><td>SOP → ROP</td><td>fetch <code>SOP_XXX</code>(源为 File Cache 时路径追加 <code>/render</code>)</td></tr>
+    <tr><td>OBJ → SOP</td><td>object_merge <code>Merge_XXX</code></td></tr>
+    <tr><td>OBJ → LOP</td><td>sopimport <code>SOP_XXX</code></td></tr>
+    <tr><td>LOP → SOP</td><td>lopimport <code>LOP_XXX</code></td></tr>
+    <tr><td>LOP → LOP</td><td>fetch <code>LOP_XXX</code></td></tr>
+    <tr><td>LOP → ROP</td><td>usdrender <code>XXX</code></td></tr>
+  </table>
+  <ul>
+    <li>未列出的组合一律跳过(状态栏提示)。</li>
+    <li>整次操作占用单个 undo 槽,<code>Ctrl+Z</code> 一步撤回。</li>
+    <li>源路径取 OS 剪贴板文本;文本失效时退回内部剪贴板粘贴副本兜底(仅 SOP 网络)。</li>
+    <li>键位在 <code>HouTools → Paste Hotkey Settings</code> 修改,也可用 Houdini 自带 Hotkey Manager(符号 <code>h.pane.wsheet.houtools_paste_as_object_merge</code>)。</li>
+  </ul>
+</section>
+
+<!-- ============ 拖放导入 Alembic ============ -->
+<section id="alembic-dragdrop">
+  <h2>Alembic Drag &amp; Drop<span class="zh">拖放导入 Alembic</span></h2>
+  <p class="entry">入口:从资源管理器把 <code>.abc</code> 文件拖到网络编辑器</p>
+  <p>松手即在鼠标位置创建导入节点,免去 File → Import 的多步操作(基于 Houdini 官方 externaldragdrop 钩子):</p>
+  <table>
+    <tr><th>拖放落点</th><th>创建的节点(名称取文件名主干)</th></tr>
+    <tr><td>Object 层级(<code>/obj</code>)</td><td>Alembic Archive,自动构建层级(等价 File &gt; Import &gt; Alembic Scene...)</td></tr>
+    <tr><td>SOP 层级(geo 内部)</td><td>alembic SOP 节点</td></tr>
+  </table>
+  <ul>
+    <li>支持一次拖入<strong>多个文件</strong>,纵向排开;整批一个 undo 槽。</li>
+    <li>节点名自动清洗:中文等非法字符替换为 <code>_</code>,同名自动加数字后缀。</li>
+    <li>非 <code>.abc</code> 文件不受影响;拖到参数框、视口等其他面板的行为与原生完全一致。</li>
+    <li>文件损坏时由节点的错误旗标反馈(坏文件拖到 obj 层级可能静默不建子节点),创建操作本身不会失败。</li>
+  </ul>
+</section>
+
+<!-- ============ 视频转序列图 ============ -->
+<section id="video-to-sequence">
+  <h2>Video to Sequence<span class="zh">视频转序列图</span></h2>
+  <p class="entry">入口:<code>HouTools → Video to Sequence</code>(独立窗口,进任务栏)</p>
+  <p>用 ffmpeg 把视频提取为图片序列,方便直接喂给 Houdini 的文件序列参数(如相机 Background Image、COP 纹理)。</p>
+  <ul>
+    <li>支持<strong>拖放视频文件</strong>到窗口,或浏览选择、手输路径。</li>
+    <li>帧级进度显示;输出质量、起始帧编号、位数、文件名前缀可调。</li>
+    <li>可选自动把输出序列设置到选中相机的 Background Image。</li>
+    <li>转换前自动扫描输出目录中的同名旧序列并询问是否清除,防止新旧帧混杂。</li>
+    <li>提取可随时取消(探测与转换阶段均可),取消时提示已写入帧数。</li>
+  </ul>
+  <div class="note">ffmpeg 优先使用 Houdini 自带的 <code>$HFS/bin/hffmpeg</code>,<strong>无需单独安装</strong>;如需指定版本,把 <code>ffmpeg.exe</code> 放到项目根目录即可优先使用。</div>
+</section>
+
+<!-- ============ Hdr Library ============ -->
+<section id="hdr-library">
+  <h2>Hdr Library<span class="zh">HDR 环境贴图库</span></h2>
+  <p class="entry">入口:<code>HouTools → Hdr Library</code>(独立窗口,进任务栏,可全局置顶)</p>
+  <p>HDR 环境贴图库浏览器:缩略图网格浏览、按文件夹分类、收藏,选中灯光后双击即完成贴图。</p>
+  <h3>库组织</h3>
+  <ul>
+    <li>库按「总目录 / 一级分类子文件夹」组织,左侧栏切换 全部 / ★ 收藏 / 各分类;侧栏右键可新建、打开分类文件夹,空分类也会列出,嵌套子文件夹归入第一级。</li>
+    <li>首次使用在窗口内「更换目录」指定库目录;目录、缩略图大小、置顶、收藏都存 <code>settings/hdr_library.json</code>。</li>
+  </ul>
+  <h3>缩略图与贴图</h3>
+  <ul>
+    <li>缩略图由后台线程池调 Houdini 自带 <code>hoiiotool</code> 按需生成(无需安装),缓存在库目录 <code>.thumb_cache/</code>;打开窗口不自动扫描,点「刷新」才比对补图(可暂停/停止),之后秒开;HDR 文件更新后旧缩略图自动失效重生成。</li>
+    <li>选中一个或多个灯光后<strong>双击缩略图</strong>,HDR 路径批量写入灯光环境贴图参数——支持 OBJ <code>envlight</code>(Karma,自动关 skymap 程序化天空)、RenderMan dome 灯、LOP <code>domelight</code> 全家族(Solaris);其余灯型给出友好提示。</li>
+    <li>右键缩略图:收藏 / 复制路径 / 打开所在文件夹;收藏项右上角带角标并计入侧栏计数。</li>
+  </ul>
+  <div class="note">缩略图尺寸固定(大小滑条决定),网格不随面板宽拉伸,面板宽窄只改变每列数量——与 Recipe Library 同一套排版逻辑。</div>
+</section>
+
+<!-- ============ Recipe Library ============ -->
+<section id="recipe-library">
+  <h2>Recipe Library<span class="zh">recipes 资产库</span></h2>
+  <p class="entry">入口:<code>HouTools → Recipe Library</code>(独立窗口,进任务栏)</p>
+  <p>基于 Houdini 22 官方 recipes 的资产面板:卡片网格浏览、树形侧栏过滤、双击/拖拽应用到网络、Markdown 文档、数据导入导出。</p>
+  <h3>浏览</h3>
+  <ul>
+    <li>卡片显示缩略图、标签、版本、节点数,支持自定义主题色(右键「自定义颜色」)与收藏角标。</li>
+    <li>树形侧栏按 全部 / 收藏 / 节点参数 / 子菜单 / 标签 / 网络层级 过滤。</li>
+    <li>搜索框支持 <code>#</code> 前缀只搜标签(如 <code>#pyro</code>),多词 AND 匹配;自定义显示名(支持中文)同步参与搜索。</li>
+    <li>预览缩略图点击放大:滚轮缩放、中键平移、双击或 Esc 关闭;GIF 显示动图,文档中的视频可播放。</li>
+  </ul>
+  <h3>应用</h3>
+  <ul>
+    <li><strong>双击卡片</strong> = 官方工具架体验:参数照抄,视角不拉远(锚点落在视图外才整组平移到视图中心)。</li>
+    <li><strong>拖拽到网络</strong> = 在落点对齐创建整组节点。</li>
+    <li>应用前做网络层级匹配检查,不匹配时左下角状态栏给出中文提示(如 SOP recipe 进 LOP 网络)。</li>
+    <li>node / parm / decoration 预设需先选中目标节点。</li>
+  </ul>
+  <h3>元数据与文档</h3>
+  <ul>
+    <li>库只加载「设置 ▸ 库目录」配置的用户文件夹(递归扫描 .hda),出厂库 / Labs 一律不显示;库启动时自动安装,Tab 菜单里的 session tool 从会话开始可用。</li>
+    <li>自定义显示名、标签、颜色、收藏存 <code>settings/recipelib.json</code>,缩略图存 <code>settings/recipe_thumbs/</code>(相对路径存储,项目挪动不失效)。</li>
+    <li>每条 recipe 可配 Markdown 文档(存 <code>settings/recipe_docs/</code>),确认/取消模式编辑,渲染支持 GIF 动图与视频;主面板有文档时直接渲染文档,无文档回退官方备注。</li>
+    <li>设置缩略图支持两种来源:右键「设置缩略图」选图后框选裁剪(比例与卡片锁定),或「截取缩略图」屏幕框选。</li>
+  </ul>
+  <h3>数据交换</h3>
+  <ul>
+    <li>「设置 ▸ 数据」导出/导入 zip 交换包(元数据 + 缩略图 + 文档 + HDA),打包带走、分享。</li>
+    <li>导入按内部名合并:包内覆盖同名、本地独有保留、收藏取并集;与本地同名定义的 HDA 整文件跳过(避免同名定义二选一的不可预期)。</li>
+  </ul>
+</section>
+
+<!-- ============ Paste Hotkey Settings ============ -->
+<section id="paste-hotkey-settings">
+  <h2>Paste Hotkey Settings<span class="zh">快捷键设置</span></h2>
+  <p class="entry">入口:<code>HouTools → Paste Hotkey Settings</code></p>
+  <p>修改「粘贴为 Object Merge」的快捷键。点开窗口后按下任意键组合即捕获,确认后<strong>会话即时生效</strong>并持久化到 <code>settings/hotkeys.json</code>,每次启动 Houdini 自动应用。</p>
+  <ul>
+    <li>自定义键优先;其次尊重 Hotkey Manager 中已有的键位;最后落默认值 <code>Ctrl+Shift+V</code>。</li>
+    <li>设置保存在本机 <code>settings/</code> 目录下,换电脑或重装后重新设置一次即可。</li>
+  </ul>
+</section>
+
+<!-- ============ Open Cache Folder ============ -->
+<section id="open-cache-folder">
+  <h2>Open Cache Folder<span class="zh">打开缓存目录</span></h2>
+  <p class="entry">入口:右键带 <code>sopoutput</code> 参数的节点(如 File Cache)→ <code>Open Cache Folder [HT]</code></p>
+  <p>直接在资源管理器中打开该节点的缓存输出目录,免去翻参数、拷路径、开资源管理器的流程。</p>
+  <ul>
+    <li>取 <code>sopoutput</code> 参数的求值结果,打开其所在目录。</li>
+    <li>缓存还没写出(目录不存在)时,自动上溯到最近存在的祖先目录。</li>
+    <li>相对路径按 <code>$HIP</code> 解析,与 Houdini 读文件参数的语义一致。</li>
+  </ul>
+</section>
+
+<!-- ============ Reload Modules (Dev) ============ -->
+<section id="reload-dev">
+  <h2>Reload Modules (Dev)<span class="zh">开发热加载</span></h2>
+  <p class="entry">入口:<code>HouTools → Reload Modules (Dev)</code></p>
+  <p>开发专用:重载所有 <code>houtools</code> 模块,改完代码无需重启 Houdini。已打开的工具窗口在 Reload 时自动关闭,重新打开即新代码;已打开的 Automation Python Panel 除外(由面板工具条的刷新按钮重建)。</p>
+  <ul>
+    <li>按模块导入顺序(即依赖序)重载;<code>houtools/dev</code> 框架自身不参与重载(改动它需重启)。</li>
+    <li>菜单结构(两份菜单 XML)的改动是 H22 硬约束,仍需重启 Houdini 一次才能生效。</li>
+  </ul>
+</section>
+
+<!-- ============ 安装 ============ -->
+<section id="install">
+  <h2>安装<span class="zh"></span></h2>
+  <ol>
+    <li>把 HouTools 文件夹整个放到 <code>Documents/houdini22.0/HouTools</code>(与 <code>packages/</code> 同级);</li>
+    <li>把项目根的 <code>HouTools.json</code> 放入 <code>Documents/houdini22.0/packages/</code>(文件夹放到其他位置时,改其中的路径即可);</li>
+    <li>启动 Houdini,顶部菜单即出现 <strong>HouTools</strong>。</li>
+  </ol>
+  <div class="note">仅支持 Windows:Automation 的窗口置顶用 Win32 API,部分工具的「打开所在文件夹」依赖 explorer。</div>
+</section>
+
+<footer>
+  <p>HouTools 以 <a href="../LICENSE">GPL-3.0</a> 协议开源,Copyright (c) 2026 mahx_vfx。二次分发须同样以 GPL-3.0 开源并保留版权声明。</p>
+  <p>本项目为个人开发的第三方工具,与 SideFX 无关、非官方产品;Houdini 及相关商标归 SideFX Software 所有。运行本项目需要使用者自行持有合法的 Houdini 授权。</p>
+  <p>本页为离线单文件文档(零外部依赖),由主菜单 <code>HouTools → About HouTools</code> 在默认浏览器中打开。</p>
+</footer>
+
+</div>
+
+<a class="top-link" href="#" title="回到顶部">↑</a>
+
+<script>
+(function () {
+  var car = document.getElementById('carousel');
+  if (!car) return;
+  var track = car.querySelector('.car-track');
+  var slides = car.querySelectorAll('.slide');
+  var dotsBox = car.querySelector('.car-dots');
+  var INTERVAL = 5000;
+  var n = slides.length;
+  var idx = 0;
+  var timer = null;
+
+  for (var i = 0; i < n; i++) {
+    var d = document.createElement('button');
+    d.type = 'button';
+    d.className = 'car-dot';
+    d.setAttribute('aria-label', '第' + (i + 1) + '张');
+    (function (i) {
+      d.addEventListener('click', function () { go(i); restart(); });
+    })(i);
+    dotsBox.appendChild(d);
+  }
+  var dots = dotsBox.querySelectorAll('.car-dot');
+
+  function go(i) {
+    idx = (i % n + n) % n;
+    track.style.transform = 'translateX(' + (-idx * 100) + '%)';
+    for (var k = 0; k < n; k++) {
+      dots[k].className = (k === idx) ? 'car-dot on' : 'car-dot';
+    }
+  }
+
+  function restart() {
+    if (timer) clearInterval(timer);
+    timer = setInterval(function () { go(idx + 1); }, INTERVAL);
+  }
+
+  car.querySelector('.car-prev').addEventListener('click', function () { go(idx - 1); restart(); });
+  car.querySelector('.car-next').addEventListener('click', function () { go(idx + 1); restart(); });
+  car.addEventListener('mouseenter', function () { if (timer) clearInterval(timer); });
+  car.addEventListener('mouseleave', restart);
+
+  var touchX = null;
+  car.addEventListener('touchstart', function (e) {
+    touchX = e.touches[0].clientX;
+  }, { passive: true });
+  car.addEventListener('touchend', function (e) {
+    if (touchX === null) return;
+    var dx = e.changedTouches[0].clientX - touchX;
+    if (Math.abs(dx) > 40) { go(idx + (dx < 0 ? 1 : -1)); restart(); }
+    touchX = null;
+  });
+
+  go(0);
+  restart();
+})();
+</script>
+
+</body>
+</html>
