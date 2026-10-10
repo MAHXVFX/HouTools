@@ -32,31 +32,45 @@
   /* ---- 头部横幅(宣传图铺满全宽,左暗区放标题,右下毛玻璃面板放仓库链接) ---- */
   .hero {
     position: relative;
-    height: clamp(430px, 32vw, 470px);
+    min-height: 470px;
     overflow: hidden;
     background: #14100f;
   }
+  /* 底层:清晰原图。与磨砂层同几何(inset 同值、同 background),渐变过渡处两份图才逐像素对齐 */
   .hero-bg {
     position: absolute;
-    inset: 0;
+    inset: -44px;
     background: url("hero.png") center 38% / cover no-repeat;
+    filter: saturate(1.1) brightness(1.03);
   }
-  /* 三层压暗:左→右保标题对比、顶部过渡、底部渐隐融入页面底色(偏轻,别盖住毛玻璃背后的亮区) */
+  /* 磨砂层:同图高斯模糊,水平渐变蒙版从左往右淡出——左侧毛玻璃、右侧清晰。
+     大blur+提亮提饱和,让左侧暗区的霓虹光透过霜层泛出来,和右侧清晰区拉开差距 */
+  .hero-frost {
+    position: absolute;
+    inset: -44px;
+    background: url("hero.png") center 38% / cover no-repeat;
+    filter: blur(16px) saturate(1.45) brightness(1.18);
+    -webkit-mask-image: linear-gradient(90deg, #000 0%, #000 44%, transparent 58%);
+    mask-image: linear-gradient(90deg, #000 0%, #000 44%, transparent 58%);
+  }
+  /* 磨砂罩:底部渐隐放最上层(底边与页面底色逐像素一致,头部与内容间无分界)
+     + 左侧页面底色罩(与磨砂蒙版同梯度从左往右淡出,中和霜层泛白,让左侧贴近正文背景)
+     + 均匀暗雾 + 顶部过渡 */
   .hero-shade {
     position: absolute;
     inset: 0;
     background:
-      linear-gradient(90deg, rgba(26, 21, 20, 0.66) 0%, rgba(26, 21, 20, 0.34) 28%, rgba(26, 21, 20, 0) 52%),
-      linear-gradient(180deg, rgba(26, 21, 20, 0.5) 0%, rgba(26, 21, 20, 0) 22%),
-      linear-gradient(180deg, rgba(26, 21, 20, 0) 68%, rgba(26, 21, 20, 0.6) 90%, #1a1514 100%);
+      linear-gradient(180deg, rgba(26, 21, 20, 0) 62%, rgba(26, 21, 20, 0.72) 84%, #1a1514 92%, #1a1514 100%),
+      linear-gradient(90deg, rgba(26, 21, 20, 0.62) 0%, rgba(26, 21, 20, 0.38) 44%, rgba(26, 21, 20, 0) 58%),
+      linear-gradient(rgba(26, 21, 20, 0.10), rgba(26, 21, 20, 0.10)),
+      linear-gradient(180deg, rgba(26, 21, 20, 0.32) 0%, rgba(26, 21, 20, 0) 22%);
     pointer-events: none;
   }
   .hero-inner {
     position: relative;
-    height: 100%;
     max-width: 1150px;
     margin: 0 auto;
-    padding: 0 28px;
+    padding: 0 28px 104px;
   }
   .hero-kicker {
     padding-top: clamp(38px, 6.5vw, 66px);
@@ -102,11 +116,10 @@
     color: #e8ebef;
   }
 
-  /* 毛玻璃面板:悬浮在画面右下亮区上,backdrop 模糊透出霓虹光斑 */
+  /* 毛玻璃面板:流式排在徽章下方(标题区左下),backdrop 模糊透出磨砂层的光斑 */
   .hero-glass {
-    position: absolute;
-    right: 28px;
-    bottom: 60px;
+    width: fit-content;
+    margin-top: 20px;
     display: flex;
     flex-direction: column;
     align-items: flex-start;
@@ -158,21 +171,6 @@
     font-size: 13px;
     font-weight: 600;
     color: #d8cdc2;
-  }
-  /* 窄屏:标题区与毛玻璃面板改为纵向流式排布,整体加强压暗保文字对比 */
-  @media (max-width: 860px) {
-    .hero { height: auto; min-height: 500px; }
-    .hero-kicker { padding-top: 34px; }
-    .hero-inner { padding-bottom: 120px; }
-    .hero-glass { position: static; margin-top: 18px; }
-    .hero-shade {
-      background: linear-gradient(180deg,
-        rgba(26, 21, 20, 0.62) 0%,
-        rgba(26, 21, 20, 0.18) 34%,
-        rgba(26, 21, 20, 0.18) 62%,
-        rgba(26, 21, 20, 0.6) 88%,
-        #1a1514 100%);
-    }
   }
 
   /* ---- 目录 ---- */
@@ -351,6 +349,7 @@
 
 <header class="hero">
   <div class="hero-bg" aria-hidden="true"></div>
+  <div class="hero-frost" aria-hidden="true"></div>
   <div class="hero-shade" aria-hidden="true"></div>
   <div class="hero-inner">
     <div class="hero-kicker">HOUDINI 22 · PLUGIN SUITE</div>
