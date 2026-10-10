@@ -87,14 +87,19 @@ def main():
     print("recipe_library menu wiring: consistent")
 
     # About 页面:仅主菜单注册（全局性条目，不进网络编辑器菜单）；
-    # 手册是离线单文件（无互联网工作站），样式内联、不得引用外部 URL 资源
+    # 手册离线可用（无互联网工作站）：样式内联、不加载任何外部资源
+    # ——src= 一律禁止、外部样式表(<link>)禁止；指向仓库的导航超链接
+    # （<a href="https://...">）不是资源加载，离线打开不受影响，允许
     assert 'id="houtools.about"' in main_xml
     assert 'id="houtools.about"' not in nv_xml
     about_html = ROOT / "docs" / "about.html"
     assert about_html.is_file()
     about_src = about_html.read_text(encoding="utf-8")
     assert "<style>" in about_src
-    assert 'src="http' not in about_src and 'href="http' not in about_src
+    assert 'src="http' not in about_src
+    assert "<link" not in about_src
+    assert "gitcode.com/mahx-vfx/HouTools" in about_src
+    assert "github.com/MAHXVFX/HouTools" in about_src
     print("about menu wiring: consistent")
 
     # OPmenu（节点右键菜单）：仓库根随 HOUDINI_PATH 加载；条目走两行分发器，

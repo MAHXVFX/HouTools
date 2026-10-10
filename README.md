@@ -35,7 +35,7 @@ Houdini 22 插件工具集，开发期支持**手动热加载**：改完代码�
 | 视频转序列图 | `HouTools → Video to Sequence` | ffmpeg 提取视频为 JPG 序列（帧级进度，质量/起始帧/位数/前缀可调），可选自动设置相机 Background Image |
 | Hdr Library | `HouTools → Hdr Library` | HDR 环境贴图库浏览器：缩略图网格（后台生成）、子文件夹分类 + 收藏，选中灯光后双击即贴图 |
 | Recipe Library | `HouTools → Recipe Library` | recipes 资产库浏览器：官方 recipes 卡片网格浏览（缩略图/标签/主题色），树形侧栏过滤，双击/拖拽应用到网络，Markdown 文档，数据导入/导出 |
-| About HouTools | `HouTools → About HouTools` | 用默认浏览器打开离线使用手册（`docs/about.html`，单文件零外部依赖）：全部工具的功能与用法 |
+| About HouTools | `HouTools → About HouTools` | 用默认浏览器打开离线使用手册（`docs/about.html` + 本地截图，零外部网络资源）：全部工具的功能与用法 |
 
 ### Automation
 
@@ -183,7 +183,9 @@ HouTools/
 ├── NetworkViewMenu.xml            # 网络编辑器面板菜单栏（HouTools 顶层菜单，注入机制同上）
 ├── HouTools.json                # 包清单副本（生效的一份在 packages/ 下）
 ├── scripts/externaldragdrop.py  # 官方拖放钩子分发器（拖 .abc 导入，逻辑在 houtools/dragdrop.py）
-├── docs/about.html               # 离线使用手册（About HouTools 菜单用默认浏览器打开，单文件零外部依赖）
+├── docs/                         # 离线使用手册（About HouTools 菜单用默认浏览器打开，零外部网络资源）
+│   ├── about.html                # 手册页面（样式/轮播 JS 内联，轮播含工具截图）
+│   └── about_shots/              # 轮播工具截图（tests/gen_about_shots.py 离屏生成，窗口 UI 变更后重跑）
 ├── python_panels/Automation.pypanel  # Automation 的 Python Panel 界面
 ├── python3.13libs/
 │   ├── uiready.py                 # UI 启动钩子：装默认键位（会话启动时执行）

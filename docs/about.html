@@ -5,16 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>HouTools — 使用手册</title>
 <style>
-  /* HouTools 暗色主题(与工具窗口共用一套配色),零外部依赖、完全离线可用 */
+  /* HouTools 暗色主题(暖色系,参考项目主题色板),零外部依赖、完全离线可用 */
   :root {
-    --bg: #18181b;
-    --card: #1d1d20;
-    --border: #2d2d2d;
-    --blue: #0d6399;
-    --blue-bright: #4da3d8;
-    --purple: #8a5cf5;
-    --text: #e4e4e7;
-    --muted: #a1a1aa;
+    --bg: #1a1514;
+    --card: #211a19;
+    --border: #3a2d2a;
+    --accent: #c8102e;
+    --accent-bright: #f2a33c;
+    --warm: #e2571b;
+    --text: #ece5df;
+    --muted: #a89e96;
     --mono: Consolas, "Courier New", monospace;
   }
   * { box-sizing: border-box; }
@@ -25,14 +25,38 @@
     font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
     font-size: 15px;
     line-height: 1.75;
+    position: relative;
+  }
+  /* 顶部暖色光晕:色板渐变 + 长距离向下渐隐,一直延伸到轮播卡片
+     顶部附近才完全融入页面底色(垫在所有内容之下,z-index:-1) */
+  body::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 400px;
+    background:
+      linear-gradient(180deg,
+        rgba(26, 21, 20, 0) 0%,
+        rgba(26, 21, 20, 0.2) 40%,
+        rgba(26, 21, 20, 0.75) 68%,
+        #1a1514 88%,
+        #1a1514 100%),
+      linear-gradient(120deg,
+        #0e1626 0%,
+        #2e1327 20%,
+        #6b1020 40%,
+        #b31226 58%,
+        #e2571b 78%,
+        #f5a01c 100%);
+    pointer-events: none;
+    z-index: -1;
   }
   .wrap { max-width: 880px; margin: 0 auto; padding: 0 24px 64px; }
 
   /* ---- 头部 ---- */
   header {
-    background: linear-gradient(135deg, #0d6399 0%, #1d1d20 55%, #8a5cf5 130%);
-    padding: 48px 24px 36px;
-    border-bottom: 1px solid var(--border);
+    /* 色板渐变改由 body::before 的顶部光晕承载(可延伸到内容区) */
+    padding: 42px 24px 12px;
   }
   header .inner { max-width: 880px; margin: 0 auto; }
   header h1 {
@@ -40,8 +64,8 @@
     font-size: 34px;
     letter-spacing: 1px;
   }
-  header h1 .v { font-size: 15px; color: #cfd6dd; font-weight: normal; margin-left: 10px; }
-  header p.sub { margin: 0 0 18px; color: #d7dbe0; }
+  header h1 .v { font-size: 15px; color: #f0e2cf; font-weight: normal; margin-left: 10px; }
+  header p.sub { margin: 0 0 18px; color: #ecdccd; }
   .badges { display: flex; flex-wrap: wrap; gap: 8px; }
   .badge {
     display: inline-block;
@@ -51,6 +75,47 @@
     background: rgba(24, 24, 27, 0.55);
     border: 1px solid rgba(255, 255, 255, 0.22);
     color: #e8ebef;
+  }
+
+  /* 仓库地址条(完整 URL 可见,点击跳转,新标签打开;上下排列) */
+  .repo-row {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    margin-top: 16px;
+  }
+  .repo-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    padding: 5px 14px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    background: rgba(14, 12, 12, 0.5);
+    color: #f2e8da;
+    text-decoration: none;
+    font-size: 13px;
+  }
+  .repo-link:hover { border-color: var(--accent-bright); }
+  .repo-link svg { width: 15px; height: 15px; fill: currentColor; flex: none; }
+  .repo-link .repo-url {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--accent-bright);
+  }
+  .repo-link:hover .repo-url { color: #ffd08a; }
+  .repo-tag {
+    font-size: 11px;
+    padding: 1px 9px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.13);
+    color: #d8cdc2;
+  }
+  .repo-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: #d8cdc2;
   }
 
   /* ---- 目录 ---- */
@@ -72,7 +137,7 @@
     text-decoration: none;
     font-size: 13.5px;
   }
-  nav a:hover { border-color: var(--blue-bright); color: var(--blue-bright); }
+  nav a:hover { border-color: var(--accent-bright); color: var(--accent-bright); }
 
   /* ---- 章节 ---- */
   section {
@@ -82,7 +147,7 @@
     padding: 22px 26px;
     margin: 22px 0;
   }
-  section:target { border-color: var(--blue); }
+  section:target { border-color: var(--accent); }
   h2 {
     margin: 0 0 4px;
     font-size: 21px;
@@ -94,21 +159,21 @@
     font-size: 13.5px;
     color: var(--muted);
   }
-  .entry code { color: var(--blue-bright); }
+  .entry code { color: var(--accent-bright); }
   h3 { font-size: 15.5px; margin: 18px 0 6px; }
   ul { margin: 8px 0; padding-left: 22px; }
   li { margin: 4px 0; }
-  li::marker { color: var(--purple); }
+  li::marker { color: var(--warm); }
   code {
     font-family: var(--mono);
     font-size: 13px;
-    background: #18181b;
+    background: var(--bg);
     border: 1px solid var(--border);
     border-radius: 4px;
     padding: 1px 6px;
     white-space: nowrap;
   }
-  a { color: var(--blue-bright); }
+  a { color: var(--accent-bright); }
 
   table {
     width: 100%;
@@ -122,12 +187,12 @@
     text-align: left;
     vertical-align: top;
   }
-  th { background: #232327; color: #d8d8de; font-weight: 600; }
+  th { background: #2a2220; color: #ded6cf; font-weight: 600; }
   td code { white-space: normal; }
 
   .note {
-    border-left: 3px solid var(--purple);
-    background: #232329;
+    border-left: 3px solid var(--warm);
+    background: #2a201c;
     border-radius: 0 6px 6px 0;
     padding: 8px 14px;
     margin: 12px 0;
@@ -151,7 +216,7 @@
     width: 40px;
     height: 40px;
     border-radius: 50%;
-    background: var(--blue);
+    background: var(--accent);
     color: #fff;
     text-align: center;
     line-height: 40px;
@@ -159,7 +224,7 @@
     font-size: 18px;
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
   }
-  .top-link:hover { background: var(--blue-bright); }
+  .top-link:hover { background: var(--accent-bright); }
 
   /* ---- 工具轮播(纯内联 SVG 示意图,零外部资源) ---- */
   .carousel {
@@ -168,7 +233,7 @@
     background: var(--card);
     border: 1px solid var(--border);
     border-radius: 10px;
-    margin: 28px 0 0;
+    margin: 18px 0 0;
   }
   .car-track { display: flex; transition: transform 0.5s ease; }
   .slide {
@@ -179,6 +244,7 @@
     text-decoration: none;
   }
   .slide svg { display: block; width: 100%; height: auto; }
+  .slide img { display: block; width: 100%; height: auto; background: #241d1c; }
   .slide-cap {
     position: absolute;
     left: 0; right: 0; bottom: 0;
@@ -186,7 +252,7 @@
     align-items: baseline;
     gap: 12px;
     padding: 48px 26px 14px;
-    background: linear-gradient(rgba(24, 24, 27, 0), rgba(24, 24, 27, 0.92) 65%);
+    background: linear-gradient(rgba(26, 21, 20, 0), rgba(26, 21, 20, 0.92) 65%);
   }
   .slide-cap strong { font-size: 18px; color: var(--text); }
   .slide-cap span { font-size: 13.5px; color: var(--muted); }
@@ -197,14 +263,14 @@
     width: 36px; height: 36px;
     border-radius: 50%;
     border: 1px solid var(--border);
-    background: rgba(24, 24, 27, 0.72);
+    background: rgba(20, 15, 14, 0.72);
     color: var(--text);
     font-size: 20px;
     line-height: 1;
     cursor: pointer;
     opacity: 0.72;
   }
-  .car-btn:hover { opacity: 1; border-color: var(--blue-bright); color: var(--blue-bright); }
+  .car-btn:hover { opacity: 1; border-color: var(--accent-bright); color: var(--accent-bright); }
   .car-prev { left: 12px; }
   .car-next { right: 12px; }
   .car-dots {
@@ -218,10 +284,10 @@
     padding: 0;
     border: none;
     border-radius: 50%;
-    background: #4a4a52;
+    background: #5c4b43;
     cursor: pointer;
   }
-  .car-dot.on { background: var(--blue-bright); }
+  .car-dot.on { background: var(--accent-bright); }
 </style>
 </head>
 <body>
@@ -236,6 +302,19 @@
       <span class="badge">Windows</span>
       <span class="badge">完全离线</span>
     </div>
+    <div class="repo-row">
+      <span class="repo-label">仓库地址</span>
+      <a class="repo-link" href="https://gitcode.com/mahx-vfx/HouTools" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+        <span class="repo-url">https://gitcode.com/mahx-vfx/HouTools</span>
+        <span class="repo-tag">国内</span>
+      </a>
+      <a class="repo-link" href="https://github.com/MAHXVFX/HouTools" target="_blank" rel="noopener">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+        <span class="repo-url">https://github.com/MAHXVFX/HouTools</span>
+        <span class="repo-tag">国外</span>
+      </a>
+    </div>
   </div>
 </header>
 
@@ -246,37 +325,7 @@
   <div class="car-track">
 
     <a class="slide" href="#automation">
-      <svg viewBox="0 0 880 320" role="img" aria-label="Automation 界面示意">
-        <rect width="880" height="320" fill="#232327"/>
-        <rect width="880" height="40" fill="#1d1d20"/>
-        <circle cx="22" cy="20" r="6" fill="#d1283e" opacity=".8"/><circle cx="42" cy="20" r="6" fill="#c9a53e" opacity=".8"/><circle cx="62" cy="20" r="6" fill="#3f9d58" opacity=".8"/>
-        <text x="88" y="26" font-family="Segoe UI, sans-serif" font-size="14" fill="#c9c9d0">Automation</text>
-        <g font-family="Segoe UI, sans-serif" font-size="12">
-          <rect x="30" y="58" width="540" height="50" rx="6" fill="#2a2a2f"/>
-          <rect x="42" y="72" width="92" height="22" rx="4" fill="#0d6399"/><text x="88" y="87" text-anchor="middle" fill="#eaf2f8">BUTTON</text>
-          <rect x="150" y="68" width="220" height="9" rx="4" fill="#3f3f47"/><rect x="150" y="84" width="290" height="9" rx="4" fill="#33333a"/>
-          <circle cx="548" cy="83" r="10" fill="#3f9d58"/>
-          <rect x="30" y="116" width="540" height="50" rx="6" fill="#2a2a2f"/>
-          <rect x="42" y="130" width="92" height="22" rx="4" fill="#8a5cf5"/><text x="88" y="145" text-anchor="middle" fill="#f0eafb">FLIPBOOK</text>
-          <rect x="150" y="126" width="260" height="9" rx="4" fill="#3f3f47"/><rect x="150" y="142" width="240" height="9" rx="4" fill="#33333a"/>
-          <circle cx="548" cy="141" r="10" fill="#3f9d58"/>
-          <rect x="30" y="174" width="540" height="50" rx="6" fill="#2a2a2f"/>
-          <rect x="42" y="188" width="92" height="22" rx="4" fill="#5c5c66"/><text x="88" y="203" text-anchor="middle" fill="#e8e8ec">WEBHOOK</text>
-          <rect x="150" y="184" width="200" height="9" rx="4" fill="#3f3f47"/><rect x="150" y="200" width="260" height="9" rx="4" fill="#33333a"/>
-          <circle cx="548" cy="199" r="10" fill="#3f9d58"/>
-          <rect x="30" y="232" width="540" height="50" rx="6" fill="#2a2a2f"/>
-          <rect x="42" y="246" width="170" height="22" rx="4" fill="#d1283e"/><text x="127" y="261" text-anchor="middle" font-size="10" fill="#fbeaee">DEADLINE WORKER</text>
-          <rect x="150" y="242" width="240" height="9" rx="4" fill="#3f3f47"/><rect x="150" y="258" width="210" height="9" rx="4" fill="#33333a"/>
-          <circle cx="548" cy="257" r="10" fill="#6a6a72"/>
-          <rect x="30" y="296" width="380" height="8" rx="4" fill="#33333a"/><rect x="30" y="296" width="226" height="8" rx="4" fill="#0d6399"/>
-          <rect x="610" y="58" width="240" height="64" rx="8" fill="#0d6399"/><text x="730" y="97" text-anchor="middle" font-size="20" fill="#ffffff">START</text>
-          <rect x="610" y="136" width="240" height="56" rx="8" fill="#3a3a41"/><text x="730" y="170" text-anchor="middle" font-size="16" fill="#d8d8de">Stop</text>
-          <rect x="610" y="206" width="240" height="76" rx="8" fill="#26262b"/>
-          <text x="624" y="230" font-size="11" fill="#8a8a92">15:32:01  cache_01 done</text>
-          <text x="624" y="250" font-size="11" fill="#8a8a92">15:35:47  cache_02 running</text>
-          <text x="624" y="270" font-size="11" fill="#5f9c6d">15:35:47  progress 60%</text>
-        </g>
-      </svg>
+      <img src="about_shots/automation.png" alt="Automation 界面截图:三个任务槽与执行按钮">
       <div class="slide-cap"><strong>Automation</strong><span>任务队列一键依序执行,收工挂机跑缓存</span></div>
     </a>
 
@@ -284,11 +333,11 @@
       <svg viewBox="0 0 880 320" role="img" aria-label="粘贴为 Object Merge 界面示意">
         <defs>
           <linearGradient id="c2-line" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0" stop-color="#8a5cf5"/><stop offset="1" stop-color="#0d6399"/>
+            <stop offset="0" stop-color="#e2571b"/><stop offset="1" stop-color="#c8102e"/>
           </linearGradient>
         </defs>
-        <rect width="880" height="320" fill="#232327"/>
-        <rect width="880" height="40" fill="#1d1d20"/>
+        <rect width="880" height="320" fill="#241d1c"/>
+        <rect width="880" height="40" fill="#201a19"/>
         <circle cx="22" cy="20" r="6" fill="#d1283e" opacity=".8"/><circle cx="42" cy="20" r="6" fill="#c9a53e" opacity=".8"/><circle cx="62" cy="20" r="6" fill="#3f9d58" opacity=".8"/>
         <text x="88" y="26" font-family="Segoe UI, sans-serif" font-size="14" fill="#c9c9d0">Network Editor — Paste as Object Merge</text>
         <g stroke="#2d2d2d" stroke-width="1">
@@ -296,13 +345,13 @@
           <path d="M110 40 V320 M260 40 V320 M410 40 V320 M560 40 V320 M710 40 V320"/>
         </g>
         <g font-family="Segoe UI, sans-serif" font-size="13">
-          <rect x="70" y="112" width="170" height="76" rx="6" fill="#2a2a2f" stroke="#8a5cf5" stroke-width="2"/>
-          <rect x="70" y="112" width="170" height="24" rx="6" fill="#8a5cf5" opacity=".3"/>
+          <rect x="70" y="112" width="170" height="76" rx="6" fill="#2a2a2f" stroke="#e2571b" stroke-width="2"/>
+          <rect x="70" y="112" width="170" height="24" rx="6" fill="#e2571b" opacity=".3"/>
           <text x="82" y="129" fill="#e4e4e7">grid1</text>
           <circle cx="76" cy="158" r="4" fill="#6a6a72"/><circle cx="76" cy="174" r="4" fill="#6a6a72"/>
           <path d="M240 150 C 290 150, 285 150, 334 150" stroke="url(#c2-line)" stroke-width="2.5" fill="none"/>
-          <rect x="334" y="112" width="200" height="76" rx="6" fill="#2a2a2f" stroke="#0d6399" stroke-width="2"/>
-          <rect x="334" y="112" width="200" height="24" rx="6" fill="#0d6399" opacity=".3"/>
+          <rect x="334" y="112" width="200" height="76" rx="6" fill="#2a2a2f" stroke="#c8102e" stroke-width="2"/>
+          <rect x="334" y="112" width="200" height="24" rx="6" fill="#c8102e" opacity=".3"/>
           <text x="346" y="129" fill="#e4e4e7">Merge_grid1</text>
           <circle cx="340" cy="150" r="4" fill="#6a6a72"/><circle cx="340" cy="170" r="4" fill="#6a6a72"/>
           <path d="M534 150 C 580 150, 575 150, 618 150" stroke="#6a6a72" stroke-width="2" fill="none"/>
@@ -310,8 +359,8 @@
           <rect x="618" y="112" width="180" height="24" rx="6" fill="#5c5c66" opacity=".3"/>
           <text x="630" y="129" fill="#e4e4e7">OUT</text>
           <circle cx="624" cy="150" r="4" fill="#6a6a72"/>
-          <rect x="640" y="238" width="200" height="34" rx="17" fill="#26262b" stroke="#0d6399"/>
-          <text x="740" y="260" text-anchor="middle" font-size="14" fill="#4da3d8">Ctrl + Shift + V</text>
+          <rect x="640" y="238" width="200" height="34" rx="17" fill="#26262b" stroke="#c8102e"/>
+          <text x="740" y="260" text-anchor="middle" font-size="14" fill="#f2a33c">Ctrl + Shift + V</text>
           <text x="70" y="260" font-size="12" fill="#8a8a92">引用而非副本 · 颜色随源 · 单 undo 槽</text>
         </g>
       </svg>
@@ -320,20 +369,20 @@
 
     <a class="slide" href="#alembic-dragdrop">
       <svg viewBox="0 0 880 320" role="img" aria-label="拖放导入 Alembic 界面示意">
-        <rect width="880" height="320" fill="#232327"/>
-        <rect width="880" height="40" fill="#1d1d20"/>
+        <rect width="880" height="320" fill="#241d1c"/>
+        <rect width="880" height="40" fill="#201a19"/>
         <circle cx="22" cy="20" r="6" fill="#d1283e" opacity=".8"/><circle cx="42" cy="20" r="6" fill="#c9a53e" opacity=".8"/><circle cx="62" cy="20" r="6" fill="#3f9d58" opacity=".8"/>
         <text x="88" y="26" font-family="Segoe UI, sans-serif" font-size="14" fill="#c9c9d0">External Drag &amp; Drop — .abc</text>
         <g font-family="Segoe UI, sans-serif">
-          <rect x="80" y="90" width="170" height="140" rx="10" fill="#2a2a2f" stroke="#8a5cf5" stroke-width="2" stroke-dasharray="7 5"/>
+          <rect x="80" y="90" width="170" height="140" rx="10" fill="#2a2a2f" stroke="#e2571b" stroke-width="2" stroke-dasharray="7 5"/>
           <path d="M214 90 L250 90 L250 126 Z" fill="#3f3f47"/>
-          <text x="165" y="170" text-anchor="middle" font-size="26" font-weight="bold" fill="#c9b6f5">.abc</text>
+          <text x="165" y="170" text-anchor="middle" font-size="26" font-weight="bold" fill="#f5c9a8">.abc</text>
           <text x="165" y="200" text-anchor="middle" font-size="12" fill="#8a8a92">building_v3.abc</text>
-          <path d="M290 160 L420 160" stroke="#4da3d8" stroke-width="3" stroke-dasharray="9 7" fill="none"/>
-          <polygon points="420,150 444,160 420,170" fill="#4da3d8"/>
+          <path d="M290 160 L420 160" stroke="#f2a33c" stroke-width="3" stroke-dasharray="9 7" fill="none"/>
+          <polygon points="420,150 444,160 420,170" fill="#f2a33c"/>
           <text x="367" y="142" text-anchor="middle" font-size="12" fill="#8a8a92">drop</text>
-          <rect x="470" y="70" width="300" height="62" rx="6" fill="#2a2a2f" stroke="#0d6399" stroke-width="2"/>
-          <rect x="470" y="70" width="300" height="22" rx="6" fill="#0d6399" opacity=".3"/>
+          <rect x="470" y="70" width="300" height="62" rx="6" fill="#2a2a2f" stroke="#c8102e" stroke-width="2"/>
+          <rect x="470" y="70" width="300" height="22" rx="6" fill="#c8102e" opacity=".3"/>
           <text x="484" y="87" font-size="13" fill="#e4e4e7">building_v3</text>
           <text x="484" y="119" font-size="11" fill="#8a8a92">Alembic Archive · 自动构建层级</text>
           <g font-size="12" fill="#b8b8c0">
@@ -347,106 +396,17 @@
     </a>
 
     <a class="slide" href="#video-to-sequence">
-      <svg viewBox="0 0 880 320" role="img" aria-label="视频转序列图界面示意">
-        <defs>
-          <linearGradient id="c4-a" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1d3a55"/><stop offset="1" stop-color="#0d6399"/></linearGradient>
-          <linearGradient id="c4-b" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#33265e"/><stop offset="1" stop-color="#8a5cf5"/></linearGradient>
-        </defs>
-        <rect width="880" height="320" fill="#232327"/>
-        <rect width="880" height="40" fill="#1d1d20"/>
-        <circle cx="22" cy="20" r="6" fill="#d1283e" opacity=".8"/><circle cx="42" cy="20" r="6" fill="#c9a53e" opacity=".8"/><circle cx="62" cy="20" r="6" fill="#3f9d58" opacity=".8"/>
-        <text x="88" y="26" font-family="Segoe UI, sans-serif" font-size="14" fill="#c9c9d0">Video to Sequence</text>
-        <g font-family="Segoe UI, sans-serif">
-          <rect x="60" y="66" width="320" height="188" rx="8" fill="url(#c4-a)"/>
-          <polygon points="205,145 205,175 232,160" fill="#ffffff" opacity=".9"/>
-          <rect x="72" y="224" width="296" height="7" rx="3" fill="#18181b" opacity=".65"/>
-          <rect x="72" y="224" width="118" height="7" rx="3" fill="#4da3d8"/>
-          <path d="M410 160 L448 160" stroke="#4da3d8" stroke-width="3" fill="none"/>
-          <polygon points="448,152 462,160 448,168" fill="#4da3d8"/>
-          <g>
-            <rect x="486" y="66" width="170" height="88" rx="6" fill="url(#c4-b)"/><text x="496" y="170" font-size="11" fill="#8a8a92" font-family="Segoe UI, sans-serif">shot.0001.jpg</text>
-            <rect x="672" y="66" width="170" height="88" rx="6" fill="url(#c4-a)"/><text x="682" y="170" font-size="11" fill="#8a8a92" font-family="Segoe UI, sans-serif">shot.0002.jpg</text>
-            <rect x="486" y="184" width="170" height="88" rx="6" fill="url(#c4-a)" opacity=".82"/><text x="496" y="288" font-size="11" fill="#8a8a92" font-family="Segoe UI, sans-serif">shot.0003.jpg</text>
-            <rect x="672" y="184" width="170" height="88" rx="6" fill="url(#c4-b)" opacity=".85"/><text x="682" y="288" font-size="11" fill="#8a8a92" font-family="Segoe UI, sans-serif">shot.0004.jpg</text>
-          </g>
-          <rect x="60" y="288" width="360" height="10" rx="5" fill="#33333a"/>
-          <rect x="60" y="288" width="184" height="10" rx="5" fill="#0d6399"/>
-          <text x="430" y="297" font-size="12" fill="#8a8a92" font-family="Segoe UI, sans-serif">124 / 240 frames</text>
-        </g>
-      </svg>
+      <img src="about_shots/videoseq.png" alt="视频转序列图界面截图:参数与输出设置">
       <div class="slide-cap"><strong>Video to Sequence</strong><span>ffmpeg 提取视频为帧序列,可直连相机背景</span></div>
     </a>
 
     <a class="slide" href="#hdr-library">
-      <svg viewBox="0 0 880 320" role="img" aria-label="Hdr Library 界面示意">
-        <defs>
-          <linearGradient id="c5-sky1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#28527a"/><stop offset="1" stop-color="#e0a45c"/></linearGradient>
-          <linearGradient id="c5-sky2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1d1d3a"/><stop offset="1" stop-color="#4a5a9c"/></linearGradient>
-          <linearGradient id="c5-sky3" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5c6a72"/><stop offset="1" stop-color="#c9c9c9"/></linearGradient>
-          <linearGradient id="c5-sky4" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0d3b4a"/><stop offset="1" stop-color="#2a8a8a"/></linearGradient>
-          <linearGradient id="c5-sky5" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3a2a5c"/><stop offset="1" stop-color="#c96a8a"/></linearGradient>
-          <linearGradient id="c5-sky6" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#264a2f"/><stop offset="1" stop-color="#a4c96a"/></linearGradient>
-        </defs>
-        <rect width="880" height="320" fill="#232327"/>
-        <rect width="880" height="40" fill="#1d1d20"/>
-        <circle cx="22" cy="20" r="6" fill="#d1283e" opacity=".8"/><circle cx="42" cy="20" r="6" fill="#c9a53e" opacity=".8"/><circle cx="62" cy="20" r="6" fill="#3f9d58" opacity=".8"/>
-        <text x="88" y="26" font-family="Segoe UI, sans-serif" font-size="14" fill="#c9c9d0">Hdr Library</text>
-        <rect x="30" y="56" width="190" height="236" rx="8" fill="#26262b"/>
-        <g font-family="Segoe UI, sans-serif" font-size="13">
-          <rect x="38" y="64" width="174" height="36" rx="6" fill="#0d6399" opacity=".55"/><rect x="50" y="76" width="90" height="10" rx="4" fill="#e4e4e7"/>
-          <rect x="50" y="116" width="70" height="10" rx="4" fill="#8a8a92"/><text x="196" y="126" text-anchor="end" font-size="11" fill="#a8824e">24</text>
-          <rect x="50" y="154" width="88" height="10" rx="4" fill="#8a8a92"/><text x="196" y="164" text-anchor="end" font-size="11" fill="#a8824e">12</text>
-          <rect x="50" y="192" width="60" height="10" rx="4" fill="#8a8a92"/><text x="196" y="202" text-anchor="end" font-size="11" fill="#a8824e">7</text>
-          <rect x="50" y="230" width="80" height="10" rx="4" fill="#8a8a92"/><text x="196" y="240" text-anchor="end" font-size="11" fill="#a8824e">3</text>
-        </g>
-        <g font-family="Segoe UI, sans-serif" font-size="11" fill="#8a8a92">
-          <rect x="250" y="56" width="188" height="106" rx="6" fill="url(#c5-sky1)"/><text x="260" y="152" fill="#f0e4d4">sunset_field.hdr</text>
-          <rect x="452" y="56" width="188" height="106" rx="6" fill="url(#c5-sky2)"/><text x="462" y="152">night_city.exr</text>
-          <rect x="654" y="56" width="188" height="106" rx="6" fill="url(#c5-sky3)"/><text x="664" y="152">overcast.hdr</text>
-          <rect x="250" y="186" width="188" height="106" rx="6" fill="url(#c5-sky4)"/><text x="260" y="282">studio_soft.hdr</text>
-          <rect x="452" y="186" width="188" height="106" rx="6" fill="url(#c5-sky5)"/><text x="462" y="282">dusk_park.exr</text>
-          <rect x="654" y="186" width="188" height="106" rx="6" fill="url(#c5-sky6)"/><text x="664" y="282">forest_morn.hdr</text>
-        </g>
-        <text x="826" y="82" font-size="18" fill="#e8c14a" font-family="Segoe UI, sans-serif">★</text>
-      </svg>
+      <img src="about_shots/hdr.png" alt="Hdr Library 界面截图:HDR 缩略图网格与分类侧栏">
       <div class="slide-cap"><strong>Hdr Library</strong><span>缩略图网格浏览,双击赋给选中灯光</span></div>
     </a>
 
     <a class="slide" href="#recipe-library">
-      <svg viewBox="0 0 880 320" role="img" aria-label="Recipe Library 界面示意">
-        <defs>
-          <linearGradient id="c6-t1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0d6399"/><stop offset="1" stop-color="#1d2a3a"/></linearGradient>
-          <linearGradient id="c6-t2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8a5cf5"/><stop offset="1" stop-color="#2a1d4a"/></linearGradient>
-          <linearGradient id="c6-t3" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2a8a6a"/><stop offset="1" stop-color="#1a2f28"/></linearGradient>
-        </defs>
-        <rect width="880" height="320" fill="#232327"/>
-        <rect width="880" height="40" fill="#1d1d20"/>
-        <circle cx="22" cy="20" r="6" fill="#d1283e" opacity=".8"/><circle cx="42" cy="20" r="6" fill="#c9a53e" opacity=".8"/><circle cx="62" cy="20" r="6" fill="#3f9d58" opacity=".8"/>
-        <text x="88" y="26" font-family="Segoe UI, sans-serif" font-size="14" fill="#c9c9d0">Recipe Library</text>
-        <g font-family="Segoe UI, sans-serif">
-          <rect x="60" y="60" width="240" height="112" rx="8" fill="#2a2a2f" stroke="#0d6399" stroke-width="2"/>
-          <rect x="60" y="60" width="240" height="64" rx="8" fill="url(#c6-t1)"/>
-          <rect x="72" y="134" width="120" height="10" rx="4" fill="#e4e4e7"/><rect x="72" y="152" width="80" height="8" rx="4" fill="#6a6a72"/>
-          <rect x="222" y="70" width="18" height="18" rx="4" fill="#0d6399" opacity=".01"/>
-          <text x="278" y="82" font-size="16" fill="#e8c14a">★</text>
-          <rect x="322" y="60" width="240" height="112" rx="8" fill="#2a2a2f"/>
-          <rect x="322" y="60" width="240" height="64" rx="8" fill="url(#c6-t2)"/>
-          <rect x="334" y="134" width="130" height="10" rx="4" fill="#e4e4e7"/><rect x="334" y="152" width="70" height="8" rx="4" fill="#6a6a72"/>
-          <rect x="584" y="60" width="240" height="112" rx="8" fill="#2a2a2f"/>
-          <rect x="584" y="60" width="240" height="64" rx="8" fill="url(#c6-t3)"/>
-          <rect x="596" y="134" width="110" height="10" rx="4" fill="#e4e4e7"/><rect x="596" y="152" width="90" height="8" rx="4" fill="#6a6a72"/>
-          <rect x="60" y="188" width="240" height="104" rx="8" fill="#2a2a2f"/>
-          <rect x="60" y="188" width="240" height="58" rx="8" fill="url(#c6-t2)" opacity=".85"/>
-          <rect x="72" y="256" width="140" height="10" rx="4" fill="#e4e4e7"/><rect x="72" y="274" width="60" height="8" rx="4" fill="#6a6a72"/>
-          <rect x="322" y="188" width="240" height="104" rx="8" fill="#2a2a2f"/>
-          <rect x="322" y="188" width="240" height="58" rx="8" fill="url(#c6-t1)" opacity=".85"/>
-          <rect x="334" y="256" width="120" height="10" rx="4" fill="#e4e4e7"/><rect x="334" y="274" width="84" height="8" rx="4" fill="#6a6a72"/>
-          <rect x="584" y="188" width="240" height="104" rx="8" fill="#2a2a2f"/>
-          <rect x="584" y="188" width="240" height="58" rx="8" fill="url(#c6-t3)" opacity=".85"/>
-          <rect x="596" y="256" width="100" height="10" rx="4" fill="#e4e4e7"/><rect x="596" y="274" width="72" height="8" rx="4" fill="#6a6a72"/>
-          <rect x="740" y="196" width="64" height="18" rx="9" fill="#8a5cf5" opacity=".4"/><text x="772" y="209" text-anchor="middle" font-size="10" fill="#e8e0fb">#pyro</text>
-        </g>
-      </svg>
+      <img src="about_shots/recipe.png" alt="Recipe Library 界面截图:recipe 卡片网格与预览面板">
       <div class="slide-cap"><strong>Recipe Library</strong><span>recipes 资产卡片浏览,双击/拖拽入网</span></div>
     </a>
 
@@ -654,7 +614,7 @@
 <footer>
   <p>HouTools 以 <a href="../LICENSE">GPL-3.0</a> 协议开源,Copyright (c) 2026 mahx_vfx。二次分发须同样以 GPL-3.0 开源并保留版权声明。</p>
   <p>本项目为个人开发的第三方工具,与 SideFX 无关、非官方产品;Houdini 及相关商标归 SideFX Software 所有。运行本项目需要使用者自行持有合法的 Houdini 授权。</p>
-  <p>本页为离线单文件文档(零外部依赖),由主菜单 <code>HouTools → About HouTools</code> 在默认浏览器中打开。</p>
+  <p>本页为离线文档(样式/脚本内联,配图为仓库内本地截图,零外部网络资源),由主菜单 <code>HouTools → About HouTools</code> 在默认浏览器中打开。</p>
 </footer>
 
 </div>
