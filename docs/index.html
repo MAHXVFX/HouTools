@@ -27,45 +27,70 @@
     line-height: 1.75;
     position: relative;
   }
-  /* 顶部暖色光晕:色板渐变 + 长距离向下渐隐,一直延伸到轮播卡片
-     顶部附近才完全融入页面底色(垫在所有内容之下,z-index:-1) */
-  body::before {
-    content: "";
-    position: absolute;
-    top: 0; left: 0; right: 0;
-    height: 400px;
-    background:
-      linear-gradient(180deg,
-        rgba(26, 21, 20, 0) 0%,
-        rgba(26, 21, 20, 0.2) 40%,
-        rgba(26, 21, 20, 0.75) 68%,
-        #1a1514 88%,
-        #1a1514 100%),
-      linear-gradient(120deg,
-        #0e1626 0%,
-        #2e1327 20%,
-        #6b1020 40%,
-        #b31226 58%,
-        #e2571b 78%,
-        #f5a01c 100%);
-    pointer-events: none;
-    z-index: -1;
-  }
   .wrap { max-width: 880px; margin: 0 auto; padding: 0 24px 64px; }
 
-  /* ---- 头部 ---- */
-  header {
-    /* 色板渐变改由 body::before 的顶部光晕承载(可延伸到内容区) */
-    padding: 42px 24px 12px;
+  /* ---- 头部横幅(宣传图铺满全宽,左暗区放标题,右下毛玻璃面板放仓库链接) ---- */
+  .hero {
+    position: relative;
+    height: clamp(430px, 32vw, 470px);
+    overflow: hidden;
+    background: #14100f;
   }
-  header .inner { max-width: 880px; margin: 0 auto; }
-  header h1 {
-    margin: 0 0 6px;
-    font-size: 34px;
+  .hero-bg {
+    position: absolute;
+    inset: 0;
+    background: url("hero.png") center 38% / cover no-repeat;
+  }
+  /* 三层压暗:左→右保标题对比、顶部过渡、底部渐隐融入页面底色(偏轻,别盖住毛玻璃背后的亮区) */
+  .hero-shade {
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(90deg, rgba(26, 21, 20, 0.66) 0%, rgba(26, 21, 20, 0.34) 28%, rgba(26, 21, 20, 0) 52%),
+      linear-gradient(180deg, rgba(26, 21, 20, 0.5) 0%, rgba(26, 21, 20, 0) 22%),
+      linear-gradient(180deg, rgba(26, 21, 20, 0) 68%, rgba(26, 21, 20, 0.6) 90%, #1a1514 100%);
+    pointer-events: none;
+  }
+  .hero-inner {
+    position: relative;
+    height: 100%;
+    max-width: 1150px;
+    margin: 0 auto;
+    padding: 0 28px;
+  }
+  .hero-kicker {
+    padding-top: clamp(38px, 6.5vw, 66px);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 3px;
+    color: var(--accent-bright);
+    text-shadow: 0 1px 12px rgba(0, 0, 0, 0.65);
+  }
+  .hero h1 {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 8px 0;
+    font-size: clamp(32px, 4.4vw, 46px);
     letter-spacing: 1px;
+    text-shadow: 0 2px 26px rgba(0, 0, 0, 0.7);
   }
-  header h1 .v { font-size: 15px; color: #f0e2cf; font-weight: normal; margin-left: 10px; }
-  header p.sub { margin: 0 0 18px; color: #ecdccd; }
+  .hero h1 .v {
+    font-size: 13px;
+    font-weight: normal;
+    color: #f0e2cf;
+    background: rgba(20, 16, 15, 0.45);
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    border-radius: 999px;
+    padding: 2px 11px;
+    text-shadow: none;
+  }
+  .hero p.sub {
+    margin: 0 0 16px;
+    color: #e6dcd2;
+    font-size: 15.5px;
+    text-shadow: 0 1px 14px rgba(0, 0, 0, 0.75);
+  }
   .badges { display: flex; flex-wrap: wrap; gap: 8px; }
   .badge {
     display: inline-block;
@@ -77,13 +102,30 @@
     color: #e8ebef;
   }
 
+  /* 毛玻璃面板:悬浮在画面右下亮区上,backdrop 模糊透出霓虹光斑 */
+  .hero-glass {
+    position: absolute;
+    right: 28px;
+    bottom: 60px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 14px 18px 16px;
+    border-radius: 14px;
+    background: rgba(24, 18, 16, 0.42);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    backdrop-filter: blur(18px) saturate(1.35);
+    -webkit-backdrop-filter: blur(18px) saturate(1.35);
+    box-shadow: 0 12px 42px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  }
+
   /* 仓库地址条(完整 URL 可见,点击跳转,新标签打开;上下排列) */
   .repo-row {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
     gap: 8px;
-    margin-top: 16px;
   }
   .repo-link {
     display: inline-flex;
@@ -116,6 +158,21 @@
     font-size: 13px;
     font-weight: 600;
     color: #d8cdc2;
+  }
+  /* 窄屏:标题区与毛玻璃面板改为纵向流式排布,整体加强压暗保文字对比 */
+  @media (max-width: 860px) {
+    .hero { height: auto; min-height: 500px; }
+    .hero-kicker { padding-top: 34px; }
+    .hero-inner { padding-bottom: 120px; }
+    .hero-glass { position: static; margin-top: 18px; }
+    .hero-shade {
+      background: linear-gradient(180deg,
+        rgba(26, 21, 20, 0.62) 0%,
+        rgba(26, 21, 20, 0.18) 34%,
+        rgba(26, 21, 20, 0.18) 62%,
+        rgba(26, 21, 20, 0.6) 88%,
+        #1a1514 100%);
+    }
   }
 
   /* ---- 目录 ---- */
@@ -292,8 +349,11 @@
 </head>
 <body>
 
-<header>
-  <div class="inner">
+<header class="hero">
+  <div class="hero-bg" aria-hidden="true"></div>
+  <div class="hero-shade" aria-hidden="true"></div>
+  <div class="hero-inner">
+    <div class="hero-kicker">HOUDINI 22 · PLUGIN SUITE</div>
     <h1>HouTools<span class="v">v1.2.0</span></h1>
     <p class="sub">Houdini 22 插件工具集 — 使用手册</p>
     <div class="badges">
@@ -302,18 +362,20 @@
       <span class="badge">Windows</span>
       <span class="badge">完全离线</span>
     </div>
-    <div class="repo-row">
+    <div class="hero-glass">
       <span class="repo-label">仓库地址</span>
-      <a class="repo-link" href="https://gitcode.com/mahx-vfx/HouTools" target="_blank" rel="noopener">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
-        <span class="repo-url">https://gitcode.com/mahx-vfx/HouTools</span>
-        <span class="repo-tag">国内</span>
-      </a>
-      <a class="repo-link" href="https://github.com/MAHXVFX/HouTools" target="_blank" rel="noopener">
-        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
-        <span class="repo-url">https://github.com/MAHXVFX/HouTools</span>
-        <span class="repo-tag">国外</span>
-      </a>
+      <div class="repo-row">
+        <a class="repo-link" href="https://gitcode.com/mahx-vfx/HouTools" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+          <span class="repo-url">https://gitcode.com/mahx-vfx/HouTools</span>
+          <span class="repo-tag">国内</span>
+        </a>
+        <a class="repo-link" href="https://github.com/MAHXVFX/HouTools" target="_blank" rel="noopener">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+          <span class="repo-url">https://github.com/MAHXVFX/HouTools</span>
+          <span class="repo-tag">国外</span>
+        </a>
+      </div>
     </div>
   </div>
 </header>
