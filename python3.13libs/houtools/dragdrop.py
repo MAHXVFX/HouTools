@@ -9,10 +9,12 @@ Houdini 对每一次文件拖放（落到主窗口任意面板）都会查找 HO
 
   - 拖入列表不含 .abc → False，其他文件类型的原生行为完全不受影响；
   - 落点不是网络编辑器 → False（拖到参数框 fileName 填路径等照旧）；
-  - 落点网络不是 Object 层级 → False（交给原生处理，如 SOP 网络弹导入菜单）；
-  - Object 层级 → 逐文件创建 ``alembicarchive`` 并触发其 ``buildHierarchy``
-    按钮参数（等价 File > Import > Alembic Scene... 的 obj 层级导入），
-    首个节点落在鼠标处，其余按节点高度纵向错开；整批一个 undo 槽。
+  - 落点是 Object 层级 → 逐文件创建 ``alembicarchive`` 并触发其
+    ``buildHierarchy`` 按钮参数（等价 File > Import > Alembic Scene...）；
+  - 落点是 Sop 层级 → 逐文件创建 SOP ``alembic`` 节点（等价 Tab 菜单
+    alembic；坏文件由节点错误旗标反馈，创建本身不失败）；
+  - 其余层级 → False 交还原生。
+  首个节点落在鼠标处，其余按节点高度纵向错开；整批一个 undo 槽。
 
 实测要点（H22.0.429，hython 无头 + GUI 实拖）：
   - 节点名只接受 ``[A-Za-z0-9._-]``，中文等字符 createNode 直接报错，须清洗；
@@ -90,7 +92,7 @@ def _clean_name(path):
 
 
 def _import_into_network_under_cursor(files):
-    """在鼠标下方网络编辑器创建 Alembic Archive；非目标落点交还原生。"""
+    """在鼠标下方网络编辑器创建导入节点；非目标层级交还原生。"""
     import hou
 
     pane = hou.ui.paneTabUnderCursor()
@@ -98,28 +100,47 @@ def _import_into_network_under_cursor(files):
         logger.debug("drop target is not a network editor: %r", pane)
         return False
     context = pane.pwd()
-    if context.childTypeCategory().name() != "Object":
-        # SOP 等其他层级交还原生（原生会按上下文弹导入菜单）
-        logger.debug("drop network %s is not Object level", context.path())
-        return False
-
     position = pane.cursorPosition()
+    category = context.childTypeCategory().name()
+    if category == "Object":
+        return _import_nodes(context, position, files,
+                             node_type="alembicarchive",
+                             build_hierarchy=True,
+                             succeeded=lambda n: bool(n.children()))
+    if category == "Sop":
+        return _import_nodes(context, position, files, node_type="alembic")
+    # 其他层级（Dop/Lop...）交还原生
+    logger.debug("drop network %s category %s not handled",
+                 context.path(), category)
+    return False
+
+
+def _import_nodes(context, position, files, node_type,
+                  build_hierarchy=False, succeeded=None):
+    """逐文件创建导入节点：首个在鼠标处、其余按节点高度纵向错开。
+
+    ``succeeded`` 为 None 表示创建即成功（SOP alembic 坏文件由节点错误
+    旗标反馈）；alembicarchive 的 build 静默失败，须按 children 数判定。
+    """
+    import hou
+
     created, failed = [], []
     with hou.undos.group(_UNDO_GROUP):
         for i, path in enumerate(files):
-            node = context.createNode(
-                "alembicarchive", node_name=_clean_name(path))
+            node = context.createNode(node_type, node_name=_clean_name(path))
             _width, height = node.size()
             node.setPosition(
-                hou.Vector2(position.x(), position.y() - i * (height + _STACK_GAP)))
+                hou.Vector2(position.x(),
+                            position.y() - i * (height + _STACK_GAP)))
             node.parm("fileName").set(path)
-            node.parm("buildHierarchy").pressButton()
-            # 坏 abc 的 build 静默失败：不抛异常、不建子节点
-            (created if node.children() else failed).append(node)
+            if build_hierarchy:
+                node.parm("buildHierarchy").pressButton()
+            (created if succeeded is None or succeeded(node)
+             else failed).append(node)
 
+    label = "Alembic Archive" if build_hierarchy else "Alembic"
     if created:
-        _status("已导入 %d 个 Alembic Archive → %s"
-                % (len(created), context.path()))
+        _status("已导入 %d 个 %s → %s" % (len(created), label, context.path()))
     for node in failed:
         logger.warning("abc import produced no hierarchy: %s (%s)",
                        node.path(), node.parm("fileName").unexpandedString())
