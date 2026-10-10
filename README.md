@@ -31,6 +31,7 @@ Houdini 22 插件工具集，开发期支持**手动热加载**：改完代码�
 |------|--------|------|
 | Automation | `HouTools → Automation`（Python Panel） | 自动化批处理：节点按钮点击 / Flipbook 拍屏 / HomeAssistant Webhook / 打开DW |
 | 粘贴为 Object Merge | 网络编辑器 `HouTools` 菜单 / `Ctrl+Shift+V` | 复制节点后，按"目标上下文 × 源类别"在鼠标位置粘贴引用节点；键位在 `HouTools → Paste Hotkey Settings` 修改 |
+| 拖放导入 Alembic | 拖 `.abc` 文件到网络编辑器 | 松手即在鼠标位置创建导入节点：obj 层级 = Alembic Archive（自动构建层级），SOP 层级 = alembic 节点；支持多文件（基于 Houdini 官方 externaldragdrop 钩子） |
 | 视频转序列图 | `HouTools → Video to Sequence` | ffmpeg 提取视频为 JPG 序列（帧级进度，质量/起始帧/位数/前缀可调），可选自动设置相机 Background Image |
 | Hdr Library | `HouTools → Hdr Library` | HDR 环境贴图库浏览器：缩略图网格（后台生成）、子文件夹分类 + 收藏，选中灯光后双击即贴图 |
 | Recipe Library | `HouTools → Recipe Library` | recipes 资产库浏览器：官方 recipes 卡片网格浏览（缩略图/标签/主题色），树形侧栏过滤，双击/拖拽应用到网络，Markdown 文档，数据导入/导出 |
@@ -74,6 +75,23 @@ Hotkey Manager 中修改，符号为 `h.pane.wsheet.houtools_paste_as_object_mer
 
 ffmpeg 说明：优先使用 Houdini 自带的 `$HFS/bin/hffmpeg`，**无需单独安装**；如需指定版本，
 把 `ffmpeg.exe` 放到项目根目录即可（已被 `.gitignore` 排除，不入库）。
+
+### 拖放导入 Alembic
+
+从资源管理器把 `.abc` 文件拖到网络编辑器，松手即在鼠标位置创建导入节点
+（基于 Houdini 官方 `externaldragdrop` 钩子；obj 层级等价
+File > Import > Alembic Scene...）：
+
+| 拖放落点 | 创建的节点（名称取文件名主干） |
+|------|------|
+| Object 层级（`/obj`） | Alembic Archive，自动构建层级 |
+| SOP 层级（geo 内部） | alembic SOP 节点 |
+
+- 支持一次拖入多个文件，纵向排开；整批一个 undo 槽
+- 节点名取文件名主干，中文等非法字符自动替换为 `_`，同名自动加数字后缀
+- 非 `.abc` 文件，以及拖到参数框、视口等其他面板的行为与原生完全一致，不受影响
+- 拖放钩子文件是 `scripts/externaldragdrop.py`（两行分发器），逻辑在
+  `houtools/dragdrop.py`，改代码走 `Reload Modules (Dev)` 热加载，无需重启
 
 ### Hdr Library
 
@@ -153,8 +171,8 @@ _houtools_dispatcher.run("<tool_id>")
 ```
 
 （按本机 Houdini 安装位置调整路径，须用 Houdini 自带的 Python 3.13。）
-无头验证菜单 XML、全包导入、各窗口实例化（Automation / 视频转序列图 / Hdr Library / Recipe Library）
-与 `reload_all()`。
+无头验证菜单 XML、全包导入、各窗口实例化（Automation / 视频转序列图 / Hdr Library / Recipe Library）、
+拖放导入的 .abc 过滤与节点名清洗，以及 `reload_all()`。
 
 ## 结构
 
@@ -163,6 +181,7 @@ HouTools/
 ├── MainMenuCommon.xml             # 顶部菜单（Houdini 规定文件名）
 ├── NetworkViewMenu.xml            # 网络编辑器面板菜单栏（HouTools 顶层菜单，注入机制同上）
 ├── HouTools.json                # 包清单副本（生效的一份在 packages/ 下）
+├── scripts/externaldragdrop.py  # 官方拖放钩子分发器（拖 .abc 导入，逻辑在 houtools/dragdrop.py）
 ├── python_panels/Automation.pypanel  # Automation 的 Python Panel 界面
 ├── python3.13libs/
 │   ├── uiready.py                 # UI 启动钩子：装默认键位（会话启动时执行）
@@ -171,6 +190,7 @@ HouTools/
 │       ├── core/                  # 路径常量 / 日志 / JSON 设置
 │       ├── ui/                    # window_manager 窗口登记 + taskbar 任务栏常驻 + 字体/对话框/侧栏/角标等共享组件
 │       ├── automation/            # Automation（任务类型/持久化/执行引擎/窗口）
+│       ├── dragdrop.py            # 外部拖放导入 .abc（obj 层级 Alembic Archive / SOP 层级 alembic）
 │       ├── videoseq/              # 视频转序列图（ffmpeg 查找 + 窗口）
 │       ├── hdrlight/              # Hdr Library（HDR 库浏览 + 缩略图 + 灯光赋值）
 │       ├── recipelib/             # Recipe Library（资产库浏览/元数据/文档/数据导入导出/缩略图裁剪）
