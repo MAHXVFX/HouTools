@@ -1,17 +1,27 @@
-"""截取缩略图：全屏抓屏 + 比例锁定遮罩框选（截屏设缩略图）。
+"""截取缩略图：全部屏幕抓屏 + 比例锁定遮罩框选（截屏设缩略图），支持多显示器。
 
-右键卡片「截取缩略图」→ 面板自隐（避免把自己截进素材）→ 延时抓屏 →
-全屏置顶遮罩铺冻结抓屏：按下拖拽出严格锁定卡片缩略图区比例的选框
-（宽:高 = 1:0.66，与 crop.TARGET_RATIO、卡片 thumb_h = base*0.66 同源），
-选框内保持抓屏原样（所见即所得）、框外压暗。框选交互对齐
+右键卡片「截取缩略图」→ 面板自隐（避免把自己截进素材）→ 延时抓取
+全部屏幕 → 每屏各放一个全屏置顶遮罩、铺各自的冻结抓屏。所有遮罩共享
+同一选框（虚拟桌面坐标，SnipOverlay 会话持有）：可在任意屏幕上按下
+拖拽出严格锁定卡片缩略图区比例的选框（宽:高 = 1:0.66，与
+crop.TARGET_RATIO、卡片 thumb_h = base*0.66 同源），选框内保持抓屏
+原样（所见即所得）、框外压暗，选框可以跨屏。框选交互对齐
 ThumbCropDialog 手感：框内拖动移动、四角手柄按比例缩放、框外按下
 重新框选；松手不确认——确认只认 Enter（经 confirmed(QPixmap) 回交
-原图分辨率裁剪结果），取消只认 Esc（经 cancelled() 通知）。选框是
-逻辑坐标，确认时按抓屏 DPR 换算回物理像素裁剪。无 hou 依赖
-（smoke test 直测交互）。
+原图分辨率裁剪结果），取消只认 Esc（经 cancelled() 通知）。
+
+坐标模型：Qt 多屏的"虚拟桌面坐标"（QScreen.geometry 的定位空间，
+鼠标事件的 globalPosition 同属此空间）作为共享坐标；各遮罩绘制时把
+选框平移回本屏局部坐标（非主屏原点非零 / 混合 DPR 均成立）。拖拽中
+光标跨屏时事件仍由按下那块遮罩接收（Qt 隐式鼠标抓取），不能用本地
+坐标推算，globalPosition 由平台按真实光标位置给出、跨屏正确。确认
+时按屏换算回物理像素：选框落在单屏内 = 该屏抓屏 ×该屏 DPR（单屏
+场景与旧版逐像素一致）；跨屏 = 各屏截块按参与屏最大 DPR 重采样拼合
+（共享边两端同式舍入，拼接无缝）。无 hou 依赖（smoke test 直测交互）。
 
 生命周期归调用方（browser）：遮罩自身只发信号不自我关闭，调用方在
-confirmed/cancelled 收尾时 close()（WA_DeleteOnClose 自行释放）。
+confirmed/cancelled 收尾时 close()（逐屏关闭，WA_DeleteOnClose 自行
+释放）。
 """
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -27,22 +37,19 @@ CHIP_BG = (20, 20, 24, 210)   # 提示条/尺寸标签底色
 CHIP_FG = "#e2e2e8"
 
 
-class SnipOverlay(QtWidgets.QWidget):
-    """全屏遮罩：冻结抓屏 + 比例锁定框选；Enter 确认 / Esc 取消。"""
+def _scaled_span(lo, hi, dpr):
+    """逻辑区间 [lo, hi) ×DPR 的设备区间（两端各自舍入，共享边不裂缝）。"""
+    return int(round(lo * dpr)), int(round(hi * dpr))
 
-    confirmed = QtCore.Signal(QtGui.QPixmap)
-    cancelled = QtCore.Signal()
 
-    def __init__(self, screen, grab, ratio=TARGET_RATIO):
+class _ScreenOverlay(QtWidgets.QWidget):
+    """单屏遮罩：铺本屏冻结抓屏，绘制共享选框的本地部分并转发输入。"""
+
+    def __init__(self, session, screen, grab):
         super().__init__(None)
+        self._session = session
+        self._screen = screen
         self._grab = grab
-        self._ratio = ratio
-        self._dpr = grab.devicePixelRatio() or 1.0
-        self._sel = None        # 当前选框（逻辑坐标，恒 normalized）
-        self._mode = None       # None/"move"/"new"/"resize"（同 crop 画布）
-        self._handle = None     # resize 中的角："tl"/"tr"/"bl"/"br"
-        self._press = None
-        self._sel_start = None  # move/resize 开始时的选框
         self.setWindowFlags(QtCore.Qt.Tool | QtCore.Qt.FramelessWindowHint
                             | QtCore.Qt.WindowStaysOnTopHint)
         self.setAttribute(QtCore.Qt.WA_DeleteOnClose)
@@ -50,28 +57,191 @@ class SnipOverlay(QtWidgets.QWidget):
         self.setCursor(QtCore.Qt.CrossCursor)
         self.setGeometry(screen.geometry())
 
-    def begin(self):
-        """显示遮罩并抢焦点（须在抓屏之后调用，避免把自己截进去）。"""
-        self.show()
-        self.raise_()
-        self.activateWindow()
-        self.setFocus(QtCore.Qt.OtherFocusReason)
-
-    # ---- 交互 ----
+    # ---- 输入转发（交互逻辑全在会话里，见 SnipOverlay）----
 
     def keyPressEvent(self, e):
-        if e.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
-            if self._sel is not None:
-                self.confirmed.emit(self._result_pixmap())
-        elif e.key() == QtCore.Qt.Key_Escape:
-            self.cancelled.emit()
-        else:
+        if not self._session.key(self, e):
             super().keyPressEvent(e)
 
     def mousePressEvent(self, e):
+        self._session.press(self, e)
+
+    def mouseMoveEvent(self, e):
+        self._session.move(self, e)
+
+    def mouseReleaseEvent(self, e):
+        self._session.release(self, e)
+
+    # ---- 绘制 ----
+
+    def _local_sel(self):
+        """共享选框平移回本屏局部坐标并夹窗口内；无选框/无交集时 None。"""
+        s = self._session._sel
+        if s is None:
+            return None
+        local = s.translated(-self.geometry().topLeft())
+        local = local.intersected(self.rect())
+        return None if local.isEmpty() else local
+
+    def paintEvent(self, _e):
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
+        # 冻结抓屏铺满：抓屏是物理像素、窗口是逻辑区域，按 DPR 一比一映射
+        p.drawPixmap(self.rect(), self._grab)
+        r = self.rect()
+        s = self._local_sel()
+        p.setPen(QtCore.Qt.NoPen)
+        p.setBrush(QtGui.QColor(0, 0, 0, DIM_ALPHA))
+        if s is None:
+            p.drawRect(r)
+        else:
+            # 选框外四块压暗（同 crop.py 画法），框内保持抓屏原样
+            p.drawRect(0, 0, r.width(), s.top())
+            p.drawRect(0, s.bottom() + 1, r.width(),
+                       r.height() - s.bottom() - 1)
+            p.drawRect(0, s.top(), s.left(), s.height())
+            p.drawRect(s.right() + 1, s.top(),
+                       r.width() - s.right() - 1, s.height())
+            # 边框 + 三分构图线：显式构造 QPen——此时 painter 的 pen 是
+            # NoPen 样式，pen() 取回改色样式不变、什么也画不出（crop.py
+            # 曾因此边框/三分线不可见）；选框跨屏时超界部分被本窗口裁剪，
+            # 属于邻屏的边由那块屏的遮罩画出
+            p.setBrush(QtCore.Qt.NoBrush)
+            pen = QtGui.QPen(QtGui.QColor("#ffffff"))
+            pen.setWidth(1)
+            p.setPen(pen)
+            p.drawRect(s)
+            pen.setColor(QtGui.QColor(255, 255, 255, 55))
+            p.setPen(pen)
+            for i in (1, 2):
+                x = s.left() + s.width() * i // 3
+                y = s.top() + s.height() * i // 3
+                p.drawLine(x, s.top(), x, s.bottom())
+                p.drawLine(s.left(), y, s.right(), y)
+            # 四角手柄（同 crop.py：白色实心方块，热区见会话 _handle_at）
+            p.setPen(QtCore.Qt.NoPen)
+            p.setBrush(QtGui.QColor("#ffffff"))
+            for cx, cy in ((s.left(), s.top()), (s.right(), s.top()),
+                           (s.left(), s.bottom()), (s.right(), s.bottom())):
+                p.drawRect(cx - HANDLE, cy - HANDLE, HANDLE * 2, HANDLE * 2)
+            if self._session._owns_chip(self):
+                self._draw_size_chip(p, s)
+        self._draw_hint(p)
+
+    def _draw_chip(self, p, text, x, y):
+        """深底白字信息条，左上角 (x, y)；夹界由调用方负责。"""
+        fm = p.fontMetrics()
+        pad = 6
+        bw = fm.horizontalAdvance(text) + pad * 2
+        bh = fm.height() + pad * 2
+        p.setPen(QtCore.Qt.NoPen)
+        p.setBrush(QtGui.QColor(*CHIP_BG))
+        p.drawRoundedRect(x, y, bw, bh, 4, 4)
+        p.setPen(QtGui.QPen(QtGui.QColor(CHIP_FG)))
+        p.drawText(x + pad, y + pad + fm.ascent(), text)
+
+    def _draw_size_chip(self, p, s):
+        """选框像素尺寸标签（物理像素，即存储分辨率），只画在属主屏上。
+
+        贴框下缘（+8 让开四角手柄的伸出半边），底部放不下挪到上缘。
+        """
+        text = self._session._size_text()
+        fm = p.fontMetrics()
+        bw = fm.horizontalAdvance(text) + 12
+        bh = fm.height() + 12
+        by = s.bottom() + 8
+        if by + bh > self.height():
+            by = s.top() - bh - 8
+        by = max(0, min(by, self.height() - bh))
+        x = max(0, min(s.right() - bw, self.width() - bw))
+        self._draw_chip(p, text, x, by)
+
+    def _draw_hint(self, p):
+        """顶部居中操作提示条。"""
+        text = "拖拽框选（可跨屏） · 框内拖动移动 · 角上缩放 · Enter 确认 · Esc 取消"
+        bw = p.fontMetrics().horizontalAdvance(text) + 12
+        x = max(0, (self.width() - bw) // 2)
+        self._draw_chip(p, text, x, 12)
+
+
+class SnipOverlay(QtCore.QObject):
+    """多屏截取会话：每屏一块 _ScreenOverlay，共享同一比例锁定选框。
+
+    选框与拖拽状态存虚拟桌面坐标；confirmed(QPixmap) 只发一次（键盘
+    焦点只在其中一块遮罩上，_done 是焦点竞争下的双确认保险），
+    cancelled 不闩——遮罩不自我关闭，重复取消由调用方幂等收尾；
+    close() 逐屏关闭全部遮罩。
+    """
+
+    confirmed = QtCore.Signal(QtGui.QPixmap)
+    cancelled = QtCore.Signal()
+
+    def __init__(self, grabs, ratio=TARGET_RATIO):
+        super().__init__(None)
+        self._grabs = list(grabs)   # [(QScreen, 冻结抓屏 QPixmap)]
+        self._ratio = ratio
+        self._bounds = QtCore.QRect()   # 有遮罩屏幕的并集（虚拟坐标）
+        for scr, _pm in self._grabs:
+            self._bounds = self._bounds.united(scr.geometry())
+        self._sel = None        # 共享选框（虚拟桌面坐标，恒 normalized）
+        self._mode = None       # None/"move"/"new"/"resize"（同 crop 画布）
+        self._handle = None     # resize 中的角："tl"/"tr"/"bl"/"br"
+        self._press = None
+        self._sel_start = None  # move/resize 开始时的选框
+        self._done = False      # 确认已发，忽略后续 Enter（Esc 不闩：遮罩
+                                # 不自我关闭，Esc 后会话仍归调用方处置）
+        self._overlays = [_ScreenOverlay(self, scr, pm)
+                          for scr, pm in self._grabs]
+
+    def begin(self):
+        """显示全部遮罩并抢焦点（须在抓屏之后调用，避免把自己截进去）。
+
+        键盘焦点给光标所在屏的遮罩；Enter/Esc 无论焦点落在哪块屏都
+        收口到会话，语义一致。
+        """
+        if not self._overlays:
+            return
+        under = QtGui.QGuiApplication.screenAt(QtGui.QCursor.pos())
+        target = self._overlays[0]
+        for ov in self._overlays:
+            ov.show()
+            ov.raise_()
+            if ov._screen is under:
+                target = ov
+        target.activateWindow()
+        target.setFocus(QtCore.Qt.OtherFocusReason)
+
+    def close(self):
+        """关闭全部遮罩（WA_DeleteOnClose 自行释放）。"""
+        for ov in self._overlays:
+            try:
+                ov.close()
+            except RuntimeError:
+                pass
+
+    def repaint_all(self):
+        """选框是共享状态，任何变化都要让全部遮罩重绘。"""
+        for ov in self._overlays:
+            ov.update()
+
+    # ---- 交互（由各屏遮罩转发；坐标一律虚拟桌面坐标）----
+
+    def key(self, ov, e):
+        if e.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
+            if self._sel is not None and not self._done:
+                self._done = True
+                self.confirmed.emit(self._result_pixmap())
+            return True
+        if e.key() == QtCore.Qt.Key_Escape:
+            if not self._done:
+                self.cancelled.emit()
+            return True
+        return False
+
+    def press(self, ov, e):
         if e.button() != QtCore.Qt.LeftButton:
             return
-        pos = e.position().toPoint()
+        pos = e.globalPosition().toPoint()
         h = self._handle_at(pos)
         self._press = pos
         self._sel_start = (QtCore.QRect(self._sel)
@@ -85,19 +255,21 @@ class SnipOverlay(QtWidgets.QWidget):
             # 框外重按 = 重框：清旧选框，随 move 重新生成
             self._mode = "new"
             self._sel = None
-        self.setFocus(QtCore.Qt.MouseFocusReason)   # 点击兜底拿焦点（Enter 用）
-        self.update()
+        ov.setFocus(QtCore.Qt.MouseFocusReason)   # 点击兜底拿焦点（Enter 用）
+        self.repaint_all()
 
-    def mouseMoveEvent(self, e):
-        pos = e.position().toPoint()
+    def move(self, ov, e):
+        pos = e.globalPosition().toPoint()
         if self._mode is None:
-            self._update_cursor(pos)
+            self._update_cursor(ov, pos)
             return
         if self._mode == "move":
             s = QtCore.QRect(self._sel_start).translated(pos - self._press)
-            r = self.rect()
-            s.moveLeft(max(0, min(s.left(), r.width() - s.width())))
-            s.moveTop(max(0, min(s.top(), r.height() - s.height())))
+            b = self._bounds
+            s.moveLeft(max(b.left(),
+                           min(s.left(), b.left() + b.width() - s.width())))
+            s.moveTop(max(b.top(),
+                          min(s.top(), b.top() + b.height() - s.height())))
             self._sel = s
         elif self._mode == "new":
             sign_x = 1 if pos.x() >= self._press.x() else -1
@@ -113,9 +285,9 @@ class SnipOverlay(QtWidgets.QWidget):
             w = max(abs(pos.x() - anchor.x()),
                     int(abs(pos.y() - anchor.y()) * self._ratio))
             self._sel = self._fit_from_anchor(anchor, w, sign_x, sign_y)
-        self.update()
+        self.repaint_all()
 
-    def mouseReleaseEvent(self, e):
+    def release(self, ov, e):
         if e.button() != QtCore.Qt.LeftButton:
             return
         self._mode = None       # 松手只结束拖拽，确认只认 Enter
@@ -140,128 +312,129 @@ class SnipOverlay(QtWidgets.QWidget):
         return {"tl": s.bottomRight(), "tr": s.bottomLeft(),
                 "bl": s.topRight(), "br": s.topLeft()}[self._handle]
 
-    def _update_cursor(self, pos):
+    def _update_cursor(self, ov, pos):
         h = self._handle_at(pos)
         if h in ("tl", "br"):
-            self.setCursor(QtCore.Qt.SizeFDiagCursor)
+            ov.setCursor(QtCore.Qt.SizeFDiagCursor)
         elif h in ("tr", "bl"):
-            self.setCursor(QtCore.Qt.SizeBDiagCursor)
+            ov.setCursor(QtCore.Qt.SizeBDiagCursor)
         elif self._sel is not None and self._sel.contains(pos):
-            self.setCursor(QtCore.Qt.SizeAllCursor)
+            ov.setCursor(QtCore.Qt.SizeAllCursor)
         else:
-            self.setCursor(QtCore.Qt.ArrowCursor)
+            ov.setCursor(QtCore.Qt.ArrowCursor)
 
     def _fit_from_anchor(self, anchor, target_w, sign_x, sign_y):
-        """从 anchor 向 (sign_x, sign_y) 铺锁定比例框，夹屏内。
+        """从 anchor 向 (sign_x, sign_y) 铺锁定比例框，夹进全部屏幕并集。
 
-        与 crop._CropCanvas._fit_ratio_rect 同一算法；遮罩画布即整屏、
-        无 _disp 显示层，无法直接复用，独立实现于此。
+        与 crop._CropCanvas._fit_ratio_rect 同一算法；遮罩画布是"有遮罩
+        屏幕的并集"（虚拟坐标），无 _disp 显示层，无法直接复用，独立
+        实现于此。
         """
-        r = self.rect()
+        b = self._bounds
         w = max(MIN_SEL, target_w)
         h = int(round(w / self._ratio))
-        if w > r.width():
-            w = r.width()
+        if w > b.width():
+            w = b.width()
             h = int(round(w / self._ratio))
-        if h > r.height():
-            h = r.height()
+        if h > b.height():
+            h = b.height()
             w = int(round(h * self._ratio))
         x = anchor.x() if sign_x >= 0 else anchor.x() - w
         y = anchor.y() if sign_y >= 0 else anchor.y() - h
-        x = max(0, min(x, r.width() - w))
-        y = max(0, min(y, r.height() - h))
+        x = max(b.left(), min(x, b.left() + b.width() - w))
+        y = max(b.top(), min(y, b.top() + b.height() - h))
         return QtCore.QRect(x, y, w, h)
 
-    def _result_pixmap(self):
-        """选框 ×DPR 换算回物理像素，从冻结抓屏裁出确认结果。"""
-        s = self._sel
-        dpr = self._dpr
-        dev = QtCore.QRect(
-            int(round(s.x() * dpr)), int(round(s.y() * dpr)),
-            int(round(s.width() * dpr)), int(round(s.height() * dpr)))
-        dev = dev.intersected(self._grab.rect())
-        pm = self._grab.copy(dev)
-        pm.setDevicePixelRatio(1.0)   # copy 继承源 DPR，重置为纯像素尺寸
-        return pm
+    # ---- 结果 ----
 
-    # ---- 绘制 ----
+    def _sel_parts(self):
+        """选框与各屏的交集 [(screen, grab, 虚拟坐标截块)]，按 grabs 序。"""
+        out = []
+        for scr, pm in self._grabs:
+            part = self._sel.intersected(scr.geometry())
+            if not part.isEmpty():
+                out.append((scr, pm, part))
+        return out
 
-    def paintEvent(self, _e):
-        p = QtGui.QPainter(self)
-        p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
-        # 冻结抓屏铺满：抓屏是物理像素、窗口是逻辑区域，按 DPR 一比一映射
-        p.drawPixmap(self.rect(), self._grab)
-        r = self.rect()
-        s = self._sel
-        p.setPen(QtCore.Qt.NoPen)
-        p.setBrush(QtGui.QColor(0, 0, 0, DIM_ALPHA))
-        if s is None:
-            p.drawRect(r)
-        else:
-            # 选框外四块压暗（同 crop.py 画法），框内保持抓屏原样
-            p.drawRect(0, 0, r.width(), s.top())
-            p.drawRect(0, s.bottom() + 1, r.width(),
-                       r.height() - s.bottom() - 1)
-            p.drawRect(0, s.top(), s.left(), s.height())
-            p.drawRect(s.right() + 1, s.top(),
-                       r.width() - s.right() - 1, s.height())
-            # 边框 + 三分构图线：显式构造 QPen——此时 painter 的 pen 是
-            # NoPen 样式，pen() 取回改色样式不变、什么也画不出（crop.py
-            # 曾因此边框/三分线不可见）
-            p.setBrush(QtCore.Qt.NoBrush)
-            pen = QtGui.QPen(QtGui.QColor("#ffffff"))
-            pen.setWidth(1)
-            p.setPen(pen)
-            p.drawRect(s)
-            pen.setColor(QtGui.QColor(255, 255, 255, 55))
-            p.setPen(pen)
-            for i in (1, 2):
-                x = s.left() + s.width() * i // 3
-                y = s.top() + s.height() * i // 3
-                p.drawLine(x, s.top(), x, s.bottom())
-                p.drawLine(s.left(), y, s.right(), y)
-            # 四角手柄（同 crop.py：白色实心方块，热区见 _handle_at）
-            p.setPen(QtCore.Qt.NoPen)
-            p.setBrush(QtGui.QColor("#ffffff"))
-            for cx, cy in ((s.left(), s.top()), (s.right(), s.top()),
-                           (s.left(), s.bottom()), (s.right(), s.bottom())):
-                p.drawRect(cx - HANDLE, cy - HANDLE, HANDLE * 2, HANDLE * 2)
-            self._draw_size_chip(p, s)
-        self._draw_hint(p)
+    def _sel_dpr(self):
+        """选框覆盖屏的取像 DPR：单屏 = 该屏 DPR；跨屏 = 参与屏最大值。"""
+        parts = self._sel_parts()
+        if not parts:
+            return 1.0
+        if len(parts) == 1:
+            return parts[0][1].devicePixelRatio() or 1.0
+        return max((pm.devicePixelRatio() or 1.0) for _s, pm, _p in parts)
 
-    def _draw_chip(self, p, text, x, y):
-        """深底白字信息条，左上角 (x, y)；夹界由调用方负责。"""
-        fm = p.fontMetrics()
-        pad = 6
-        bw = fm.horizontalAdvance(text) + pad * 2
-        bh = fm.height() + pad * 2
-        p.setPen(QtCore.Qt.NoPen)
-        p.setBrush(QtGui.QColor(*CHIP_BG))
-        p.drawRoundedRect(x, y, bw, bh, 4, 4)
-        p.setPen(QtGui.QPen(QtGui.QColor(CHIP_FG)))
-        p.drawText(x + pad, y + pad + fm.ascent(), text)
+    def _size_text(self):
+        dpr = self._sel_dpr()
+        return "{} × {}".format(int(round(self._sel.width() * dpr)),
+                                int(round(self._sel.height() * dpr)))
 
-    def _draw_size_chip(self, p, s):
-        """选框像素尺寸标签（物理像素，即存储分辨率）。
+    def _owns_chip(self, ov):
+        """尺寸标签属主：含选框左下角的屏；跨屏/舍入落空时取首个相交屏。
 
-        贴框下缘（+8 让开四角手柄的伸出半边），底部放不下挪到上缘。
+        跨屏选框不在每块遮罩上都贴尺寸标签，只在属主屏贴一张。
         """
-        text = "{} × {}".format(
-            int(round(s.width() * self._dpr)),
-            int(round(s.height() * self._dpr)))
-        fm = p.fontMetrics()
-        bw = fm.horizontalAdvance(text) + 12
-        bh = fm.height() + 12
-        by = s.bottom() + 8
-        if by + bh > self.height():
-            by = s.top() - bh - 8
-        by = max(0, min(by, self.height() - bh))
-        x = max(0, min(s.right() - bw, self.width() - bw))
-        self._draw_chip(p, text, x, by)
+        if self._sel is None:
+            return False
+        pt = self._sel.bottomLeft()
+        first = None
+        for o in self._overlays:
+            g = o.geometry()
+            if g.contains(pt):
+                return o is ov
+            if first is None and g.intersects(self._sel):
+                first = o
+        return first is ov
 
-    def _draw_hint(self, p):
-        """顶部居中操作提示条。"""
-        text = "拖拽框选 · 框内拖动移动 · 角上缩放 · Enter 确认 · Esc 取消"
-        bw = p.fontMetrics().horizontalAdvance(text) + 12
-        x = max(0, (self.width() - bw) // 2)
-        self._draw_chip(p, text, x, 12)
+    def _result_pixmap(self):
+        """选框 ×DPR 换算回物理像素，从冻结抓屏裁出确认结果。
+
+        单屏 = 该屏抓屏直接裁（与旧单屏版逐像素一致）；跨屏 = 各屏截块
+        按参与屏最大 DPR 重采样拼合，共享边两端同式舍入不裂缝。
+        """
+        parts = self._sel_parts()
+        if not parts:
+            return QtGui.QPixmap()   # 混合 DPI 舍入缝隙的极端情形，防炸
+        if len(parts) == 1:
+            scr, pm, part = parts[0]
+            dpr = pm.devicePixelRatio() or 1.0
+            local = part.translated(-scr.geometry().topLeft())
+            dev = QtCore.QRect(
+                int(round(local.x() * dpr)), int(round(local.y() * dpr)),
+                int(round(local.width() * dpr)),
+                int(round(local.height() * dpr)))
+            dev = dev.intersected(pm.rect())
+            out = pm.copy(dev)
+            out.setDevicePixelRatio(1.0)   # copy 继承源 DPR，重置为纯像素尺寸
+            return out
+        ref = max((pm.devicePixelRatio() or 1.0) for _s, pm, _p in parts)
+        out = QtGui.QPixmap(int(round(self._sel.width() * ref)),
+                            int(round(self._sel.height() * ref)))
+        out.fill(QtCore.Qt.black)
+        p = QtGui.QPainter(out)
+        p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
+        sel = self._sel
+        for scr, pm, part in parts:
+            dpr = pm.devicePixelRatio() or 1.0
+            g = scr.geometry()
+            sx0, sx1 = _scaled_span(part.left() - g.left(),
+                                    part.right() + 1 - g.left(), dpr)
+            sy0, sy1 = _scaled_span(part.top() - g.top(),
+                                    part.bottom() + 1 - g.top(), dpr)
+            dx0, dx1 = _scaled_span(part.left() - sel.left(),
+                                    part.right() + 1 - sel.left(), ref)
+            dy0, dy1 = _scaled_span(part.top() - sel.top(),
+                                    part.bottom() + 1 - sel.top(), ref)
+            src = QtCore.QRect(sx0, sy0, sx1 - sx0, sy1 - sy0)
+            src = src.intersected(pm.rect())
+            if src.isEmpty():
+                continue
+            # 坑：Houdini 自带 PySide6 6.8.3 的 drawPixmap(QRect, QPixmap,
+            # QRectF) 签名标注收 QRectF、值分发实测拒绝（ValueError），
+            # 源矩形必须传 QRect（src 本就是整数设备像素，无损）
+            p.drawPixmap(QtCore.QRect(dx0, dy0, dx1 - dx0, dy1 - dy0),
+                         pm, src)
+        p.end()
+        out.setDevicePixelRatio(1.0)
+        return out

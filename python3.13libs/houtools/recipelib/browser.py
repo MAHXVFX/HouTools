@@ -1082,7 +1082,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self._doc_dialog = None
         self._preview_info = None
         self._drag_state = None     # 拖拽中: {name, ghost}
-        self._snip_overlay = None   # 截取缩略图的全屏遮罩（非 None 即截取中）
+        self._snip_overlay = None   # 截取缩略图的多屏遮罩会话（非 None 即截取中）
         self._placeholder = self._placeholder_icon()
         self._badge = FavoriteBadge()   # 收藏角标（共享组件，见 ui.badge；
                                         # delegate 画在卡片右上角，非合成进图标）
@@ -2494,14 +2494,21 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             log.warning("recipe 面板已销毁，取消截取缩略图")
 
     def _snip_begin(self, info):
-        screen = (QtGui.QGuiApplication.screenAt(QtGui.QCursor.pos())
-                  or QtGui.QGuiApplication.primaryScreen())
-        grab = screen.grabWindow(0)
-        if grab.isNull():
+        # 抓取全部屏幕：每屏一块遮罩，选框可在任意屏拖拽、允许跨屏；
+        # 某屏抓取失败跳过该屏（选框边界不含它），全部失败才中止
+        grabs = []
+        for scr in QtGui.QGuiApplication.screens():
+            pm = scr.grabWindow(0)
+            if pm.isNull():
+                log.warning("屏幕 %s 抓取失败，截取缩略图跳过该屏",
+                            scr.name())
+                continue
+            grabs.append((scr, pm))
+        if not grabs:
             self._snip_restore_panel()
             warn(self, "截取缩略图", "抓取屏幕失败，无法截取缩略图")
             return
-        self._snip_overlay = SnipOverlay(screen, grab)
+        self._snip_overlay = SnipOverlay(grabs)
         self._snip_overlay.confirmed.connect(
             lambda pm: self._on_snip_confirmed(info, pm))
         self._snip_overlay.cancelled.connect(self._on_snip_cancelled)
@@ -2540,7 +2547,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         ov, self._snip_overlay = self._snip_overlay, None
         if ov is not None:
             try:
-                ov.close()   # WA_DeleteOnClose 自行 deleteLater
+                ov.close()   # 会话逐屏关闭；遮罩 WA_DeleteOnClose 自行释放
             except RuntimeError:
                 pass
 

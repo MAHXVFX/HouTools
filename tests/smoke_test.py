@@ -1310,39 +1310,46 @@ def main():
     canvas.deleteLater()
     print("RecipeLibrary crop resize direction OK")
 
-    # 截取缩略图遮罩（capture.SnipOverlay）：比例锁定框选 + Enter 确认 /
-    # Esc 取消，无头模拟鼠标/键盘事件。语义固化：松手不确认、无选区
-    # Enter 忽略、框内拖动移动、四角手柄按比例缩放、确认裁剪 ×DPR 回
-    # 物理像素且 DPR 重置 1
+    # 截取缩略图遮罩（capture.SnipOverlay）：多屏会话（每屏一块遮罩、
+    # 共享选框）+ 比例锁定框选 + Enter 确认 / Esc 取消，无头模拟鼠标/
+    # 键盘事件。语义固化：松手不确认、无选区 Enter 忽略、框内拖动移动、
+    # 四角手柄按比例缩放、确认裁剪 ×DPR 回物理像素且 DPR 重置 1。
+    # 离屏只有主屏（几何在原点、DPR=1，虚拟坐标 == 局部坐标）；跨屏
+    # 拼合分支用"同一屏挂两份抓屏"打桩命中（选框与两份同几何屏幕都有
+    # 交集即走多屏 _result_pixmap）
     from PySide6 import QtGui
     from houtools.recipelib.capture import SnipOverlay
     snip_src = QtGui.QPixmap(400, 300)
     snip_src.fill(QtGui.QColor("#306040"))
-    ov = SnipOverlay(QtGui.QGuiApplication.primaryScreen(), snip_src)
+    ov = SnipOverlay([(QtGui.QGuiApplication.primaryScreen(), snip_src)])
     snipped, cancelled = [], []
     ov.confirmed.connect(snipped.append)
     ov.cancelled.connect(lambda: cancelled.append(1))
+    ov0 = ov._overlays[0]
+    assert len(ov._overlays) == 1
 
-    def _spress(p):
-        ov.mousePressEvent(QtGui.QMouseEvent(
+    def _spress(p, o=ov0):
+        o.mousePressEvent(QtGui.QMouseEvent(
             QtCore.QEvent.MouseButtonPress, QtCore.QPointF(p),
-            QtCore.Qt.LeftButton, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier))
+            QtCore.QPointF(p), QtCore.Qt.LeftButton, QtCore.Qt.LeftButton,
+            QtCore.Qt.NoModifier))
 
-    def _smove(p):
-        ov.mouseMoveEvent(QtGui.QMouseEvent(
-            QtCore.QEvent.MouseMove, QtCore.QPointF(p),
+    def _smove(p, o=ov0):
+        o.mouseMoveEvent(QtGui.QMouseEvent(
+            QtCore.QEvent.MouseMove, QtCore.QPointF(p), QtCore.QPointF(p),
             QtCore.Qt.NoButton, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier))
 
-    def _srel(p):
-        ov.mouseReleaseEvent(QtGui.QMouseEvent(
+    def _srel(p, o=ov0):
+        o.mouseReleaseEvent(QtGui.QMouseEvent(
             QtCore.QEvent.MouseButtonRelease, QtCore.QPointF(p),
-            QtCore.Qt.LeftButton, QtCore.Qt.NoButton, QtCore.Qt.NoModifier))
+            QtCore.QPointF(p), QtCore.Qt.LeftButton, QtCore.Qt.NoButton,
+            QtCore.Qt.NoModifier))
 
     # 无选区：Enter 忽略、Esc 取消（遮罩不自我关闭，收尾归调用方）
-    ov.keyPressEvent(QtGui.QKeyEvent(
+    ov0.keyPressEvent(QtGui.QKeyEvent(
         QtCore.QEvent.KeyPress, QtCore.Qt.Key_Return, QtCore.Qt.NoModifier))
     assert not snipped and not cancelled
-    ov.keyPressEvent(QtGui.QKeyEvent(
+    ov0.keyPressEvent(QtGui.QKeyEvent(
         QtCore.QEvent.KeyPress, QtCore.Qt.Key_Escape, QtCore.Qt.NoModifier))
     assert cancelled and not snipped
     # 拖拽出锁比例选框
@@ -1353,9 +1360,8 @@ def main():
     sel = ov._sel
     assert sel is not None and sel.width() >= 40, sel
     assert abs(sel.width() / sel.height() - rl_crop.TARGET_RATIO) < 0.02, sel
-    # 选框夹屏内
-    sr = ov.rect()
-    assert sr.contains(sel), (sel, sr)
+    # 选框夹屏内（共享选框存虚拟坐标，边界 = 有遮罩屏幕的并集）
+    assert ov._bounds.contains(sel), (sel, ov._bounds)
     # 框内拖动 = 移动选框（对齐 ThumbCropDialog 手感）
     c = sel.center()
     _spress(c)
@@ -1380,21 +1386,51 @@ def main():
     assert grown.width() > shrunk.width(), (grown, shrunk)
     # 悬停光标：框内移动十字、角上缩放斜箭头
     _smove(grown.center())
-    assert ov.cursor().shape() == QtCore.Qt.SizeAllCursor
+    assert ov0.cursor().shape() == QtCore.Qt.SizeAllCursor
     _smove(QtCore.QPoint(grown.left(), grown.top()))
-    assert ov.cursor().shape() == QtCore.Qt.SizeFDiagCursor
-    ov.grab()   # 完整绘制路径（压暗/边框/三分线/手柄/尺寸条/提示条）不崩溃
+    assert ov0.cursor().shape() == QtCore.Qt.SizeFDiagCursor
+    ov0.grab()   # 完整绘制路径（压暗/边框/三分线/手柄/尺寸条/提示条）不崩溃
     # 松手不确认；Enter 才裁剪（×DPR 裁剪、DPR 重置回纯像素）
     assert not snipped
-    ov.keyPressEvent(QtGui.QKeyEvent(
+    ov0.keyPressEvent(QtGui.QKeyEvent(
         QtCore.QEvent.KeyPress, QtCore.Qt.Key_Return, QtCore.Qt.NoModifier))
     assert len(snipped) == 1
     got = snipped[0]
     assert got.size() == ov._sel.size(), (got.size(), ov._sel.size())
     assert got.devicePixelRatio() == 1.0
     assert got.toImage().pixelColor(0, 0).name() == "#306040"
-    ov.deleteLater()
+    ov.close()
     print("RecipeLibrary snip overlay OK")
+
+    # 跨屏拼合路径（_result_pixmap 多屏分支）：同一屏挂两份不同内容抓屏，
+    # 选框与两份都有交集 → 按参与屏最大 DPR 拼合、逐屏取像（后绘在上）；
+    # 同时固化尺寸标签属主语义（_owns_chip 只有一块遮罩为真）
+    pm_a = QtGui.QPixmap(400, 300)
+    pm_a.fill(QtGui.QColor("#102030"))
+    pm_b = QtGui.QPixmap(400, 300)
+    pm_b.fill(QtGui.QColor("#c04020"))
+    scr = QtGui.QGuiApplication.primaryScreen()
+    ov2 = SnipOverlay([(scr, pm_a), (scr, pm_b)])
+    snipped2 = []
+    ov2.confirmed.connect(snipped2.append)
+    ov20, ov21 = ov2._overlays
+    _spress(QtCore.QPoint(60, 50), ov20)
+    _smove(QtCore.QPoint(260, 200), ov20)
+    _srel(QtCore.QPoint(260, 200), ov20)
+    sel2 = ov2._sel
+    assert sel2 is not None, "跨屏会话在单屏遮罩上拖拽同样出选框"
+    assert ov2._owns_chip(ov20) and not ov2._owns_chip(ov21)
+    ov20.grab()   # 拼合会话的完整绘制路径不崩溃
+    ov20.keyPressEvent(QtGui.QKeyEvent(
+        QtCore.QEvent.KeyPress, QtCore.Qt.Key_Return, QtCore.Qt.NoModifier))
+    assert len(snipped2) == 1
+    got2 = snipped2[0]
+    assert got2.size() == sel2.size(), (got2.size(), sel2.size())
+    assert got2.devicePixelRatio() == 1.0
+    assert got2.toImage().pixelColor(0, 0).name() == "#c04020", \
+        "拼合逐屏取像：后一份抓屏后绘覆盖"
+    ov2.close()
+    print("RecipeLibrary snip overlay multi-screen compose OK")
 
     summary = reloader.reload_all()
     print("reload_all ->", summary)
