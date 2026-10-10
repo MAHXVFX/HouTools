@@ -889,11 +889,19 @@ def main():
                 rl_store.RecipeInfo(name="houtools::plain::c", label="Plain C",
                                     category="tool", submenu=""),
             ]
+            # _UI_SETTINGS 打桩到临时 store（沿用 browser 代码内默认值）：
+            # 本块全部断言按 hide_nodeparm_in_all=False 语义编写，不能随
+            # 用户真实「常规」设置漂移
+            ui_store = houtools.core.settings.JsonStore(
+                "_smoke_rl_ui.json",
+                defaults=dict(rl_browser._UI_SETTINGS._defaults))
+            _track_rm(ui_store.path)
             with patch.object(rl_meta, "get_lib_dirs",
                               return_value=[str(Path(tmp) / "scanlib")]), \
                  patch.object(rl_browser.store, "list_recipes",
                               side_effect=lambda lib_dirs=None:
-                                  list(infos) if lib_dirs else []):
+                                  list(infos) if lib_dirs else []), \
+                 patch.object(rl_browser, "_UI_SETTINGS", ui_store):
                 win = rl_browser._RecipeLibraryWindow()
                 win.reload()
                 # 初始焦点在侧栏而非搜索框（用户不期望搜索框预激活；
@@ -1318,7 +1326,7 @@ def main():
     # 拼合分支用"同一屏挂两份抓屏"打桩命中（选框与两份同几何屏幕都有
     # 交集即走多屏 _result_pixmap）
     from PySide6 import QtGui
-    from houtools.recipelib.capture import SnipOverlay
+    from houtools.recipelib.capture import BAR_MARGIN, SnipOverlay
     snip_src = QtGui.QPixmap(400, 300)
     snip_src.fill(QtGui.QColor("#306040"))
     ov = SnipOverlay([(QtGui.QGuiApplication.primaryScreen(), snip_src)])
@@ -1431,6 +1439,79 @@ def main():
         "拼合逐屏取像：后一份抓屏后绘覆盖"
     ov2.close()
     print("RecipeLibrary snip overlay multi-screen compose OK")
+
+    # 微信式 ✓/✗ 按钮条：贴选框下缘右对齐（尺寸标签移到上缘左对齐让
+    # 位）；选框贴底 → 按钮条翻到上缘；左叉右勾，点击语义同 Enter/Esc
+    # （_confirm/_cancel 同路径：确认闩 _done、取消不闩），按钮上按下
+    # 不得清当前选框
+    ov3 = SnipOverlay([(QtGui.QGuiApplication.primaryScreen(), snip_src)])
+    snipped3, cancelled3 = [], []
+    ov3.confirmed.connect(snipped3.append)
+    ov3.cancelled.connect(lambda: cancelled3.append(1))
+    ov30 = ov3._overlays[0]
+    _spress(QtCore.QPoint(60, 50), ov30)
+    _smove(QtCore.QPoint(260, 200), ov30)
+    _srel(QtCore.QPoint(260, 200), ov30)
+    sel3 = ov3._sel
+    bar = ov3._bar_rect()
+    assert bar is not None, "有选框即有按钮条"
+    assert bar.right() == sel3.right() \
+        and bar.top() == sel3.bottom() + BAR_MARGIN, (bar, sel3)
+    _smove(bar.center(), ov30)   # 悬停按钮条 → 手型光标
+    assert ov30.cursor().shape() == QtCore.Qt.PointingHandCursor
+    ov30.grab()   # 按钮条绘制路径（含悬停高亮态）不崩溃
+    cross, check = ov3._bar_cells(bar)
+    _spress(cross.center(), ov30)
+    _srel(cross.center(), ov30)
+    assert cancelled3 and not snipped3
+    assert ov3._sel == sel3, "按钮条上按下不得清当前选框"
+    _spress(check.center(), ov30)
+    _srel(check.center(), ov30)
+    assert len(snipped3) == 1 and snipped3[0].size() == sel3.size()
+    ov3.close()
+
+    # 选框贴屏幕并集底部 → 按钮条翻到选框上方，翻上去后仍可点击确认
+    ov4 = SnipOverlay([(QtGui.QGuiApplication.primaryScreen(), snip_src)])
+    snipped4 = []
+    ov4.confirmed.connect(snipped4.append)
+    ov40 = ov4._overlays[0]
+    _spress(QtCore.QPoint(60, 50), ov40)
+    _smove(QtCore.QPoint(260, 200), ov40)
+    _srel(QtCore.QPoint(260, 200), ov40)
+    _spress(ov4._sel.center(), ov40)
+    _to = QtCore.QPoint(ov4._sel.center().x() + 300,
+                        ov4._sel.center().y() + 2000)   # 远超屏高，必贴底
+    _smove(_to, ov40)
+    _srel(_to, ov40)
+    bot = ov4._sel
+    assert bot.bottom() == ov4._bounds.bottom(), (bot, ov4._bounds)
+    bar4 = ov4._bar_rect()
+    assert bar4.bottom() < bot.top(), (bar4, bot)
+    _cross4, check4 = ov4._bar_cells(bar4)
+    _spress(check4.center(), ov40)
+    _srel(check4.center(), ov40)
+    assert len(snipped4) == 1
+    ov4.close()
+
+    # 窄选框贴底：翻上去的按钮条再上移一行与尺寸标签上下堆叠（同排
+    # 左标签右按钮会相撞），表现为按钮条与选框间距超出常规翻转换行距
+    ov5 = SnipOverlay([(QtGui.QGuiApplication.primaryScreen(), snip_src)])
+    ov50 = ov5._overlays[0]
+    _spress(QtCore.QPoint(60, 50), ov50)
+    _smove(QtCore.QPoint(100, 86), ov50)
+    _srel(QtCore.QPoint(100, 86), ov50)
+    _spress(ov5._sel.center(), ov50)
+    _to = QtCore.QPoint(ov5._sel.center().x() + 300,
+                        ov5._sel.center().y() + 2000)
+    _smove(_to, ov50)
+    _srel(_to, ov50)
+    bot5 = ov5._sel
+    bar5 = ov5._bar_rect()
+    assert bar5.bottom() < bot5.top(), (bar5, bot5)
+    assert bot5.top() - bar5.bottom() > BAR_MARGIN + 10, \
+        (bar5, bot5, "窄选框翻转后应额外上移与尺寸标签堆叠")
+    ov5.close()
+    print("RecipeLibrary snip overlay confirm bar OK")
 
     summary = reloader.reload_all()
     print("reload_all ->", summary)
