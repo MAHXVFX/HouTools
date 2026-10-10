@@ -133,6 +133,82 @@
     box-shadow: 0 12px 42px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.12);
   }
 
+  /* 下载按钮:暖色渐变主按钮,图标为内联 SVG(离线可渲染,仅点击下载这个动作本身需要联网) */
+  .dl-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 16px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #e2571b, #c8102e);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    color: #fff;
+    font-size: 13.5px;
+    font-weight: 600;
+    text-decoration: none;
+    box-shadow: 0 4px 14px rgba(200, 16, 46, 0.35);
+  }
+  .dl-btn:hover { filter: brightness(1.12); }
+  .dl-btn svg { width: 15px; height: 15px; flex: none; }
+
+  /* 打赏按钮:琥珀描边幽灵按钮,与下载主按钮并排 */
+  .hero-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .donate-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 16px;
+    border-radius: 8px;
+    background: rgba(242, 163, 60, 0.12);
+    border: 1px solid rgba(242, 163, 60, 0.5);
+    color: var(--accent-bright);
+    font-size: 13.5px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .donate-btn:hover { background: rgba(242, 163, 60, 0.22); }
+  .donate-btn svg { width: 15px; height: 15px; flex: none; }
+
+  /* 打赏弹窗:点按钮弹出赞赏码,遮罩点击 / × / Esc 关闭 */
+  .donate-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .donate-modal[hidden] { display: none; }
+  .donate-backdrop { position: absolute; inset: 0; background: rgba(12, 9, 8, 0.72); }
+  .donate-card {
+    position: relative;
+    margin: 0;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px;
+    max-width: min(340px, 88vw);
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+  }
+  .donate-modal:not([hidden]) .donate-card { animation: donate-pop 0.18s ease-out; }
+  @keyframes donate-pop { from { transform: scale(0.92); opacity: 0; } }
+  .donate-card img { display: block; width: 100%; height: auto; border-radius: 10px; background: #fff; }
+  .donate-card figcaption { margin-top: 10px; text-align: center; font-size: 13px; color: var(--muted); }
+  .donate-close {
+    position: absolute;
+    top: 8px; right: 8px;
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: rgba(20, 16, 15, 0.72);
+    color: var(--text);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .donate-close:hover { border-color: var(--accent-bright); color: var(--accent-bright); }
+
   /* 仓库地址条(完整 URL 可见,点击跳转,新标签打开;上下排列) */
   .repo-row {
     display: flex;
@@ -374,6 +450,16 @@
           <span class="repo-url">https://github.com/MAHXVFX/HouTools</span>
           <span class="repo-tag">国外</span>
         </a>
+      </div>
+      <div class="hero-actions">
+        <a class="dl-btn" href="https://gitcode.com/mahx-vfx/HouTools/releases/download/latest/HouTools.zip" download>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          下载最新版
+        </a>
+        <button class="donate-btn" id="donateBtn" type="button">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+          打赏
+        </button>
       </div>
     </div>
   </div>
@@ -683,6 +769,15 @@
 
 <a class="top-link" href="#" title="回到顶部">↑</a>
 
+<div class="donate-modal" id="donateModal" hidden>
+  <div class="donate-backdrop"></div>
+  <figure class="donate-card">
+    <button class="donate-close" type="button" aria-label="关闭">×</button>
+    <img src="donate.png" alt="MAHX_VFX 的微信赞赏码">
+    <figcaption>微信扫码 · 感谢每一份支持</figcaption>
+  </figure>
+</div>
+
 <script>
 (function () {
   var car = document.getElementById('carousel');
@@ -738,6 +833,20 @@
 
   go(0);
   restart();
+})();
+
+/* 打赏弹窗:按钮弹出,遮罩 / × / Esc 关闭 */
+(function () {
+  var modal = document.getElementById('donateModal');
+  if (!modal) return;
+  function open() { modal.hidden = false; }
+  function close() { modal.hidden = true; }
+  document.getElementById('donateBtn').addEventListener('click', open);
+  modal.querySelector('.donate-close').addEventListener('click', close);
+  modal.querySelector('.donate-backdrop').addEventListener('click', close);
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !modal.hidden) close();
+  });
 })();
 </script>
 
