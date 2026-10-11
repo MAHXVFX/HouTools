@@ -169,6 +169,23 @@
   .donate-btn:hover { background: rgba(242, 163, 60, 0.22); }
   .donate-btn svg { width: 15px; height: 15px; flex: none; }
 
+  /* 论坛按钮:中性描边幽灵按钮(与徽章同款白描边),点击跳 GitCode 讨论区 */
+  .forum-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 16px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    color: #e8ebef;
+    font-size: 13.5px;
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .forum-btn:hover { background: rgba(255, 255, 255, 0.16); }
+  .forum-btn svg { width: 15px; height: 15px; flex: none; }
+
   /* 打赏弹窗:点按钮弹出赞赏码,遮罩点击 / × / Esc 关闭 */
   .donate-modal {
     position: fixed;
@@ -455,6 +472,10 @@
         <a class="dl-btn" href="https://gitcode.com/mahx-vfx/HouTools/releases/download/latest/HouTools.zip" download>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
           下载最新版
+        </a>
+        <a class="forum-btn" href="https://gitcode.com/mahx-vfx/HouTools/discussions" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          论坛
         </a>
         <button class="donate-btn" id="donateBtn" type="button">
           <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
