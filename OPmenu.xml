@@ -13,6 +13,11 @@
     菜单系统自动收起）；标签尾部加 [HT] 后缀；标签一律英文/ASCII——H22 实测
     中文 <label> 条目行出现但文字不渲染（与顶栏菜单栏同款限制）。
 
+    Open Cache Folder 条目：右键带输出路径参数的节点即显示——sopoutput
+    （filecache::2.0 / rop geometry / fbx）、vm_picture（mantra）、picture
+    （karma）、outputimage（USD Render，为空时回退 loppath 指向节点的 picture）。
+    候选清单须与 open_cache_folder.py 的 _OUTPUT_PARMS 双处同步。
+
     scriptCode 只写两行分发器，逻辑一律在 houtools/tools/ 与模块。
 -->
 <menuDocument>
@@ -21,7 +26,9 @@
         <scriptItem id="houtools_open_cache_folder">
             <label>Open Cache Folder [HT]</label>
             <context>
-                <expression>kwargs.get("node") is not None and kwargs["node"].parm("sopoutput") is not None</expression>
+                <!-- 候选参数清单与 houtools/tools/open_cache_folder.py 的
+                     _OUTPUT_PARMS 保持同步（参数名互不重叠，节点命中其一） -->
+                <expression>kwargs.get("node") is not None and any(kwargs["node"].parm(n) is not None for n in ("sopoutput", "vm_picture", "picture", "outputimage"))</expression>
             </context>
             <scriptCode><![CDATA[import houtools.dev.dispatcher as _houtools_dispatcher
 _houtools_dispatcher.run("open_cache_folder", kwargs)

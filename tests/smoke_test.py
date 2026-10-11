@@ -1607,8 +1607,9 @@ def main():
     assert prefix_error('a"b') != ""
     print("videoseq prefix guard OK")
 
-    # 打开缓存文件夹：sopoutput 求值取父目录 + 目录缺失上溯最近存在祖先
-    # （fake 节点鸭子类型，无 hou 依赖；相对路径的 $HIP 分支需 hou，无头不覆盖）
+    # 打开缓存文件夹：输出路径参数求值取父目录 + 目录缺失上溯最近存在祖先
+    # （fake 节点鸭子类型，无 hou 依赖；含 $ 变量路径的展开分支、相对路径的
+    # $HIP 分支均需 hou，无头不覆盖——由无头 hython 场景验证）
     from houtools.tools import open_cache_folder as ocf
 
     class _FakeParmEval:
@@ -1617,30 +1618,88 @@ def main():
         def evalAsString(self):
             return self._value
 
-    class _FakeCacheNode:
-        def __init__(self, path, sopoutput=None):
+    class _FakeNodeRefParm:
+        def __init__(self, target):
+            self._target = target
+        def evalAsNode(self):
+            return self._target
+
+    class _FakeOutNode:
+        # parms：参数名 -> 字符串值（evalAsString）或 _FakeOutNode（节点引用，
+        # 经 evalAsNode 解析，模拟 loppath）
+        def __init__(self, path, parms=None):
             self._path = path
-            self._sopoutput = sopoutput
+            self._parms = parms or {}
         def path(self):
             return self._path
         def parm(self, name):
-            if name == "sopoutput" and self._sopoutput is not None:
-                return _FakeParmEval(self._sopoutput)
-            return None
+            value = self._parms.get(name)
+            if value is None:
+                return None
+            if isinstance(value, _FakeOutNode):
+                return _FakeNodeRefParm(value)
+            return _FakeParmEval(value)
 
     with tempfile.TemporaryDirectory() as tmp:
         good = Path(tmp, "geo", "cache_v1")
         good.mkdir(parents=True)
-        node = _FakeCacheNode("/obj/geo1/filecache1",
-                              str(good / "out.$F4.bgeo.sc"))
+        node = _FakeOutNode("/obj/geo1/filecache1",
+                            {"sopoutput": str(good / "out.0001.bgeo.sc")})
         assert os.path.normpath(ocf.resolve_folder(node)) == str(good)
-        node = _FakeCacheNode("/obj/geo1/filecache1",
-                              str(Path(tmp, "no", "such") / "f.bgeo.sc"))
+        node = _FakeOutNode("/obj/geo1/filecache1",
+                            {"sopoutput": str(Path(tmp, "no", "such") / "f.bgeo.sc")})
         assert os.path.normpath(ocf.resolve_folder(node)) \
             == os.path.normpath(str(tmp))
+
+        # karma / mantra：picture / vm_picture 候选参数同规则
+        render_dir = Path(tmp, "render", "karma")
+        render_dir.mkdir(parents=True)
+        node = _FakeOutNode("/out/karma1",
+                            {"picture": str(render_dir / "karma.0001.exr")})
+        assert os.path.normpath(ocf.resolve_folder(node)) == str(render_dir)
+        node = _FakeOutNode("/out/ifd1",
+                            {"vm_picture": str(render_dir / "mantra.0001.exr")})
+        assert os.path.normpath(ocf.resolve_folder(node)) == str(render_dir)
+
+        # USD Render：outputimage 非空时永远优先，loppath 配了也不看
+        usd_out = Path(tmp, "usd_out")
+        usd_out.mkdir(parents=True)
+        lop = _FakeOutNode("/stage/karmarendersettings1",
+                           {"picture": str(render_dir / "lop.0001.png")})
+        node = _FakeOutNode("/out/usdrender1",
+                            {"outputimage": str(usd_out / "u.0001.exr"),
+                             "loppath": lop})
+        assert os.path.normpath(ocf.resolve_folder(node)) == str(usd_out)
+
+        # USD Render：outputimage 为空 → loppath 指向节点（一般 Karma Render
+        # Settings）的 picture，按同样上溯规则
+        node = _FakeOutNode("/out/usdrender1", {"outputimage": "", "loppath": lop})
+        assert os.path.normpath(ocf.resolve_folder(node)) == str(render_dir)
+
+        # 兜底分支的坏配置全部报错：无 loppath / 空引用 / 目标无 picture /
+        # 目标 picture 也为空
+        bad_nodes = (
+            _FakeOutNode("/out/usdrender1", {"outputimage": ""}),
+            _FakeOutNode("/out/usdrender1", {"outputimage": "", "loppath": None}),
+            _FakeOutNode("/out/usdrender1",
+                         {"outputimage": "",
+                          "loppath": _FakeOutNode("/stage/usd_rop1",
+                                                  {"lopoutput": "out.usd"})}),
+            _FakeOutNode("/out/usdrender1",
+                         {"outputimage": "",
+                          "loppath": _FakeOutNode("/stage/krs2", {"picture": ""})}),
+        )
+        for bad in bad_nodes:
+            try:
+                ocf.resolve_folder(bad)
+                raise AssertionError("bad usdrender config should fail")
+            except RuntimeError:
+                pass
+
+    # 完全没有输出路径参数的节点（报错消息列出候选参数）
     try:
-        ocf.resolve_folder(_FakeCacheNode("/obj/geo1/box1"))
-        raise AssertionError("missing sopoutput should fail")
+        ocf.resolve_folder(_FakeOutNode("/obj/geo1/box1"))
+        raise AssertionError("missing output parm should fail")
     except RuntimeError as exc:
         assert "sopoutput" in str(exc)
     print("open_cache_folder resolve OK")

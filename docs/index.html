@@ -749,12 +749,13 @@
 <!-- ============ Open Cache Folder ============ -->
 <section id="open-cache-folder">
   <h2>Open Cache Folder<span class="zh">打开缓存目录</span></h2>
-  <p class="entry">入口:右键带 <code>sopoutput</code> 参数的节点(如 File Cache)→ <code>Open Cache Folder [HT]</code></p>
-  <p>直接在资源管理器中打开该节点的缓存输出目录,免去翻参数、拷路径、开资源管理器的流程。</p>
+  <p class="entry">入口:右键带输出路径参数的节点(File Cache / ROP Geometry / FBX ROP / Mantra / Karma / USD Render 等)→ <code>Open Cache Folder [HT]</code></p>
+  <p>直接在资源管理器中打开该节点的输出目录,免去翻参数、拷路径、开资源管理器的流程。</p>
   <ul>
-    <li>取 <code>sopoutput</code> 参数的求值结果,打开其所在目录。</li>
-    <li>缓存还没写出(目录不存在)时,自动上溯到最近存在的祖先目录。</li>
-    <li>相对路径按 <code>$HIP</code> 解析,与 Houdini 读文件参数的语义一致。</li>
+    <li>按节点读取对应输出参数:File Cache / 几何缓存 / FBX 的 <code>sopoutput</code>、Mantra 的 <code>vm_picture</code>、Karma 的 <code>picture</code>、USD Render 的 <code>outputimage</code>。</li>
+    <li>USD Render 的 <code>outputimage</code> 未设置时,回退读取 <code>loppath</code> 指向节点(如 Karma Render Settings)的 <code>picture</code>;已设置时永远以 <code>outputimage</code> 为准。</li>
+    <li>输出还没写出(目录不存在)时,自动上溯到最近存在的祖先目录。</li>
+    <li>路径按 Houdini 变量语义展开(<code>$HIP</code>/<code>$OS</code>/<code>$F4</code> 等),真相对路径再按 <code>$HIP</code> 拼接。</li>
   </ul>
 </section>
 
