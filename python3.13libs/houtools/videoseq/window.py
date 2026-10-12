@@ -52,6 +52,26 @@ def prefix_error(prefix: str) -> str:
     return f"前缀包含 Windows 文件名非法字符：{ch!r}"
 
 
+# 相机分辨率输入解析："宽x高"，容许两侧空白与 x/X/×/*/,/， 分隔
+_RESOLUTION_RE = re.compile(r"(\d{1,5})(?:\s*[xX×*,，]\s*|\s+)(\d{1,5})")
+
+
+def parse_resolution(text):
+    """解析 "宽x高" 分辨率文本，合法返回 (宽, 高)，否则返回 None。
+
+    容许 "1920x1080"、"1920 X 1080"、"1920,1080" 等写法；宽高必须为正。
+    """
+    if not text:
+        return None
+    m = _RESOLUTION_RE.fullmatch(text.strip())
+    if not m:
+        return None
+    width, height = int(m.group(1)), int(m.group(2))
+    if width <= 0 or height <= 0:
+        return None
+    return width, height
+
+
 # ─── Styles ──────────────────────────────────────────────────────────
 
 STYLE_SHEET = """
@@ -830,21 +850,44 @@ class _VideoToSequenceWindow(QDialog):
     def _build_camera_section(self, parent_layout):
         group = QGroupBox("相机")
         group.setStyleSheet(_GROUPBOX_INLINE_STYLE)
-        layout = QHBoxLayout(group)
+        layout = QVBoxLayout(group)
         layout.setContentsMargins(8, 10, 8, 6)
         layout.setSpacing(6)
 
+        # 相机选择行
+        cam_row = QHBoxLayout()
         cam_lbl = QLabel("选择相机:")
-        cam_lbl.setStyleSheet("color: #888888;")
+        cam_lbl.setStyleSheet("color: #888888; min-width: 80px;")
         self._camera_edit = QLineEdit()
         self._camera_edit.setReadOnly(True)
         self._camera_edit.setPlaceholderText("未选择相机...")
         self._pick_cam_btn = QPushButton("选择...")
         self._pick_cam_btn.setObjectName("browseBtn")
         self._pick_cam_btn.clicked.connect(self._on_pick_camera)
-        layout.addWidget(cam_lbl)
-        layout.addWidget(self._camera_edit, 1)
-        layout.addWidget(self._pick_cam_btn)
+        cam_row.addWidget(cam_lbl)
+        cam_row.addWidget(self._camera_edit, 1)
+        cam_row.addWidget(self._pick_cam_btn)
+        layout.addLayout(cam_row)
+
+        # 相机分辨率行：跟随所选相机显示（resx/resy），可编辑后写回
+        res_row = QHBoxLayout()
+        res_lbl = QLabel("分辨率:")
+        res_lbl.setStyleSheet("color: #888888; min-width: 80px;")
+        self._res_edit = QLineEdit()
+        self._res_edit.setPlaceholderText("选择相机后显示，例如 1920x1080")
+        self._res_edit.setToolTip(
+            "所选相机的渲染分辨率（resx/resy）；\n修改后点「确定」写回相机"
+        )
+        self._res_edit.setEnabled(False)
+        self._res_apply_btn = QPushButton("确定")
+        self._res_apply_btn.setObjectName("browseBtn")
+        self._res_apply_btn.setAutoDefault(False)
+        self._res_apply_btn.setEnabled(False)
+        self._res_apply_btn.clicked.connect(self._on_apply_camera_res)
+        res_row.addWidget(res_lbl)
+        res_row.addWidget(self._res_edit, 1)
+        res_row.addWidget(self._res_apply_btn)
+        layout.addLayout(res_row)
 
         parent_layout.addWidget(group)
         self._auto_select_camera()
@@ -1303,7 +1346,7 @@ class _VideoToSequenceWindow(QDialog):
         )
 
     def _set_camera_background(self, cam_path, output_dir):
-        """设置相机的 Background Image 参数"""
+        """设置相机的 Background Image 参数并启用背景（vm_bgenable=1）"""
         try:
             import hou
             cam = hou.node(cam_path)
@@ -1328,10 +1371,10 @@ class _VideoToSequenceWindow(QDialog):
             if bg_parm:
                 bg_parm.set(bg_path)
 
-            # 设置 vm_bgenable 为 0（禁用）
+            # 确保 vm_bgenable 为 1（启用背景图）
             use_bg_parm = cam.parm("vm_bgenable")
             if use_bg_parm:
-                use_bg_parm.set(0)
+                use_bg_parm.set(1)
 
         except ImportError:
             pass
@@ -1391,7 +1434,7 @@ class _VideoToSequenceWindow(QDialog):
         """根据场景中的相机数量自动选择"""
         cameras = self._find_scene_cameras()
         if len(cameras) == 1:
-            self._camera_edit.setText(cameras[0])
+            self._set_selected_camera(cameras[0])
 
     def _on_pick_camera(self):
         """打开相机选择对话框"""
@@ -1424,7 +1467,72 @@ class _VideoToSequenceWindow(QDialog):
         dlg.deleteLater()
         if ok and name:
             idx = cam_names.index(name)
-            self._camera_edit.setText(cameras[idx])
+            self._set_selected_camera(cameras[idx])
+
+    def _set_selected_camera(self, cam_path: str):
+        """记录所选相机并同步分辨率显示（选择对话框/自动选择共用入口）。"""
+        self._camera_edit.setText(cam_path)
+        self._refresh_camera_res()
+
+    def _selected_camera_node(self):
+        """当前所选相机节点；未选、场景中已不存在或无 hou 时返回 None。"""
+        path = self._camera_edit.text().strip()
+        if not path:
+            return None
+        try:
+            import hou
+        except ImportError:
+            return None
+        return hou.node(path)
+
+    def _refresh_camera_res(self):
+        """按所选相机刷新分辨率框（resx/resy）；无相机或参数缺失则禁用。"""
+        cam = self._selected_camera_node()
+        resx = cam.parm("resx") if cam is not None else None
+        resy = cam.parm("resy") if cam is not None else None
+        if resx is None or resy is None:
+            self._res_edit.setText("")
+            self._res_edit.setEnabled(False)
+            self._res_apply_btn.setEnabled(False)
+            return
+        self._res_edit.setText(f"{resx.evalAsInt()}x{resy.evalAsInt()}")
+        self._res_edit.setEnabled(True)
+        self._res_apply_btn.setEnabled(True)
+
+    def _on_apply_camera_res(self):
+        """把分辨率输入框的值写回当前所选相机（resx/resy）。"""
+        cam = self._selected_camera_node()
+        if cam is None:
+            if self._camera_edit.text().strip():
+                dialogs.warn(self, "提示", "所选相机已不存在，请重新选择。")
+            else:
+                dialogs.warn(self, "提示", "请先选择相机。")
+            return
+        parsed = parse_resolution(self._res_edit.text())
+        if parsed is None:
+            dialogs.warn(
+                self, "分辨率格式错误",
+                "请输入 宽x高 形式的分辨率，例如 1920x1080。",
+            )
+            return
+        width, height = parsed
+        resx, resy = cam.parm("resx"), cam.parm("resy")
+        if resx is None or resy is None:
+            dialogs.warn(self, "错误", "所选相机没有 resx/resy 分辨率参数。")
+            return
+        import hou
+        try:
+            resx.set(width)
+            resy.set(height)
+        except hou.OperationFailed as e:
+            logger.warning("设置相机分辨率失败 %s: %s", cam.path(), e)
+            dialogs.warn(self, "错误", f"设置相机分辨率失败:\n{e}")
+            return
+        self._res_edit.setText(f"{width}x{height}")
+        self._status_label.setVisible(True)
+        self._status_label.setText(
+            f"已设置 {cam.path()} 分辨率为 {width}x{height}")
+        self._status_label.setStyleSheet("color: #87cc8e; font-size: 12px;")
 
     def _reset_info_labels(self):
         for lbl in self._info_labels.values():
