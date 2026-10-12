@@ -15,7 +15,7 @@ from typing import Optional
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QSpinBox, QSlider, QGroupBox, QFormLayout,
-    QFileDialog, QProgressBar, QInputDialog,
+    QFileDialog, QProgressBar, QInputDialog, QMenu,
 )
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 
@@ -52,24 +52,30 @@ def prefix_error(prefix: str) -> str:
     return f"前缀包含 Windows 文件名非法字符：{ch!r}"
 
 
-# 相机分辨率输入解析："宽x高"，容许两侧空白与 x/X/×/*/,/， 分隔
-_RESOLUTION_RE = re.compile(r"(\d{1,5})(?:\s*[xX×*,，]\s*|\s+)(\d{1,5})")
+# 分辨率数值输入校验：1~5 位数字（宽/高各占一个输入框，逐框校验）
+_DIMENSION_RE = re.compile(r"\d{1,5}")
 
 
-def parse_resolution(text):
-    """解析 "宽x高" 分辨率文本，合法返回 (宽, 高)，否则返回 None。
-
-    容许 "1920x1080"、"1920 X 1080"、"1920,1080" 等写法；宽高必须为正。
-    """
+def parse_dimension(text):
+    """解析单个分辨率数值文本（宽或高），合法返回正 int，否则返回 None。"""
     if not text:
         return None
-    m = _RESOLUTION_RE.fullmatch(text.strip())
-    if not m:
+    if not _DIMENSION_RE.fullmatch(text.strip()):
         return None
-    width, height = int(m.group(1)), int(m.group(2))
-    if width <= 0 or height <= 0:
-        return None
-    return width, height
+    value = int(text)
+    return value if value > 0 else None
+
+
+# 常规分辨率预设（宽, 高）：相机分辨率行的「预设」下拉按此序展示
+RESOLUTION_PRESETS = [
+    (1280, 720),
+    (1920, 1080),
+    (2048, 1080),
+    (2048, 1152),
+    (2560, 1440),
+    (3840, 2160),
+    (4096, 2160),
+]
 
 
 # ─── Styles ──────────────────────────────────────────────────────────
@@ -137,6 +143,21 @@ QPushButton#browseBtn {
 QPushButton#browseBtn:hover {
     background-color: #d4bf40;
 }
+QPushButton#confirmBtn {
+    background-color: #0d6399;
+    color: white;
+    padding: 5px 14px;
+    border-radius: 8px;
+    min-width: 50px;
+    font-weight: bold;
+}
+QPushButton#confirmBtn:hover {
+    background-color: #0a4d7a;
+}
+QPushButton#confirmBtn:disabled {
+    background-color: #3d3d3d;
+    color: #888888;
+}
 QPushButton#convertBtn {
     background-color: #0d6399;
     color: white;
@@ -162,6 +183,19 @@ QPushButton#cancelBtn {
 }
 QPushButton#cancelBtn:hover {
     background-color: #b82235;
+}
+QPushButton#presetBtn {
+    background-color: #2d2d2d;
+    color: #ffffff;
+    border: 1px solid #3d3d3d;
+    padding: 5px 10px;
+    border-radius: 6px;
+}
+QPushButton#presetBtn:hover {
+    border: 1px solid #0d6399;
+}
+QPushButton#presetBtn:pressed {
+    background-color: #3d3d3d;
 }
 QSlider#qualitySlider {
     background-color: transparent;
@@ -869,23 +903,39 @@ class _VideoToSequenceWindow(QDialog):
         cam_row.addWidget(self._pick_cam_btn)
         layout.addLayout(cam_row)
 
-        # 相机分辨率行：跟随所选相机显示（resx/resy），可编辑后写回
+        # 相机分辨率行：跟随所选相机显示（resx/resy），宽/高各占一个输入框；
+        # 「预设」下拉点选只填两框，仍需「确定」写回相机
         res_row = QHBoxLayout()
         res_lbl = QLabel("分辨率:")
         res_lbl.setStyleSheet("color: #888888; min-width: 80px;")
-        self._res_edit = QLineEdit()
-        self._res_edit.setPlaceholderText("选择相机后显示，例如 1920x1080")
-        self._res_edit.setToolTip(
-            "所选相机的渲染分辨率（resx/resy）；\n修改后点「确定」写回相机"
-        )
-        self._res_edit.setEnabled(False)
+        self._res_w_edit = QLineEdit()
+        self._res_w_edit.setPlaceholderText("宽")
+        self._res_w_edit.setToolTip("所选相机的渲染分辨率宽（resx）")
+        self._res_w_edit.setEnabled(False)
+        self._res_h_edit = QLineEdit()
+        self._res_h_edit.setPlaceholderText("高")
+        self._res_h_edit.setToolTip("所选相机的渲染分辨率高（resy）")
+        self._res_h_edit.setEnabled(False)
+        self._res_preset_btn = QPushButton("预设")
+        self._res_preset_btn.setObjectName("presetBtn")
+        self._res_preset_btn.setAutoDefault(False)
+        self._res_preset_btn.setEnabled(False)
+        self._res_menu = QMenu(self._res_preset_btn)
+        for width, height in RESOLUTION_PRESETS:
+            act = self._res_menu.addAction(f"{width} × {height}")
+            act.triggered.connect(
+                lambda checked=False, w=width, h=height:
+                self._on_preset_resolution(w, h))
+        self._res_preset_btn.setMenu(self._res_menu)
         self._res_apply_btn = QPushButton("确定")
-        self._res_apply_btn.setObjectName("browseBtn")
+        self._res_apply_btn.setObjectName("confirmBtn")
         self._res_apply_btn.setAutoDefault(False)
         self._res_apply_btn.setEnabled(False)
         self._res_apply_btn.clicked.connect(self._on_apply_camera_res)
         res_row.addWidget(res_lbl)
-        res_row.addWidget(self._res_edit, 1)
+        res_row.addWidget(self._res_w_edit, 1)
+        res_row.addWidget(self._res_h_edit, 1)
+        res_row.addWidget(self._res_preset_btn)
         res_row.addWidget(self._res_apply_btn)
         layout.addLayout(res_row)
 
@@ -1491,16 +1541,31 @@ class _VideoToSequenceWindow(QDialog):
         resx = cam.parm("resx") if cam is not None else None
         resy = cam.parm("resy") if cam is not None else None
         if resx is None or resy is None:
-            self._res_edit.setText("")
-            self._res_edit.setEnabled(False)
-            self._res_apply_btn.setEnabled(False)
+            self._reset_res_row()
             return
-        self._res_edit.setText(f"{resx.evalAsInt()}x{resy.evalAsInt()}")
-        self._res_edit.setEnabled(True)
+        self._res_w_edit.setText(str(resx.evalAsInt()))
+        self._res_h_edit.setText(str(resy.evalAsInt()))
+        self._res_w_edit.setEnabled(True)
+        self._res_h_edit.setEnabled(True)
+        self._res_preset_btn.setEnabled(True)
         self._res_apply_btn.setEnabled(True)
 
+    def _reset_res_row(self):
+        """分辨率行退回禁用空态（无相机/相机已删/参数缺失）。"""
+        self._res_w_edit.setText("")
+        self._res_h_edit.setText("")
+        self._res_w_edit.setEnabled(False)
+        self._res_h_edit.setEnabled(False)
+        self._res_preset_btn.setEnabled(False)
+        self._res_apply_btn.setEnabled(False)
+
+    def _on_preset_resolution(self, width, height):
+        """「预设」下拉点选：把常规分辨率填入宽/高两框（写回仍走「确定」）。"""
+        self._res_w_edit.setText(str(width))
+        self._res_h_edit.setText(str(height))
+
     def _on_apply_camera_res(self):
-        """把分辨率输入框的值写回当前所选相机（resx/resy）。"""
+        """把两个分辨率框的值写回当前所选相机（resx/resy）。"""
         cam = self._selected_camera_node()
         if cam is None:
             if self._camera_edit.text().strip():
@@ -1508,14 +1573,14 @@ class _VideoToSequenceWindow(QDialog):
             else:
                 dialogs.warn(self, "提示", "请先选择相机。")
             return
-        parsed = parse_resolution(self._res_edit.text())
-        if parsed is None:
+        width = parse_dimension(self._res_w_edit.text())
+        height = parse_dimension(self._res_h_edit.text())
+        if width is None or height is None:
             dialogs.warn(
                 self, "分辨率格式错误",
-                "请输入 宽x高 形式的分辨率，例如 1920x1080。",
+                "分辨率宽、高须为正整数，请检查后重试。",
             )
             return
-        width, height = parsed
         resx, resy = cam.parm("resx"), cam.parm("resy")
         if resx is None or resy is None:
             dialogs.warn(self, "错误", "所选相机没有 resx/resy 分辨率参数。")
@@ -1528,7 +1593,8 @@ class _VideoToSequenceWindow(QDialog):
             logger.warning("设置相机分辨率失败 %s: %s", cam.path(), e)
             dialogs.warn(self, "错误", f"设置相机分辨率失败:\n{e}")
             return
-        self._res_edit.setText(f"{width}x{height}")
+        self._res_w_edit.setText(str(width))
+        self._res_h_edit.setText(str(height))
         self._status_label.setVisible(True)
         self._status_label.setText(
             f"已设置 {cam.path()} 分辨率为 {width}x{height}")
@@ -1586,6 +1652,12 @@ class _VideoToSequenceWindow(QDialog):
             self._pending_close = False
             if self._close_poll is not None:
                 self._close_poll.stop()
+        # 单例窗口关闭只是隐藏：隐藏期间相机分辨率可能已在 Houdini 里被改，
+        # 重开时必须重读所选相机（只在选择相机时刷新会一直显示旧值）
+        self._refresh_camera_res()
+        # 上次会话遗留的状态提示（如"已设置 … 分辨率"）不带到重开后的面板
+        self._status_label.setVisible(False)
+        self._status_label.setText("")
         super().showEvent(event)
 
     def closeEvent(self, event):  # noqa: N802 — Qt 命名约定

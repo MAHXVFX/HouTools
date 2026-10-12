@@ -345,22 +345,36 @@ def main():
     print("AutomationWindow instantiation OK")
 
     # 真实实例化 videoseq 窗口（捕获 __init__ 结构损伤；无视频、无线程）
-    from houtools.videoseq.window import _VideoToSequenceWindow, parse_resolution
-    assert parse_resolution("1920x1080") == (1920, 1080)
-    assert parse_resolution(" 1920 X 1080 ") == (1920, 1080)
-    assert parse_resolution("1280,720") == (1280, 720)
-    assert parse_resolution("1920 1080") == (1920, 1080)
-    assert parse_resolution("abc") is None
-    assert parse_resolution("0x1080") is None
-    assert parse_resolution("1920") is None
+    from houtools.videoseq.window import _VideoToSequenceWindow, parse_dimension
+    assert parse_dimension("1920") == 1920
+    assert parse_dimension(" 1080 ") == 1080
+    assert parse_dimension("0") is None
+    assert parse_dimension("abc") is None
+    assert parse_dimension("") is None
     vs_win = _VideoToSequenceWindow()
-    # 无头无 hou：自动选相机落空，分辨率行必须保持禁用空态
+    # 无头无 hou：自动选相机落空，分辨率两框必须保持禁用空态
     assert vs_win._camera_edit.text() == ""
-    assert not vs_win._res_edit.isEnabled()
+    assert not vs_win._res_w_edit.isEnabled()
+    assert not vs_win._res_h_edit.isEnabled()
     assert not vs_win._res_apply_btn.isEnabled()
-    assert vs_win._res_edit.text() == ""
+    assert vs_win._res_w_edit.text() == "" and vs_win._res_h_edit.text() == ""
     # 无 hou 时相机参数写入静默通过（ImportError 兜底路径）
     vs_win._set_camera_background("/obj/no_such_cam", "C:/tmp")
+    # 预设下拉：菜单动作数与常量表一致，点选填入宽/高两框（无需 hou）
+    from houtools.videoseq.window import RESOLUTION_PRESETS
+    acts = vs_win._res_menu.actions()
+    assert len(acts) == len(RESOLUTION_PRESETS)
+    acts[RESOLUTION_PRESETS.index((1920, 1080))].trigger()
+    assert (vs_win._res_w_edit.text(),
+            vs_win._res_h_edit.text()) == ("1920", "1080")
+    # 「确定」与「开始转换」同色系（confirmBtn 蓝色样式，用户指定）
+    assert vs_win._res_apply_btn.objectName() == "confirmBtn"
+    # 重开面板（showEvent）必须清掉上次会话遗留的状态提示
+    vs_win._status_label.setText("已设置 /obj/cam 分辨率为 100x100")
+    vs_win._status_label.setVisible(True)
+    vs_win.show()
+    assert not vs_win._status_label.isVisible()
+    assert vs_win._status_label.text() == ""
     vs_win.deleteLater()
     print("VideoseqWindow instantiation OK")
 
