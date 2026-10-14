@@ -1,5 +1,7 @@
 # HouTools (Houdini 22 / Python 3.13)
 
+![Houdini 22.0](https://img.shields.io/badge/Houdini-22.0-FF4747?logo=sidefx&logoColor=white) ![Python 3.13](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.8.3-41CD52?logo=qt&logoColor=white) ![Platform Windows](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows11&logoColor=white) ![License GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue?logo=gnu&logoColor=white)
+
 Houdini 22 插件工具集，开发期支持**手动热加载**：改完代码无需重启 Houdini。
 
 > 仅支持 Windows：Automation 的窗口置顶用 Win32 API，部分工具的"打开所在文件夹"依赖 explorer。
