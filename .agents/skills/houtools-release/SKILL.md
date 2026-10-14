@@ -19,6 +19,21 @@ description: HouTools 发版流程（版本号更新、README/About 手册同步
   3. 用户要自定义版本号时，走选项卡自带的「Other」自由输入。
 - 用户选定/输入之前，不读文件、不跑命令（取最新 tag 除外）。
 
+## 机器无关：一切路径动态解析，禁止写死
+
+换机器（安装盘符、Houdini 小版本、用户目录）都会变，本 skill 及手敲命令一律不含绝对路径：
+
+- **Houdini 自带 python**：每条命令内联解析（shell 状态不跨调用存续）：
+  `"$(bash .agents/skills/houtools-release/scripts/find_houdini_python.sh)" <脚本>`
+  解析脚本按 `$HFS` → 各盘符 `Program Files/Side Effects Software/Houdini 22.*`
+  （取最高版本）探测；失败时如实报告并请用户确认安装位置，禁止硬编码盘符或版本号。
+- **gitcode 的 owner/repo**：从 `git remote get-url origin` 解析——SSH 形态
+  `git@gitcode.com:<owner>/<repo>.git`、https 形态 `.../gitcode.com/<owner>/<repo>.git`，
+  取 `.git` 前的 `<owner>/<repo>` 两段（本仓库当前为 `mahx-vfx`/`HouTools`）。
+- **系统下载文件夹**：用户目录可能被重定向（作者机器实测 Documents 与 Downloads
+  都不在 C: 默认位置）——一律走 pack_zip.py 内置的 SHGetKnownFolderPath 解析，
+  勿假设 `C:\Users\<名>\Downloads`。
+
 ## 流程步骤
 
 按以下步骤顺序执行；用户只要了其中一部分时只做对应步骤，但保持顺序语义
@@ -43,9 +58,9 @@ description: HouTools 发版流程（版本号更新、README/About 手册同步
   #2d2d2d 网格线、左下角操作提示文字）。
 - 工具窗口 UI 有改动 → 用 Houdini 自带 python 重生成四张轮播截图（offscreen，
   脚本自带打桩演示数据，改的是哪个窗口就全量重跑）：
-  `"D:\Program Files\Side Effects Software\Houdini 22.0.429\python313\python.exe" tests/gen_about_shots.py`
+  `"$(bash .agents/skills/houtools-release/scripts/find_houdini_python.sh)" tests/gen_about_shots.py`
 - 跑无头回归，必须全绿再继续：
-  `"D:\Program Files\Side Effects Software\Houdini 22.0.429\python313\python.exe" tests\smoke_test.py`
+  `"$(bash .agents/skills/houtools-release/scripts/find_houdini_python.sh)" tests/smoke_test.py`
 
 ## 3. 提交 + 打标签 + 推送
 
@@ -60,7 +75,7 @@ description: HouTools 发版流程（版本号更新、README/About 手册同步
 用本 skill 附带的脚本（清单/排除/验证都在脚本里，勿手搓命令）：
 
 ```
-"D:\Program Files\Side Effects Software\Houdini 22.0.429\python313\python.exe" .agents/skills/houtools-release/scripts/pack_zip.py v1.4.0
+"$(bash .agents/skills/houtools-release/scripts/find_houdini_python.sh)" .agents/skills/houtools-release/scripts/pack_zip.py v1.4.0
 ```
 
 脚本行为与原因：
@@ -82,7 +97,8 @@ description: HouTools 发版流程（版本号更新、README/About 手册同步
 
 ## 5. 读上一版发行信息（gitcode MCP）
 
-调 `mcp__gitcode__list_tags`（owner=`mahx-vfx`，repo=`HouTools`）。MCP 没有
+调 `mcp__gitcode__list_tags`，owner/repo 从 `git remote get-url origin` 解析
+（见「机器无关」节）。MCP 没有
 release 端点——**附注 tag 的 message 就是上一版发行说明**，列表最新一条即上一版；
 可对照本地 `git tag -l -n99 <上一版tag>` 核实。
 
