@@ -27,9 +27,9 @@ log = get_logger("tools.capture_viewport_embed")
 # 背景图引用始终存变量形态，工程挪动/换机后链接仍有效）
 CAPTURE_DIR = "$HIP/HouTools_cfg/captures"
 
-# 背景图显示宽度（网络坐标单位，约 4 个默认节点宽），高按图片宽高比推算。
-# 调试期可调常数（用户指定后续再定具体大小）。
-DISPLAY_WIDTH_UNITS = 4.0
+# 背景图显示宽度（网络坐标单位，约 2 个默认节点宽），高按图片宽高比推算。
+# 用户指定再小一倍（原 4.0），调试期可继续调。
+DISPLAY_WIDTH_UNITS = 2.0
 # 图与节点右缘的间隙
 NODE_GAP_UNITS = 0.5
 
@@ -125,6 +125,23 @@ def _capture_to_file(viewer, file_abs):
     viewer.flipbook(viewer.curViewport(), settings)
 
 
+def _bust_image_cache(editor):
+    """层级往返一次，强制编辑器整页重载背景图。
+
+    编辑器把背景图位图按路径缓存，同名覆写文件后不重读（setBackgroundImages
+    重摆条目也没用）；切层级时 changeNetwork 处理器会按 userData 整页重建
+    条目并清缓存（nodegraphview.py），等效用户手动切层级刷新。仅重截替换
+    旧条目时调用，首次截图不打扰视图；每层视图边界随层级保存，往返后原样
+    恢复，只有一瞬闪烁。
+    """
+    pwd = editor.pwd()
+    parent = pwd.parent()
+    if parent is None:
+        return
+    editor.setPwd(parent)
+    editor.setPwd(pwd)
+
+
 def _embed(editor, node, hip_path, pix_w, pix_h):
     """移除该节点旧截图条目后，把新背景图钉在节点右侧。
 
@@ -151,11 +168,16 @@ def _embed(editor, node, hip_path, pix_w, pix_h):
         x0, -height / 2.0, x0 + width, height / 2.0))
 
     node_path = node.path()
-    kept = tuple(im for im in editor.backgroundImages()
+    originals = editor.backgroundImages()
+    kept = tuple(im for im in originals
                  if not is_stale_capture(im, node_path, hip_path))
     images = kept + (image,)
     editor.setBackgroundImages(images)
     nodegraphutils.saveBackgroundImages(editor.pwd(), images, editor)
+    if len(kept) != len(originals):
+        # 重截（替换了旧条目）：同名文件已覆写，编辑器位图缓存不重读，
+        # 层级往返强制整页重载（首次截图新路径无缓存，无需打扰视图）
+        _bust_image_cache(editor)
 
 
 def run(kwargs=None):
