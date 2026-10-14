@@ -110,6 +110,9 @@ def main():
     assert 'id="houtools_open_cache_folder"' in op_xml
     assert '_houtools_dispatcher.run("open_cache_folder", kwargs)' in op_xml
     assert '<label>Open Cache Folder [HT]</label>' in op_xml
+    assert 'id="houtools_capture_viewport_embed"' in op_xml
+    assert '_houtools_dispatcher.run("capture_viewport_embed", kwargs)' in op_xml
+    assert '<label>Capture Viewport to Node [HT]</label>' in op_xml
     assert '<separatorItem/>' in op_xml  # 自有条目与系统项之间有分割线
     print("OPmenu wiring: consistent")
 
@@ -124,6 +127,7 @@ def main():
     import houtools.tools.paste_as_object_merge
     import houtools.tools.paste_hotkey_settings  # noqa: F401
     import houtools.tools.open_cache_folder  # noqa: F401
+    import houtools.tools.capture_viewport_embed  # noqa: F401
     import houtools.tools.about_houtools  # noqa: F401
     import houtools.tools.automation  # noqa: F401
     import houtools.dragdrop  # noqa: F401
@@ -157,6 +161,34 @@ def main():
         == "/obj/grid1"
     assert pam._HOU_NODE_RE.match("hou.parm('/obj/x')") is None
     print("paste_as_object_merge parsing OK")
+
+    # 视窗截图嵌入：路径→文件名编码（"-" 转义为 "~" 后 "/" 转 "-"，
+    # 可逆且单射——不同节点不得映射同名，同一节点永远同名=重截覆盖）
+    from houtools.tools import capture_viewport_embed as cve
+    assert cve.capture_filename("/obj/geo1/r_fire") == "obj-geo1-r_fire.jpg"
+    assert cve.capture_filename("/obj/net1/sub-foo") == "obj-net1-sub~foo.jpg"
+    assert cve.capture_filename("/obj/net1/sub/foo") == "obj-net1-sub-foo.jpg"
+    tricky = ["/obj/a-b/c", "/obj/a/b-c", "/obj/a/b/c", "/obj/a-b-c",
+              "/obj/sub--x/y", "/obj/x/y"]
+    names = [cve.capture_filename(p) for p in tricky]
+    assert len(set(names)) == len(tricky), names
+    for path, name in zip(tricky, names):
+        assert cve.decode_capture_filename(name) == path.strip("/"), \
+            (path, name)
+    # 重截覆盖判据：锚点等于该节点，或路径引用等于本次目标路径
+    class _FakeImage:
+        def __init__(self, relto, path):
+            self._relto, self._path = relto, path
+        def relativeToPath(self):
+            return self._relto
+        def path(self):
+            return self._path
+    hip_path = "$HIP/HouTools_cfg/captures/obj-geo1-r_fire.jpg"
+    assert cve.is_stale_capture(_FakeImage("/obj/geo1/r_fire", "x"), "/obj/geo1/r_fire", hip_path)
+    assert cve.is_stale_capture(_FakeImage("", hip_path), "/obj/other", hip_path)
+    assert not cve.is_stale_capture(
+        _FakeImage("/obj/other", "$HIP/x.jpg"), "/obj/geo1/r_fire", hip_path)
+    print("capture_viewport_embed naming OK")
 
     # About 页面 run():打桩 os.startfile 验证打开的是 docs/index.html
     # （真开浏览器是无头环境不可接受的外部副作用）

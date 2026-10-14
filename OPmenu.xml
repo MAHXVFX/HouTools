@@ -18,6 +18,10 @@
     （karma）、outputimage（USD Render，为空时回退 loppath 指向节点的 picture）。
     候选清单须与 open_cache_folder.py 的 _OUTPUT_PARMS 双处同步。
 
+    Capture Viewport to Node 条目：所有节点可用——截当前 3D 视窗落
+    $HIP/HouTools_cfg/captures/（路径转横线命名，"-" 转义为 "~"），
+    背景图引用存 "$HIP/..." 变量形态并钉在节点旁跟随移动。
+
     scriptCode 只写两行分发器，逻辑一律在 houtools/tools/ 与模块。
 -->
 <menuDocument>
@@ -32,6 +36,17 @@
             </context>
             <scriptCode><![CDATA[import houtools.dev.dispatcher as _houtools_dispatcher
 _houtools_dispatcher.run("open_cache_folder", kwargs)
+]]></scriptCode>
+        </scriptItem>
+        <scriptItem id="houtools_capture_viewport_embed">
+            <label>Capture Viewport to Node [HT]</label>
+            <context>
+                <!-- 所有节点可用：截当前 3D 视窗，图落
+                     $HIP/HouTools_cfg/captures/，背景图钉在节点旁并跟随 -->
+                <expression>kwargs.get("node") is not None</expression>
+            </context>
+            <scriptCode><![CDATA[import houtools.dev.dispatcher as _houtools_dispatcher
+_houtools_dispatcher.run("capture_viewport_embed", kwargs)
 ]]></scriptCode>
         </scriptItem>
     </menu>
