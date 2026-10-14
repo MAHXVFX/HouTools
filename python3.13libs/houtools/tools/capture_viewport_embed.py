@@ -42,16 +42,12 @@ log = get_logger("tools.capture_viewport_embed")
 # 背景图引用始终存变量形态，工程挪动/换机后链接仍有效）
 CAPTURE_DIR = "$HIP/HouTools_cfg/captures"
 
-# 背景图显示宽度（网络坐标单位，约 2 个默认节点宽），高按图片宽高比推算。
-# 用户指定再小一倍（原 4.0），调试期可继续调。
+# 背景图显示宽度（网络坐标单位，约 2 个默认节点宽），高按图片宽高比推算
 DISPLAY_WIDTH_UNITS = 2.0
-# 图与节点右缘的间隙
-NODE_GAP_UNITS = 0.5
+# 负值 = 图右缘探入节点左缘（背景图在节点下层，视觉上贴着节点）
+NODE_GAP_UNITS = -0.2
 
-# 截图 JPG 质量：flipbook 直出的 JPG 质量不可控（FlipbookSettings 无该
-# 参数），落盘后用 QImage 按此质量重编码。60 = 显示时重下采样后与原图
-# 肉眼无差、且给"图被拖大看"留余量的稳妥档（用户指定，实测 flipbook
-# 默认档约 868KB/张、q50 约 193KB）
+# flipbook 的 JPG 质量不可控，落盘后用 QImage 按此质量重编码
 _JPG_QUALITY = 60
 
 # 节点侧标记（capture 时写入，记录当前截图文件名）：改名跟随/删除清理/
@@ -213,8 +209,8 @@ def _embed(editor, node, hip_path, pix_w, pix_h, prev_marker=None):
     """移除该节点旧截图条目后，把新背景图钉在节点右侧。
 
     rect 存锚点局部坐标（原点 = node.position()）：文档明确 rect 显示时
-    会按锚点位置平移，故 x 从节点右缘（size.x/2 + 间隙）起，y 以节点
-    中心竖直居中；显示宽 DISPLAY_WIDTH_UNITS，高按图片宽高比推算。
+    会按锚点位置平移，故 x 在节点左缘（-(size.x/2 + 间隙)）左侧展开，y
+    以节点中心竖直居中；显示宽 DISPLAY_WIDTH_UNITS，高按图片宽高比推算。
 
     落库必须走官方 nodegraphutils.saveBackgroundImages 把整份布局写到
     网络节点 userData（键 backgroundimages）——setBackgroundImages 只改
@@ -228,12 +224,12 @@ def _embed(editor, node, hip_path, pix_w, pix_h, prev_marker=None):
 
     width = DISPLAY_WIDTH_UNITS
     height = width * float(pix_h) / float(pix_w)
-    x0 = node.size().x() / 2.0 + NODE_GAP_UNITS
+    x1 = -(node.size().x() / 2.0 + NODE_GAP_UNITS)
     image = hou.NetworkImage()
     image.setPath(hip_path)
     image.setRelativeToPath(node.path())
     image.setRect(hou.BoundingRect(
-        x0, -height / 2.0, x0 + width, height / 2.0))
+        x1 - width, -height / 2.0, x1, height / 2.0))
 
     node_path = node.path()
     stale_paths = [hip_path]
