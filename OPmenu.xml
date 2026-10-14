@@ -20,7 +20,9 @@
 
     Capture Viewport to Node 条目：所有节点可用——截当前 3D 视窗落
     $HIP/HouTools_cfg/captures/（路径转横线命名，"-" 转义为 "~"），
-    背景图引用存 "$HIP/..." 变量形态并钉在节点旁跟随移动。
+    背景图引用存 "$HIP/..." 变量形态并钉在节点旁跟随移动；节点上写
+    ht_capture_image 标记并挂改名/删除跟随回调。Delete Viewport Capture
+    条目：仅在带该标记的节点上显示，删除背景图条目、磁盘文件与标记。
 
     scriptCode 只写两行分发器，逻辑一律在 houtools/tools/ 与模块。
 -->
@@ -47,6 +49,17 @@ _houtools_dispatcher.run("open_cache_folder", kwargs)
             </context>
             <scriptCode><![CDATA[import houtools.dev.dispatcher as _houtools_dispatcher
 _houtools_dispatcher.run("capture_viewport_embed", kwargs)
+]]></scriptCode>
+        </scriptItem>
+        <scriptItem id="houtools_delete_viewport_capture">
+            <label>Delete Viewport Capture [HT]</label>
+            <context>
+                <!-- 仅在带截图标记的节点上显示；标记键名与
+                     capture_viewport_embed.py 的 MARKER_KEY 双处同步 -->
+                <expression>kwargs.get("node") is not None and kwargs["node"].userData("ht_capture_image") is not None</expression>
+            </context>
+            <scriptCode><![CDATA[import houtools.dev.dispatcher as _houtools_dispatcher
+_houtools_dispatcher.run("delete_viewport_capture", kwargs)
 ]]></scriptCode>
         </scriptItem>
     </menu>

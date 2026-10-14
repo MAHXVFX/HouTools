@@ -113,6 +113,11 @@ def main():
     assert 'id="houtools_capture_viewport_embed"' in op_xml
     assert '_houtools_dispatcher.run("capture_viewport_embed", kwargs)' in op_xml
     assert '<label>Capture Viewport to Node [HT]</label>' in op_xml
+    assert 'id="houtools_delete_viewport_capture"' in op_xml
+    assert '_houtools_dispatcher.run("delete_viewport_capture", kwargs)' in op_xml
+    assert '<label>Delete Viewport Capture [HT]</label>' in op_xml
+    # 删除条目按截图标记过滤显示（与 capture_viewport_embed.MARKER_KEY 双处同步）
+    assert 'userData("ht_capture_image")' in op_xml
     assert '<separatorItem/>' in op_xml  # 自有条目与系统项之间有分割线
     print("OPmenu wiring: consistent")
 
@@ -128,6 +133,7 @@ def main():
     import houtools.tools.paste_hotkey_settings  # noqa: F401
     import houtools.tools.open_cache_folder  # noqa: F401
     import houtools.tools.capture_viewport_embed  # noqa: F401
+    import houtools.tools.delete_viewport_capture  # noqa: F401
     import houtools.tools.about_houtools  # noqa: F401
     import houtools.tools.automation  # noqa: F401
     import houtools.dragdrop  # noqa: F401
@@ -175,7 +181,8 @@ def main():
     for path, name in zip(tricky, names):
         assert cve.decode_capture_filename(name) == path.strip("/"), \
             (path, name)
-    # 重截覆盖判据：锚点等于该节点，或路径引用等于本次目标路径
+    # 重截覆盖判据：锚点等于该节点，或路径引用等于候选 $HIP 路径之一
+    # （当前文件名 + 上次 marker 残留文件名，跨会话改名后清死条目用）
     class _FakeImage:
         def __init__(self, relto, path):
             self._relto, self._path = relto, path
@@ -184,10 +191,35 @@ def main():
         def path(self):
             return self._path
     hip_path = "$HIP/HouTools_cfg/captures/obj-geo1-r_fire.jpg"
+    assert cve.hip_capture_path("obj-geo1-r_fire.jpg") == hip_path
     assert cve.is_stale_capture(_FakeImage("/obj/geo1/r_fire", "x"), "/obj/geo1/r_fire", hip_path)
     assert cve.is_stale_capture(_FakeImage("", hip_path), "/obj/other", hip_path)
+    assert cve.is_stale_capture(
+        _FakeImage("", "$HIP/HouTools_cfg/captures/obj-geo1-old.jpg"),
+        "/obj/other", (hip_path, "$HIP/HouTools_cfg/captures/obj-geo1-old.jpg"))
     assert not cve.is_stale_capture(
         _FakeImage("/obj/other", "$HIP/x.jpg"), "/obj/geo1/r_fire", hip_path)
+    # 改名跟随条目重定向：锚点或路径命中才改写（鸭子类型）
+    class _RetargetImage:
+        def __init__(self, relto, path):
+            self._relto, self._path = relto, path
+            self.new_relto = self.new_path = None
+        def relativeToPath(self):
+            return self._relto
+        def path(self):
+            return self._path
+        def setRelativeToPath(self, p):
+            self.new_relto = p
+        def setPath(self, p):
+            self.new_path = p
+    rimgs = [_RetargetImage("/obj/a", "$HIP/x.jpg"),
+             _RetargetImage("", "$HIP/other.jpg")]
+    assert cve.retarget_capture_entries(
+        rimgs, "/obj/a", "$HIP/x.jpg", "/obj/b", "$HIP/y.jpg")
+    assert (rimgs[0].new_relto, rimgs[0].new_path) == ("/obj/b", "$HIP/y.jpg")
+    assert rimgs[1].new_relto is None and rimgs[1].new_path is None
+    assert not cve.retarget_capture_entries(
+        rimgs, "/obj/zzz", "$HIP/zzz.jpg", "/obj/c", "$HIP/z.jpg")
     print("capture_viewport_embed naming OK")
 
     # About 页面 run():打桩 os.startfile 验证打开的是 docs/index.html
