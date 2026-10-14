@@ -121,6 +121,53 @@ def main():
     assert '<separatorItem/>' in op_xml  # 自有条目与系统项之间有分割线
     print("OPmenu wiring: consistent")
 
+    # OPmenu:粘贴边界框子菜单——context 判定与 paste_bbox.is_bbox_target
+    # 双处同步,用假节点实测 all-三分量语义(grid 的 size 是二向量,不得凭
+    # t 三分量误命中)
+    assert 'id="houtools_paste_bbox_menu"' in op_xml
+    assert '<label>Paste Bounding Box [HT]</label>' in op_xml
+    assert 'id="houtools_paste_bbox_absolute"' in op_xml
+    assert '_houtools_dispatcher.run("paste_bbox_absolute", kwargs)' in op_xml
+    assert 'id="houtools_paste_bbox_expressions"' in op_xml
+    assert '_houtools_dispatcher.run("paste_bbox_expressions", kwargs)' in op_xml
+
+    bbox_expr = None
+    for sub in ET.parse(ROOT / "OPmenu.xml").iter("subMenu"):
+        if sub.get("id") == "houtools_paste_bbox_menu":
+            bbox_expr = sub.find("context/expression").text
+    assert bbox_expr, "houtools_paste_bbox_menu context expression missing"
+
+    class _FakeTuple:
+        def __init__(self, count):
+            self._count = count
+
+        def __len__(self):
+            return self._count
+
+    class _FakeNode:
+        def __init__(self, comps):
+            self._comps = comps
+
+        def parmTuple(self, name):
+            return self._comps.get(name)
+
+    def _expected(comps):
+        return all(comps[n] is not None and len(comps[n]) == 3
+                   for n in ("size", "t"))
+
+    from houtools.tools.paste_bbox import is_bbox_target
+    for comps in (
+            {"size": _FakeTuple(3), "t": _FakeTuple(3)},   # box 形态 → 显示
+            {"size": _FakeTuple(2), "t": _FakeTuple(3)},   # grid 形态 → 隐藏
+            {"size": None, "t": _FakeTuple(3)},            # 缺 size → 隐藏
+            {"size": _FakeTuple(3), "t": None},            # 缺 t → 隐藏
+            {"size": None, "t": None},                     # 普通节点 → 隐藏
+    ):
+        node = _FakeNode(comps)
+        assert is_bbox_target(node) == _expected(comps)
+        assert eval(bbox_expr, {"kwargs": {"node": node}}) == _expected(comps)
+    print("paste_bbox context: consistent")
+
     ET.parse(ROOT / "python_panels" / "Automation.pypanel")
     print("Automation.pypanel: well-formed")
 
@@ -134,6 +181,9 @@ def main():
     import houtools.tools.open_cache_folder  # noqa: F401
     import houtools.tools.capture_viewport_embed  # noqa: F401
     import houtools.tools.delete_viewport_capture  # noqa: F401
+    import houtools.tools.paste_bbox  # noqa: F401
+    import houtools.tools.paste_bbox_absolute  # noqa: F401
+    import houtools.tools.paste_bbox_expressions  # noqa: F401
     import houtools.tools.about_houtools  # noqa: F401
     import houtools.tools.automation  # noqa: F401
     import houtools.dragdrop  # noqa: F401

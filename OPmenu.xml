@@ -24,6 +24,13 @@
     ht_capture_image 标记并挂改名/删除跟随回调。Delete Viewport Capture
     条目：仅在带该标记的节点上显示，删除背景图条目、磁盘文件与标记。
 
+    Paste Bounding Box 条目（子菜单）：仅同时带三分量 size+t 向量参数的节点
+    显示——context expression 与 paste_bbox.is_bbox_target 双处同步，必须
+    all() 而非 any()（grid 的 size 是二向量 sizex/sizey，凭 t 三分量误命中
+    不可接受）。Ctrl+C 复制源节点后右键目标，把源包围盒尺寸/中心粘贴到
+    目标 size/t：绝对值（写入前清表达式/关键帧、锁定参数跳过）或
+    bbox()/centroid() 表达式（同网络相对路径、跨层级绝对路径）。
+
     scriptCode 只写两行分发器，逻辑一律在 houtools/tools/ 与模块。
 -->
 <menuDocument>
@@ -62,5 +69,28 @@ _houtools_dispatcher.run("capture_viewport_embed", kwargs)
 _houtools_dispatcher.run("delete_viewport_capture", kwargs)
 ]]></scriptCode>
         </scriptItem>
+        <separatorItem/>
+        <subMenu id="houtools_paste_bbox_menu">
+            <label>Paste Bounding Box [HT]</label>
+            <context>
+                <!-- 仅同时带三分量 size+t 向量参数的节点显示；判定与
+                     houtools/tools/paste_bbox.py 的 is_bbox_target 双处同步。
+                     必须 all()：grid 的 size 是二向量（sizex/sizey），
+                     any() 会凭 t 三分量误命中 -->
+                <expression>kwargs.get("node") is not None and all(kwargs["node"].parmTuple(n) is not None and len(kwargs["node"].parmTuple(n)) == 3 for n in ("size", "t"))</expression>
+            </context>
+            <scriptItem id="houtools_paste_bbox_absolute">
+                <label>Paste Absolute Values [HT]</label>
+                <scriptCode><![CDATA[import houtools.dev.dispatcher as _houtools_dispatcher
+_houtools_dispatcher.run("paste_bbox_absolute", kwargs)
+]]></scriptCode>
+            </scriptItem>
+            <scriptItem id="houtools_paste_bbox_expressions">
+                <label>Paste Expressions [HT]</label>
+                <scriptCode><![CDATA[import houtools.dev.dispatcher as _houtools_dispatcher
+_houtools_dispatcher.run("paste_bbox_expressions", kwargs)
+]]></scriptCode>
+            </scriptItem>
+        </subMenu>
     </menu>
 </menuDocument>

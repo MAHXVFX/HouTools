@@ -33,6 +33,7 @@ Houdini 22 插件工具集，开发期支持**手动热加载**：改完代码�
 | 粘贴为 Object Merge | 网络编辑器 `HouTools` 菜单 / `Ctrl+Shift+V` | 复制节点后，按"目标上下文 × 源类别"在鼠标位置粘贴引用节点；键位在 `HouTools → Paste Hotkey Settings` 修改 |
 | 拖放导入 Alembic / FBX | 拖 `.abc`/`.fbx` 文件到网络编辑器 | 松手即在鼠标位置创建导入节点：obj 层级 = Alembic Archive（自动构建层级）/ FBX 子网（官方导入器），SOP 层级 = alembic / file 节点；支持多文件混拖（基于 Houdini 官方 externaldragdrop 钩子） |
 | 视窗截图嵌入 | 节点右键 `Capture Viewport to Node [HT]` | 截取当前 3D 视窗存为 JPG（`$HIP/HouTools_cfg/captures/`），作为网络编辑器背景图钉在节点旁，随节点移动/改名跟随；只存路径引用不进 hip；右键 `Delete Viewport Capture [HT]` 删除截图 |
+| 粘贴边界框 | 节点右键 `Paste Bounding Box [HT]` | Ctrl+C 复制源节点后，右键带三分量 `size`/`t` 参数的目标节点（如 box），把源节点包围盒尺寸/中心粘贴到其 `size`/`t`——绝对值或 `bbox()`/`centroid()` 表达式（同网络相对路径、跨层级绝对路径）两种模式 |
 | 视频转序列图 | `HouTools → Video to Sequence` | ffmpeg 提取视频为 JPG 序列（帧级进度，质量/起始帧/位数/前缀可调），相机分辨率可读取/编辑（宽/高双框 + 预设），可选自动设置相机 Background Image |
 | Hdr Library | `HouTools → Hdr Library` | HDR 环境贴图库浏览器：缩略图网格（后台生成）、子文件夹分类 + 收藏，选中灯光后双击即贴图 |
 | Recipe Library | `HouTools → Recipe Library` | recipes 资产库浏览器：官方 recipes 卡片网格浏览（缩略图/标签/主题色），树形侧栏过滤，双击/拖拽应用到网络，Markdown 文档，数据导入/导出 |
@@ -114,6 +115,20 @@ File > Import > Alembic Scene... / File > Import > Filmbox FBX...）：
 - 右键 `Delete Viewport Capture [HT]`（仅带截图的节点显示）：
   一次删除背景图条目、磁盘文件与标记
 - 已知局限：父级网络（geo 容器等）改名不跟随，需重截
+
+### 粘贴边界框
+
+网络编辑器里 Ctrl+C 复制源节点 A，右键目标节点 B（须同时带三分量 `size`
+与 `t` 向量参数，如 box；grid 的 `size` 是二向量，不显示菜单）→
+`Paste Bounding Box [HT]` 子菜单，把 A 的包围盒尺寸/中心贴到 B 的
+`size` / `t`（`sizex/y/z ← bbox(A, ...)`、`tx/y/z ← centroid(A, ...)`）：
+
+- **Paste Absolute Values [HT]**：求值后直接写入；B 参数已有的表达式/
+  关键帧清除替换，锁定参数跳过并在状态栏提示
+- **Paste Expressions [HT]**：写入 `bbox()` / `centroid()` 表达式，A 变动
+  时 B 实时跟随；A 与 B 同网络用相对路径（`../A`），跨层级用绝对路径
+- 绝对值与表达式走同一套表达式函数求值，两种模式结果一致；整次操作单个
+  undo 槽；源节点有 cook 错误时不写入；源与目标是同一节点时跳过
 
 ### Hdr Library
 
