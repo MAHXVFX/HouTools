@@ -22,9 +22,12 @@ dispatcher onto delete_capture() in this module.
 - 节点改名/删除跟随：节点 userData 写 ht_capture_image 标记，并挂
   NameChanged/BeingDeleted 回调（会话级，hip 重开失效）。改名时磁盘文件、
   背景图条目、标记一并跟到新路径（新路径必然缓存 miss 自动重读，无需
-  清空重放）；删除时反向清理。加载/清空场景会群发 BeingDeleted，由
-  hipFile 事件钩子置 teardown 旗标挡住，防止换工程把上一工程的截图文件
-  当孤儿误删。
+  清空重放）；删除时只清背景图条目，**磁盘文件一律保留**——BeingDeleted
+  无法区分用户删除与场景拆除（new 工程/换工程/清空都群发此事件，且 GUI
+  的 File>New 实测可能不 fire hipFile clear 事件），曾试图就地删文件并
+  造了一套防御机制，两轮测试踩两个坑后放弃（用户拍板）：文件变磁盘孤儿
+  无害（文件名=节点路径自说明），删文件是右键 Delete Viewport Capture
+  菜单的专职。
 """
 
 import os
@@ -47,11 +50,6 @@ NODE_GAP_UNITS = 0.5
 # 节点侧标记（capture 时写入，记录当前截图文件名）：改名跟随/删除清理/
 # 右键删除菜单的显示判据都靠它。与 OPmenu.xml 的 context 表达式双处同步。
 MARKER_KEY = "ht_capture_image"
-
-# 会话级状态。teardown 由 hipFile 事件钩子维护（见 _ensure_hipfile_hook）；
-# load_pending 处理加载序列 BeforeLoad→BeforeClear→AfterClear→AfterLoad 中
-# AfterClear 先于 AfterLoad 的嵌套（不能让 AfterClear 提前解除防护）。
-_STATE = {"teardown": False, "load_pending": False, "hipfile_hooked": False}
 
 
 def capture_filename(node_path):
@@ -229,39 +227,6 @@ def _embed(editor, node, hip_path, pix_w, pix_h, prev_marker=None):
     return True
 
 
-def _ensure_hipfile_hook():
-    """装 hipFile 事件钩子（会话一次）：加载/清空场景期间置 teardown 旗标。
-
-    拆除期间 BeingDeleted 会对旧场景节点群发（实测），不挡住的话跟随回调
-    会把上一工程的截图文件当孤儿删掉。加载序列为 BeforeLoad→BeforeClear→
-    AfterClear→AfterLoad，AfterClear 先于 AfterLoad，须用 load_pending
-    区分"清空完毕"与"加载中"。回调首参为 (event_type,) 元组（实测）。
-    """
-    import hou
-
-    if _STATE["hipfile_hooked"]:
-        return
-
-    def on_hip_event(event_types=(), **kwargs):
-        for etype in event_types:
-            if etype in (hou.hipFileEventType.BeforeLoad,
-                         hou.hipFileEventType.BeforeClear):
-                _STATE["teardown"] = True
-                if etype == hou.hipFileEventType.BeforeLoad:
-                    _STATE["load_pending"] = True
-            elif etype in (hou.hipFileEventType.AfterLoad,
-                           hou.hipFileEventType.AfterClear):
-                if etype == hou.hipFileEventType.AfterLoad:
-                    _STATE["load_pending"] = False
-                _STATE["teardown"] = _STATE["load_pending"]
-
-    try:
-        hou.hipFile.addEventCallback(on_hip_event)
-        _STATE["hipfile_hooked"] = True
-    except Exception:
-        log.exception("hipFile 拆除防护钩子注册失败")
-
-
 def _make_rename_cb(node, state):
     def on_name_changed(**kwargs):
         try:
@@ -293,7 +258,6 @@ def _ensure_watch(node):
     parent = node.parent()
     if parent is None:
         return
-    _ensure_hipfile_hook()
     for types, cb in list(node.eventCallbacks()):
         if getattr(cb, "_ht_capture_cb", False):
             try:
@@ -381,38 +345,36 @@ def _follow_rename(node, state):
 
 
 def _on_node_deleted(state):
-    """BeingDeleted 回调主体：节点删除 → 删背景图条目 + 删磁盘文件。
+    """BeingDeleted 回调主体：只清网络里的背景图条目，磁盘文件一律保留。
 
-    state 记录最后已知的锚点/文件名/父网络路径（节点对象本身删除中不可
-    靠，全程不触碰它）。换工程/清场景的批量拆除已在 _STATE["teardown"]
-    拦下（文件留在磁盘属正常——那是上一个工程的截图）。
+    BeingDeleted 无法区分用户删除与场景拆除——new 工程/换工程/清空都
+    群发此事件，且 GUI 的 File>New 实测可能不 fire hipFile clear 事件，
+    没有可靠的意图判据。曾就地删文件并造过一整套防御（hipFile 事件钩子、
+    teardown 旗标、延迟队列、批量检测、工程名校验），两轮测试踩两个坑
+    （GUI New 事件缺失致截图被清、hou.UndosDisabler 抽象类不可构造）后
+    放弃（用户拍板 2026-10）：条目随节点清掉让 hip 不留死引用，文件变
+    磁盘孤儿无害（文件名=节点路径自说明），删文件是右键 Delete Viewport
+    Capture 菜单的专职。加载期间跳过（旧场景拆除时的清理无意义）。
     """
     import hou
     import nodegraphutils
 
-    if _STATE["teardown"] or hou.hipFile.isLoadingHipFile():
+    if hou.hipFile.isLoadingHipFile():
         return
     hip_path = hip_capture_path(state["filename"])
     parent = hou.node(state["parent_path"])
-    if parent is not None:
+    if parent is None:
+        return
+    try:
         all_images = list(nodegraphutils.loadBackgroundImages(parent))
         kept = [im for im in all_images
                 if not is_stale_capture(im, state["anchor"], hip_path)]
         if len(kept) != len(all_images):
-            with hou.UndosDisabler():
-                # 文件已删不可恢复，条目清理一并退出 undo——防 Ctrl+Z
-                # 恢复节点后留下指向已删文件的死条目
-                nodegraphutils.saveBackgroundImages(parent, kept)
+            nodegraphutils.saveBackgroundImages(parent, kept)
             for editor in _editors_showing(parent):
                 editor.setBackgroundImages(kept)
-    file_abs = os.path.join(hou.text.expandString(CAPTURE_DIR),
-                            state["filename"])
-    if os.path.isfile(file_abs):
-        try:
-            os.remove(file_abs)
-        except OSError:
-            log.exception("删除截图文件失败: %s", file_abs)
-    log.info("节点删除，已清理其截图 (%s)", state["anchor"])
+    except Exception:
+        log.exception("清理截图条目失败 (%s)", state["anchor"])
 
 
 def delete_capture(node):
