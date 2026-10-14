@@ -32,7 +32,8 @@ Houdini 22 插件工具集，开发期支持**手动热加载**：改完代码�
 | Automation | `HouTools → Automation`（Python Panel） | 自动化批处理：节点按钮点击 / Flipbook 拍屏 / HomeAssistant Webhook / 打开DW |
 | 粘贴为 Object Merge | 网络编辑器 `HouTools` 菜单 / `Ctrl+Shift+V` | 复制节点后，按"目标上下文 × 源类别"在鼠标位置粘贴引用节点；键位在 `HouTools → Paste Hotkey Settings` 修改 |
 | 拖放导入 Alembic / FBX | 拖 `.abc`/`.fbx` 文件到网络编辑器 | 松手即在鼠标位置创建导入节点：obj 层级 = Alembic Archive（自动构建层级）/ FBX 子网（官方导入器），SOP 层级 = alembic / file 节点；支持多文件混拖（基于 Houdini 官方 externaldragdrop 钩子） |
-| 视频转序列图 | `HouTools → Video to Sequence` | ffmpeg 提取视频为 JPG 序列（帧级进度，质量/起始帧/位数/前缀可调），可选自动设置相机 Background Image |
+| 视窗截图嵌入 | 节点右键 `Capture Viewport to Node [HT]` | 截取当前 3D 视窗存为 JPG（`$HIP/HouTools_cfg/captures/`），作为网络编辑器背景图钉在节点旁，随节点移动/改名跟随；只存路径引用不进 hip；右键 `Delete Viewport Capture [HT]` 删除截图 |
+| 视频转序列图 | `HouTools → Video to Sequence` | ffmpeg 提取视频为 JPG 序列（帧级进度，质量/起始帧/位数/前缀可调），相机分辨率可读取/编辑（宽/高双框 + 预设），可选自动设置相机 Background Image |
 | Hdr Library | `HouTools → Hdr Library` | HDR 环境贴图库浏览器：缩略图网格（后台生成）、子文件夹分类 + 收藏，选中灯光后双击即贴图 |
 | Recipe Library | `HouTools → Recipe Library` | recipes 资产库浏览器：官方 recipes 卡片网格浏览（缩略图/标签/主题色），树形侧栏过滤，双击/拖拽应用到网络，Markdown 文档，数据导入/导出 |
 | About HouTools | `HouTools → About HouTools` | 用默认浏览器打开离线使用手册（`docs/index.html` + 本地截图，零外部网络资源）：全部工具的功能与用法 |
@@ -96,6 +97,23 @@ File > Import > Alembic Scene... / File > Import > Filmbox FBX...）：
 - 非 `.abc`/`.fbx` 文件，以及拖到参数框、视口等其他面板的行为与原生完全一致，不受影响
 - 拖放钩子文件是 `scripts/externaldragdrop.py`（两行分发器），逻辑在
   `houtools/dragdrop.py`，改代码走 `Reload Modules (Dev)` 热加载，无需重启
+
+### 视窗截图嵌入节点
+
+右键任意节点 → `Capture Viewport to Node [HT]`：截取当前 3D 视窗，JPG 存到
+`$HIP/HouTools_cfg/captures/`（文件名即节点路径），并作为网络编辑器背景图
+钉在节点旁，给关键节点留一张"做出来长什么样"的速览图。
+
+- 单帧 flipbook 拍屏：beauty pass（无网格/gizmo 覆盖层）、视口原始分辨率；
+  落盘后按质量 60 重编码 JPG（约为默认档 1/4 体积）
+- 背景图只存路径引用、不进 hip：工程挪动/换机打开仍有效，hip 不膨胀
+- 图片锚定节点随移动跟随；节点改名后磁盘文件与背景图自动跟随重命名
+  （改名撤销会原路改回）
+- 重截同节点自动覆盖旧图；删除节点只清背景图条目，磁盘文件保留
+  （文件名自说明，可手动清理）
+- 右键 `Delete Viewport Capture [HT]`（仅带截图的节点显示）：
+  一次删除背景图条目、磁盘文件与标记
+- 已知局限：父级网络（geo 容器等）改名不跟随，需重截
 
 ### Hdr Library
 

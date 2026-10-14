@@ -446,7 +446,7 @@
   <div class="hero-shade" aria-hidden="true"></div>
   <div class="hero-inner">
     <div class="hero-kicker">HOUDINI 22 · PLUGIN SUITE</div>
-    <h1>HouTools<span class="v">v1.3.5</span></h1>
+    <h1>HouTools<span class="v">v1.4.0</span></h1>
     <p class="sub">Houdini 22 插件工具集 — 使用手册</p>
     <div class="badges">
       <span class="badge">Houdini 22.0</span>
@@ -564,6 +564,48 @@
       <div class="slide-cap"><strong>Drag &amp; Drop Import</strong><span>拖 .abc / .fbx 即落点创建导入节点</span></div>
     </a>
 
+    <a class="slide" href="#capture-viewport">
+      <svg viewBox="0 0 880 320" role="img" aria-label="视窗截图嵌入节点界面示意">
+        <defs>
+          <linearGradient id="c4-sky" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#3c2f4a"/><stop offset="1" stop-color="#b0563a"/>
+          </linearGradient>
+        </defs>
+        <rect width="880" height="320" fill="#241d1c"/>
+        <rect width="880" height="40" fill="#201a19"/>
+        <circle cx="22" cy="20" r="6" fill="#d1283e" opacity=".8"/><circle cx="42" cy="20" r="6" fill="#c9a53e" opacity=".8"/><circle cx="62" cy="20" r="6" fill="#3f9d58" opacity=".8"/>
+        <text x="88" y="26" font-family="Segoe UI, sans-serif" font-size="14" fill="#c9c9d0">Network Editor — Capture Viewport to Node</text>
+        <g stroke="#2d2d2d" stroke-width="1">
+          <path d="M0 80 H880 M0 140 H880 M0 200 H880 M0 260 H880"/>
+          <path d="M110 40 V320 M260 40 V320 M410 40 V320 M560 40 V320 M710 40 V320"/>
+        </g>
+        <g font-family="Segoe UI, sans-serif">
+          <rect x="500" y="72" width="272" height="158" rx="6" fill="#1a1514" stroke="#e2571b" stroke-width="2"/>
+          <rect x="508" y="80" width="256" height="118" fill="url(#c4-sky)"/>
+          <circle cx="716" cy="104" r="14" fill="#f5c86a"/>
+          <polygon points="508,198 586,120 648,198" fill="#241d1c" opacity=".85"/>
+          <polygon points="600,198 668,132 764,198" fill="#161211"/>
+          <rect x="508" y="198" width="256" height="24" fill="#2a2220"/>
+          <text x="636" y="214" text-anchor="middle" font-size="10" fill="#a89e96">$HIP/HouTools_cfg/captures/rop_cache1.jpg</text>
+          <rect x="240" y="212" width="180" height="72" rx="6" fill="#2a2a2f" stroke="#c8102e" stroke-width="2"/>
+          <rect x="240" y="212" width="180" height="22" rx="6" fill="#c8102e" opacity=".3"/>
+          <text x="252" y="228" font-size="13" fill="#e4e4e7">rop_cache1</text>
+          <circle cx="246" cy="252" r="4" fill="#6a6a72"/><circle cx="246" cy="268" r="4" fill="#6a6a72"/>
+          <path d="M500 222 C 460 232, 446 236, 420 240" stroke="#f2a33c" stroke-width="2" stroke-dasharray="6 5" fill="none"/>
+          <circle cx="500" cy="222" r="4" fill="#f2a33c"/>
+          <g transform="translate(96,84)">
+            <rect x="0" y="8" width="44" height="32" rx="6" fill="#2f2a28" stroke="#8a5cf5" stroke-width="2"/>
+            <polygon points="44,16 60,8 60,40 44,32" fill="#2f2a28" stroke="#8a5cf5" stroke-width="2"/>
+            <circle cx="22" cy="24" r="8" fill="none" stroke="#8a5cf5" stroke-width="2"/>
+          </g>
+          <text x="96" y="150" font-size="12" fill="#8a8a92">3D Viewport</text>
+          <text x="70" y="300" font-size="12" fill="#8a8a92">右键节点 → Capture Viewport to Node</text>
+          <text x="810" y="300" text-anchor="end" font-size="12" fill="#8a8a92">图随节点 · 改名跟随 · 不进 hip</text>
+        </g>
+      </svg>
+      <div class="slide-cap"><strong>Capture Viewport to Node</strong><span>视窗截图钉在节点旁,随节点移动/改名跟随</span></div>
+    </a>
+
     <a class="slide" href="#video-to-sequence">
       <img src="about_shots/videoseq.png" alt="视频转序列图界面截图:参数与输出设置">
       <div class="slide-cap"><strong>Video to Sequence</strong><span>ffmpeg 提取视频为帧序列,可直连相机背景</span></div>
@@ -590,6 +632,7 @@
   <a href="#automation">Automation</a>
   <a href="#paste-as-object-merge">粘贴为 Object Merge</a>
   <a href="#dragdrop-import">拖放导入 .abc/.fbx</a>
+  <a href="#capture-viewport">视窗截图嵌入</a>
   <a href="#video-to-sequence">视频转序列图</a>
   <a href="#hdr-library">Hdr Library</a>
   <a href="#recipe-library">Recipe Library</a>
@@ -668,6 +711,22 @@
   </ul>
 </section>
 
+<!-- ============ 视窗截图嵌入 ============ -->
+<section id="capture-viewport">
+  <h2>Capture Viewport to Node<span class="zh">视窗截图嵌入节点</span></h2>
+  <p class="entry">入口:右键任意节点 → <code>Capture Viewport to Node [HT]</code>(删除:右键 <code>Delete Viewport Capture [HT]</code>,仅带截图的节点显示)</p>
+  <p>截取当前 3D 视窗,作为网络编辑器背景图钉在节点旁——给关键节点留一张「做出来长什么样」的速览图。</p>
+  <ul>
+    <li>截图为单帧 flipbook:beauty pass(不带网格/gizmo 覆盖层)、视口原始分辨率,直出 JPG。</li>
+    <li>落盘后按质量 60 重编码 JPG(约为 flipbook 默认档 1/4 体积),放大部分显示仍清晰。</li>
+    <li>文件存 <code>$HIP/HouTools_cfg/captures/</code>(文件名即节点路径);<strong>背景图只存路径引用、不进 hip</strong>——工程挪动、换机打开仍有效,hip 不膨胀。</li>
+    <li>图片锚定节点,节点移动图跟随;节点改名后磁盘文件与背景图自动跟随重命名(改名撤销会原路改回,语义自洽)。</li>
+    <li>重截同节点自动覆盖旧图;删除节点只清背景图条目、磁盘文件保留(孤儿文件无害,文件名自说明,可手动清理)。</li>
+    <li><code>Delete Viewport Capture [HT]</code>:一次性删除背景图条目、磁盘文件与标记。</li>
+    <li>已知局限:父级网络(geo 容器等)改名不跟随,需重截或手动调整。</li>
+  </ul>
+</section>
+
 <!-- ============ 视频转序列图 ============ -->
 <section id="video-to-sequence">
   <h2>Video to Sequence<span class="zh">视频转序列图</span></h2>
@@ -677,6 +736,7 @@
     <li>支持<strong>拖放视频文件</strong>到窗口,或浏览选择、手输路径。</li>
     <li>帧级进度显示;输出质量、起始帧编号、位数、文件名前缀可调。</li>
     <li>可选自动把输出序列设置到选中相机的 Background Image。</li>
+    <li>相机分辨率显示与编辑:选中相机后显示其分辨率,宽/高两个输入框直接改写(1~5 位整数校验),「预设」下拉一键填入 1280×720~4096×2160 共 7 档,「确定」写回相机。</li>
     <li>转换前自动扫描输出目录中的同名旧序列并询问是否清除,防止新旧帧混杂。</li>
     <li>提取可随时取消(探测与转换阶段均可),取消时提示已写入帧数。</li>
   </ul>
