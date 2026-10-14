@@ -10,7 +10,8 @@ dispatcher onto delete_capture() in this module.
 - 图片落盘 $HIP/HouTools_cfg/captures/<路径转横线>.jpg，背景图只存
   "$HIP/..." 变量形态的路径引用——hip 不膨胀，图删了显示即失效；
 - 截图走官方单帧 flipbook（SideFX 论坛标准模式），beautyPassOnly 去掉
-  网格/gizmo 等视口覆盖层；
+  网格/gizmo 等视口覆盖层；flipbook 的 JPG 质量不可控，落盘后 QImage
+  按质量 60 重编码（_JPG_QUALITY，best-effort 失败保留原质量）；
 - hou.NetworkImage.setRelativeToPath(节点路径) 把图钉在节点上（节点移动图
   跟随），rect 存锚点局部坐标——官方文档明确"rect 会按锚点位置平移"；
 - 落库双步：setBackgroundImages 改编辑器临时显示列表（立即生效）+
@@ -46,6 +47,12 @@ CAPTURE_DIR = "$HIP/HouTools_cfg/captures"
 DISPLAY_WIDTH_UNITS = 2.0
 # 图与节点右缘的间隙
 NODE_GAP_UNITS = 0.5
+
+# 截图 JPG 质量：flipbook 直出的 JPG 质量不可控（FlipbookSettings 无该
+# 参数），落盘后用 QImage 按此质量重编码。60 = 显示时重下采样后与原图
+# 肉眼无差、且给"图被拖大看"留余量的稳妥档（用户指定，实测 flipbook
+# 默认档约 868KB/张、q50 约 193KB）
+_JPG_QUALITY = 60
 
 # 节点侧标记（capture 时写入，记录当前截图文件名）：改名跟随/删除清理/
 # 右键删除菜单的显示判据都靠它。与 OPmenu.xml 的 context 表达式双处同步。
@@ -173,6 +180,33 @@ def _capture_to_file(viewer, file_abs):
     settings.outputZoom(100)
     settings.appendFramesToCurrent(False)
     viewer.flipbook(viewer.curViewport(), settings)
+    _recompress_jpg(file_abs)
+
+
+def _recompress_jpg(file_abs):
+    """把 flipbook 直出的 JPG 按指定质量重编码（原地替换）。
+
+    best-effort：失败仅告警并保留原文件（退化为默认质量截图，不中断
+    截图流程）。写临时文件再原子替换，防半写损坏原文件。
+    """
+    from PySide6.QtGui import QImage
+
+    image = QImage(file_abs)
+    if image.isNull():
+        log.warning("截图重编码：无法读取 %s（保留原质量）", file_abs)
+        return
+    tmp_abs = file_abs + ".~tmp.jpg"
+    try:
+        if not image.save(tmp_abs, "JPG", _JPG_QUALITY):
+            log.warning("截图重编码失败（保留原质量）: %s", file_abs)
+            return
+        os.replace(tmp_abs, file_abs)
+    finally:
+        if os.path.exists(tmp_abs):
+            try:
+                os.remove(tmp_abs)
+            except OSError:
+                log.warning("截图重编码临时文件残留: %s", tmp_abs)
 
 
 def _embed(editor, node, hip_path, pix_w, pix_h, prev_marker=None):
