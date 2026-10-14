@@ -5,4 +5,4 @@ houtools.dev.dispatcher, so startup cost is zero and hot reloading never
 re-runs package-level side effects.
 """
 
-__version__ = "1.3.5"
+__version__ = "1.4.0"
