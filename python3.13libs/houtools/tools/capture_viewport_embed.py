@@ -125,23 +125,6 @@ def _capture_to_file(viewer, file_abs):
     viewer.flipbook(viewer.curViewport(), settings)
 
 
-def _bust_image_cache(editor):
-    """层级往返一次，强制编辑器整页重载背景图。
-
-    编辑器把背景图位图按路径缓存，同名覆写文件后不重读（setBackgroundImages
-    重摆条目也没用）；切层级时 changeNetwork 处理器会按 userData 整页重建
-    条目并清缓存（nodegraphview.py），等效用户手动切层级刷新。仅重截替换
-    旧条目时调用，首次截图不打扰视图；每层视图边界随层级保存，往返后原样
-    恢复，只有一瞬闪烁。
-    """
-    pwd = editor.pwd()
-    parent = pwd.parent()
-    if parent is None:
-        return
-    editor.setPwd(parent)
-    editor.setPwd(pwd)
-
-
 def _embed(editor, node, hip_path, pix_w, pix_h):
     """移除该节点旧截图条目后，把新背景图钉在节点右侧。
 
@@ -172,12 +155,15 @@ def _embed(editor, node, hip_path, pix_w, pix_h):
     kept = tuple(im for im in originals
                  if not is_stale_capture(im, node_path, hip_path))
     images = kept + (image,)
+    if len(kept) != len(originals):
+        # 重截（替换了旧条目）：编辑器把位图按路径缓存，同名覆写文件后
+        # setBackgroundImages 重摆条目也不重读。用官方 "Reload Images" 右键
+        # 菜单的手法（nodegraphpopupmenus.py BackgroundImageContextMenu）：
+        # 清空再整份放回，强制重读文件。不得用层级往返刷新——导航会触发
+        # 解算重算卡死会话（用户实测否决）。
+        editor.setBackgroundImages([])
     editor.setBackgroundImages(images)
     nodegraphutils.saveBackgroundImages(editor.pwd(), images, editor)
-    if len(kept) != len(originals):
-        # 重截（替换了旧条目）：同名文件已覆写，编辑器位图缓存不重读，
-        # 层级往返强制整页重载（首次截图新路径无缓存，无需打扰视图）
-        _bust_image_cache(editor)
 
 
 def run(kwargs=None):
