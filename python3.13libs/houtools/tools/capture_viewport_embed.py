@@ -28,6 +28,7 @@ dispatcher onto delete_capture() in this module.
 """
 
 import os
+import shutil
 
 from houtools.core.log import get_logger
 
@@ -340,8 +341,17 @@ def _follow_rename(node, state):
     dir_abs = hou.text.expandString(CAPTURE_DIR)
     old_abs = os.path.join(dir_abs, old_filename)
     new_abs = os.path.join(dir_abs, new_filename)
+    # 先复制出新文件、待引用全部改完再删旧文件——任意时刻被引用的路径都
+    # 存在，不给编辑器在改名重绘窗口期读到悬空路径的机会
     if os.path.isfile(old_abs):
-        os.replace(old_abs, new_abs)
+        try:
+            shutil.copyfile(old_abs, new_abs)
+        except OSError:
+            log.exception("复制截图到新名失败，回退为直接改名: %s", new_abs)
+            try:
+                os.replace(old_abs, new_abs)
+            except OSError:
+                log.exception("截图文件改名失败: %s", old_abs)
     elif not os.path.isfile(new_abs):
         log.warning("改名跟随：找不到截图文件 %s", old_abs)
 
@@ -359,6 +369,12 @@ def _follow_rename(node, state):
         node.setUserData(MARKER_KEY, new_filename)
     except Exception:
         log.warning("改名后无法更新截图标记 (%s)", new_path)
+    # 引用（userData 条目 + 编辑器显示列表）全部改指新路径后，旧文件才退场
+    if os.path.isfile(new_abs) and os.path.isfile(old_abs) and old_abs != new_abs:
+        try:
+            os.remove(old_abs)
+        except OSError:
+            log.exception("删除旧截图文件失败: %s", old_abs)
     state["anchor"] = new_path
     state["filename"] = new_filename
     log.info("截图跟随改名: %s -> %s", old_anchor, new_path)
