@@ -11,6 +11,9 @@ dev.dispatcher, landing at this module's run(kwargs).
   网格/gizmo 等视口覆盖层；
 - hou.NetworkImage.setRelativeToPath(节点路径) 把图钉在节点上（节点移动图
   跟随），rect 存锚点局部坐标——官方文档明确"rect 会按锚点位置平移"；
+- 落库双步：setBackgroundImages 改编辑器临时显示列表（立即生效）+
+  nodegraphutils.saveBackgroundImages 写网络节点 userData（键
+  backgroundimages，切层级后编辑器按它还原布局，缺了图就丢）；
 - 同一节点重截 = 同名覆盖：文件覆写 + 移除该节点旧背景图条目再追加新条目。
 """
 
@@ -123,13 +126,20 @@ def _capture_to_file(viewer, file_abs):
 
 
 def _embed(editor, node, hip_path, pix_w, pix_h):
-    """移除该节点旧截图条目后，把新背景图钉在节点右侧（单个 undo 槽）。
+    """移除该节点旧截图条目后，把新背景图钉在节点右侧。
 
     rect 存锚点局部坐标（原点 = node.position()）：文档明确 rect 显示时
     会按锚点位置平移，故 x 从节点右缘（size.x/2 + 间隙）起，y 以节点
     中心竖直居中；显示宽 DISPLAY_WIDTH_UNITS，高按图片宽高比推算。
+
+    落库必须走官方 nodegraphutils.saveBackgroundImages 把整份布局写到
+    网络节点 userData（键 backgroundimages）——setBackgroundImages 只改
+    编辑器临时显示列表，切换层级后编辑器按该 userData 还原布局，不写它
+    图就丢（首版实测踩坑；官方编辑器自己的存取通道就是它，undo 组也由
+    它自建，勿再外包 hou.undos.group 防嵌套）。
     """
     import hou
+    import nodegraphutils
 
     width = DISPLAY_WIDTH_UNITS
     height = width * float(pix_h) / float(pix_w)
@@ -143,8 +153,9 @@ def _embed(editor, node, hip_path, pix_w, pix_h):
     node_path = node.path()
     kept = tuple(im for im in editor.backgroundImages()
                  if not is_stale_capture(im, node_path, hip_path))
-    with hou.undos.group("HouTools Capture Viewport"):
-        editor.setBackgroundImages(kept + (image,))
+    images = kept + (image,)
+    editor.setBackgroundImages(images)
+    nodegraphutils.saveBackgroundImages(editor.pwd(), images, editor)
 
 
 def run(kwargs=None):
