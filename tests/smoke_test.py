@@ -99,7 +99,7 @@ def main():
     assert 'src="http' not in about_src
     assert "<link" not in about_src
     assert "gitcode.com/mahx-vfx/HouTools" in about_src
-    assert "github.com/MAHXVFX/HouTools" in about_src
+    assert "github.com/mahx-vfx/HouTools" in about_src
     # 论坛按钮:跳 GitCode 讨论区(导航超链接,离线打开不受影响)
     assert "gitcode.com/mahx-vfx/HouTools/discussions" in about_src
     print("about menu wiring: consistent")
