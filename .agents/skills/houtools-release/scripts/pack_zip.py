@@ -19,9 +19,9 @@ Behavior:
    HouTools/ folder -- extraction yields exactly `HouTools.json` + `HouTools/`
    side by side, so unzipping straight into Documents/houdiniXX.X/packages/
    completes the install (the manifest points at $HOUDINI_PACKAGE_PATH/HouTools).
-   Inside HouTools/: MainMenuCommon.xml, NetworkViewMenu.xml, OPmenu.xml,
-   python3.13libs/, python_panels/, scripts/, docs/
-   Excluded on purpose: tests/, README, LICENSE, AGENTS.md, settings/,
+   Inside HouTools/: README.md, MainMenuCommon.xml, NetworkViewMenu.xml,
+   OPmenu.xml, python3.13libs/, python_panels/, scripts/, docs/
+   Excluded on purpose: tests/, LICENSE, AGENTS.md, settings/,
    __pycache__, *.pyc. (LICENSE stays out per the "necessary files only"
    decision; the About footer's ../LICENSE link won't resolve in zip installs
    -- accepted trade-off.)
@@ -39,7 +39,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-FILES = ["MainMenuCommon.xml", "NetworkViewMenu.xml", "OPmenu.xml"]
+FILES = ["README.md", "MainMenuCommon.xml", "NetworkViewMenu.xml", "OPmenu.xml"]
 DIRS = ["python3.13libs", "python_panels", "scripts", "docs"]
 MANIFEST = "HouTools.json"  # zip top level, next to PACKAGE_DIR
 PACKAGE_DIR = "HouTools"
@@ -117,7 +117,7 @@ def main(argv: list[str]) -> None:
         assert not any(n.startswith("%s/%s" % (PACKAGE_DIR, MANIFEST))
                        for n in names), "manifest leaked into package dir"
         assert not any("__pycache__" in n or n.endswith(".pyc") for n in names), "pycache leaked"
-        banned = ("%s/tests/" % PACKAGE_DIR, "%s/README" % PACKAGE_DIR,
+        banned = ("%s/tests/" % PACKAGE_DIR,
                   "%s/LICENSE" % PACKAGE_DIR, "%s/AGENTS" % PACKAGE_DIR,
                   "%s/settings/" % PACKAGE_DIR)
         assert not any(n.startswith(banned) for n in names), "dev file leaked"
