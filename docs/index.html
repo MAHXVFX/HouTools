@@ -446,7 +446,7 @@
   <div class="hero-shade" aria-hidden="true"></div>
   <div class="hero-inner">
     <div class="hero-kicker">HOUDINI 22 · PLUGIN SUITE</div>
-    <h1>HouTools<span class="v">v1.4.0</span></h1>
+    <h1>HouTools<span class="v">v1.5.0</span></h1>
     <p class="sub">Houdini 22 插件工具集 — 使用手册</p>
     <div class="badges">
       <span class="badge">Houdini 22.0</span>
@@ -606,6 +606,46 @@
       <div class="slide-cap"><strong>Capture Viewport to Node</strong><span>视窗截图钉在节点旁,随节点移动/改名跟随</span></div>
     </a>
 
+    <a class="slide" href="#paste-bounding-box">
+      <svg viewBox="0 0 880 320" role="img" aria-label="粘贴边界框界面示意">
+        <rect width="880" height="320" fill="#241d1c"/>
+        <rect width="880" height="40" fill="#201a19"/>
+        <circle cx="22" cy="20" r="6" fill="#d1283e" opacity=".8"/><circle cx="42" cy="20" r="6" fill="#c9a53e" opacity=".8"/><circle cx="62" cy="20" r="6" fill="#3f9d58" opacity=".8"/>
+        <text x="88" y="26" font-family="Segoe UI, sans-serif" font-size="14" fill="#c9c9d0">Network Editor — Paste Bounding Box</text>
+        <g stroke="#2d2d2d" stroke-width="1">
+          <path d="M0 80 H880 M0 140 H880 M0 200 H880 M0 260 H880"/>
+          <path d="M110 40 V320 M260 40 V320 M410 40 V320 M560 40 V320 M710 40 V320"/>
+        </g>
+        <g font-family="Segoe UI, sans-serif">
+          <text x="252" y="96" font-size="11" fill="#f2a33c">bbox(box1)</text>
+          <rect x="56" y="90" width="188" height="92" fill="none" stroke="#f2a33c" stroke-width="1.5" stroke-dasharray="6 4"/>
+          <rect x="72" y="104" width="156" height="64" rx="6" fill="#2a2a2f" stroke="#e2571b" stroke-width="2"/>
+          <rect x="72" y="104" width="156" height="22" rx="6" fill="#e2571b" opacity=".3"/>
+          <text x="84" y="120" font-size="13" fill="#e4e4e7">box1</text>
+          <circle cx="78" cy="142" r="4" fill="#6a6a72"/><circle cx="78" cy="158" r="4" fill="#6a6a72"/>
+          <text x="84" y="156" font-size="10" fill="#8a8a92">源 · Ctrl+C 复制</text>
+          <path d="M236 136 C 270 136, 280 136, 312 136" stroke="#f2a33c" stroke-width="2.5" stroke-dasharray="7 5" fill="none"/>
+          <polygon points="312,130 328,136 312,142" fill="#f2a33c"/>
+          <text x="278" y="122" text-anchor="middle" font-size="11" fill="#f2a33c">size / t</text>
+          <rect x="334" y="104" width="188" height="64" rx="6" fill="#2a2a2f" stroke="#8a5cf5" stroke-width="2"/>
+          <rect x="334" y="104" width="188" height="22" rx="6" fill="#8a5cf5" opacity=".3"/>
+          <text x="346" y="120" font-size="13" fill="#e4e4e7">box2</text>
+          <text x="346" y="142" font-size="10" fill="#b8a8e8">size ← bbox(../box1)</text>
+          <text x="346" y="158" font-size="10" fill="#b8a8e8">t ← centroid(../box1)</text>
+          <rect x="592" y="72" width="252" height="96" rx="6" fill="#2f2f35" stroke="#5c5c66"/>
+          <text x="606" y="94" font-size="12" fill="#c9c9d0">Paste Bounding Box [HT]</text>
+          <path d="M592 104 H844" stroke="#4a4a52" stroke-width="1"/>
+          <rect x="598" y="112" width="240" height="24" rx="4" fill="#0d6399"/>
+          <text x="612" y="128" font-size="12" fill="#ffffff">Paste Absolute Values [HT]</text>
+          <text x="612" y="156" font-size="12" fill="#e4e4e7">Paste Expressions [HT]</text>
+          <text x="592" y="196" font-size="11" fill="#8a8a92">仅带全三分量 size/t 参数的节点显示菜单</text>
+          <text x="70" y="300" font-size="12" fill="#8a8a92">Ctrl+C 复制源 → 右键目标 → Paste Bounding Box</text>
+          <text x="810" y="300" text-anchor="end" font-size="12" fill="#8a8a92">表达式实时跟随 · 锁定参数跳过 · 单 undo 槽</text>
+        </g>
+      </svg>
+      <div class="slide-cap"><strong>Paste Bounding Box</strong><span>源节点包围盒尺寸/中心,一键贴给目标节点</span></div>
+    </a>
+
     <a class="slide" href="#video-to-sequence">
       <img src="about_shots/videoseq.png" alt="视频转序列图界面截图:参数与输出设置">
       <div class="slide-cap"><strong>Video to Sequence</strong><span>ffmpeg 提取视频为帧序列,可直连相机背景</span></div>
@@ -633,6 +673,7 @@
   <a href="#paste-as-object-merge">粘贴为 Object Merge</a>
   <a href="#dragdrop-import">拖放导入 .abc/.fbx</a>
   <a href="#capture-viewport">视窗截图嵌入</a>
+  <a href="#paste-bounding-box">粘贴边界框</a>
   <a href="#video-to-sequence">视频转序列图</a>
   <a href="#hdr-library">Hdr Library</a>
   <a href="#recipe-library">Recipe Library</a>
@@ -724,6 +765,18 @@
     <li>重截同节点自动覆盖旧图;删除节点只清背景图条目、磁盘文件保留(孤儿文件无害,文件名自说明,可手动清理)。</li>
     <li><code>Delete Viewport Capture [HT]</code>:一次性删除背景图条目、磁盘文件与标记。</li>
     <li>已知局限:父级网络(geo 容器等)改名不跟随,需重截或手动调整。</li>
+  </ul>
+</section>
+
+<!-- ============ 粘贴边界框 ============ -->
+<section id="paste-bounding-box">
+  <h2>Paste Bounding Box<span class="zh">粘贴边界框</span></h2>
+  <p class="entry">入口:右键目标节点 → <code>Paste Bounding Box [HT]</code> 子菜单(仅同时带三分量 <code>size</code> 与 <code>t</code> 参数的节点显示,如 box;grid 的 <code>size</code> 是二向量,不显示菜单)</p>
+  <p>网络编辑器里 Ctrl+C 复制源节点 A,右键目标节点 B,把 A 的包围盒尺寸/中心贴到 B 的 <code>size</code> / <code>t</code>(<code>sizex/y/z ← bbox(A, ...)</code>、<code>tx/y/z ← centroid(A, ...)</code>)——做「刚好包住某个模型」的盒子(碰撞体、代理、bounds 可视化)一步到位。</p>
+  <ul>
+    <li><strong>Paste Absolute Values [HT]</strong>:求值后直接写入;B 参数已有的表达式/关键帧清除替换,锁定参数跳过并在状态栏提示。</li>
+    <li><strong>Paste Expressions [HT]</strong>:写入 <code>bbox()</code> / <code>centroid()</code> 表达式,A 变动时 B 实时跟随;A 与 B 同网络用相对路径(<code>../A</code>),跨层级用绝对路径。</li>
+    <li>绝对值与表达式走同一套求值函数,两种模式结果一致;整次操作单个 undo 槽;源节点有 cook 错误时不写入;源与目标是同一节点时跳过。</li>
   </ul>
 </section>
 
