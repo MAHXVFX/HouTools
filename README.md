@@ -8,11 +8,10 @@ Houdini 22 插件工具集，开发期支持**手动热加载**：改完代码�
 
 ## 安装
 
-1. 把本文件夹整个拷贝到 `Documents/houdiniXX.X/HouTools`（与 `packages/` 同级）；
-2. 把项目根目录下的 `HouTools.json` 放入 `Documents/houdiniXX.X/packages/`；
-3. 启动 Houdini，顶部菜单即出现 **HouTools**。
+1. 下载 HouTools.zip，整个解压到 `Documents/houdiniXX.X/packages/`——解压后该目录下即有 `HouTools` 文件夹与 `HouTools.json`；
+2. 启动 Houdini，顶部菜单即出现 **HouTools**。
 
-若需将文件夹放置到其他位置，修改 `packages/HouTools.json` 里的路径即可。
+若需将 HouTools 文件夹放置到其他位置，修改 `packages/HouTools.json` 里 `$HOUDINI_PACKAGE_PATH/HouTools` 的路径即可。
 
 ## 开发工作流
 

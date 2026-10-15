@@ -14,9 +14,12 @@ Usage:
 Behavior:
 1. Assert the working tree already carries <version> in houtools/__init__.py
    and docs/index.html (prevents packing a stale version).
-2. Stage ONLY runtime-necessary files under a HouTools/ folder (extraction
-   yields the package dir, matching the README install steps):
-   HouTools.json, MainMenuCommon.xml, NetworkViewMenu.xml, OPmenu.xml,
+2. Stage ONLY runtime-necessary files with a two-entry top level: the package
+   manifest HouTools.json at the zip ROOT and everything else under a
+   HouTools/ folder -- extraction yields exactly `HouTools.json` + `HouTools/`
+   side by side, so unzipping straight into Documents/houdiniXX.X/packages/
+   completes the install (the manifest points at $HOUDINI_PACKAGE_PATH/HouTools).
+   Inside HouTools/: MainMenuCommon.xml, NetworkViewMenu.xml, OPmenu.xml,
    python3.13libs/, python_panels/, scripts/, docs/
    Excluded on purpose: tests/, README, LICENSE, AGENTS.md, settings/,
    __pycache__, *.pyc. (LICENSE stays out per the "necessary files only"
@@ -36,8 +39,9 @@ import uuid
 import zipfile
 from pathlib import Path
 
-FILES = ["HouTools.json", "MainMenuCommon.xml", "NetworkViewMenu.xml", "OPmenu.xml"]
+FILES = ["MainMenuCommon.xml", "NetworkViewMenu.xml", "OPmenu.xml"]
 DIRS = ["python3.13libs", "python_panels", "scripts", "docs"]
+MANIFEST = "HouTools.json"  # zip top level, next to PACKAGE_DIR
 PACKAGE_DIR = "HouTools"
 
 _DOWNLOADS_GUID = uuid.UUID("{374DE290-123F-4565-9164-39C4925E467B}")  # FOLDERID_Downloads
@@ -95,10 +99,11 @@ def main(argv: list[str]) -> None:
         for d in DIRS:
             shutil.copytree(root / d, stage / d,
                             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        shutil.copy2(root / MANIFEST, tmp / MANIFEST)
 
         out.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
-            for p in sorted(stage.rglob("*")):
+            for p in sorted(tmp.rglob("*")):
                 if p.is_file():
                     z.write(p, p.relative_to(tmp))
     finally:
@@ -108,6 +113,9 @@ def main(argv: list[str]) -> None:
         assert z.testzip() is None, "corrupt zip entry"
         names = z.namelist()
         assert not any("\\" in n for n in names), "backslash entry name"
+        assert MANIFEST in names, "manifest not at zip top level"
+        assert not any(n.startswith("%s/%s" % (PACKAGE_DIR, MANIFEST))
+                       for n in names), "manifest leaked into package dir"
         assert not any("__pycache__" in n or n.endswith(".pyc") for n in names), "pycache leaked"
         banned = ("%s/tests/" % PACKAGE_DIR, "%s/README" % PACKAGE_DIR,
                   "%s/LICENSE" % PACKAGE_DIR, "%s/AGENTS" % PACKAGE_DIR,
@@ -119,8 +127,7 @@ def main(argv: list[str]) -> None:
     print("zip:", out)
     print("entries:", len(names))
     print("size: %.2f MB" % (out.stat().st_size / 1048576))
-    print("top level:", sorted(set(n.split("/")[1] if "/" in n else n
-                                   for n in names if n.split("/")[0] == PACKAGE_DIR)))
+    print("top level:", sorted(set(n.split("/")[0] for n in names)))
     print("PACK OK")
 
 

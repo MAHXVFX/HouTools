@@ -80,10 +80,13 @@ description: HouTools 发版流程（版本号更新、README/About 手册同步
 
 脚本行为与原因：
 
-- 只打运行必需文件：`HouTools.json` + 三份菜单 XML + `python3.13libs/` +
-  `python_panels/` + `scripts/` + `docs/`（About 页面用）；排除 tests、README、
-  LICENSE、AGENTS.md、settings/、`__pycache__`。
-- zip 内包一层 `HouTools/` 目录——解压即得包目录，与 README 安装步骤一致。
+- 只打运行必需文件：三份菜单 XML + `python3.13libs/` + `python_panels/` +
+  `scripts/` + `docs/`（About 页面用）；排除 tests、README、LICENSE、
+  AGENTS.md、settings/、`__pycache__`。
+- zip 顶层恰好两项：`HouTools.json`（包清单，顶层）+ `HouTools/` 文件夹
+  （其余全部文件都在里面）。整个 zip 直接解压进 `Documents/houdiniXX.X/packages/`
+  即完成安装——清单引用 `$HOUDINI_PACKAGE_PATH/HouTools`，清单与包目录一次落位，
+  与 `HouTools.json` 的路径配置（2026-10-15 修正）一致。
 - 输出到**系统真实下载文件夹**。本机用户目录重定向过（Documents 在 D:、
   Downloads 实测在 `E:\Users\pc\Downloads`）——脚本经 SHGetKnownFolderPath
   解析，勿假设 `C:\Users\<名>\Downloads`。

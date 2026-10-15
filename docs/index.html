@@ -834,11 +834,10 @@
 <section id="install">
   <h2>安装<span class="zh"></span></h2>
   <ol>
-    <li>把 HouTools 文件夹整个放到 <code>Documents/houdini22.0/HouTools</code>(与 <code>packages/</code> 同级);</li>
-    <li>把项目根的 <code>HouTools.json</code> 放入 <code>Documents/houdini22.0/packages/</code>(文件夹放到其他位置时,改其中的路径即可);</li>
+    <li>下载 HouTools.zip,整个解压到 <code>Documents/houdini22.0/packages/</code>,解压后该目录下即有 <code>HouTools</code> 文件夹与 <code>HouTools.json</code>;</li>
     <li>启动 Houdini,顶部菜单即出现 <strong>HouTools</strong>。</li>
   </ol>
-  <div class="note">仅支持 Windows:Automation 的窗口置顶用 Win32 API,部分工具的「打开所在文件夹」依赖 explorer。</div>
+  <div class="note">若需把 HouTools 文件夹放到其他位置,修改 <code>packages/HouTools.json</code> 里 <code>$HOUDINI_PACKAGE_PATH/HouTools</code> 的路径即可。仅支持 Windows:Automation 的窗口置顶用 Win32 API,部分工具的「打开所在文件夹」依赖 explorer。</div>
 </section>
 
 <footer>
