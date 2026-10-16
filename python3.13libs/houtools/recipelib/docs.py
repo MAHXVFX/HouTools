@@ -66,7 +66,13 @@ class _DocPreview(QtWidgets.QTextBrowser):
         if os.path.exists(path) and (ext in metadata.VIDEO_EXTS
                                      or ext == ".gif"):
             MediaDialog.open_media(self, path)
-        else:
+            return
+        # 文档内容可能来自导入的分享包（不可信第三方），openUrl 只放行
+        # 网页/邮件与"确实存在的本地文件"，其余 scheme（可拉起任意
+        # 关联程序/系统组件）一律忽略
+        scheme = url.scheme().lower()
+        if scheme in ("http", "https", "mailto") or (
+                scheme in ("", "file") and os.path.exists(path)):
             QtGui.QDesktopServices.openUrl(url)
 
 

@@ -624,19 +624,37 @@ def delete_recipe(name):
         if os.path.isfile(lib) and not _is_under(lib, hfs):
             try:
                 defs_left = hou.hda.definitionsInFile(lib)
-            except Exception:
+            except hou.OperationFailed:
                 defs_left = []  # 库已被 Houdini 自动卸载 = 已无定义
-            if not defs_left:
+            except Exception as exc:
+                # 读不到 ≠ 已空（杀软/同步盘瞬时占用、网络抖动等）：
+                # 宁可留下文件，也不能误删装着其他 recipe 的库
+                log.warning("inspect definitions in %s failed after "
+                            "delete, kept as-is: %s", lib, exc)
+                defs_left = None
+            if defs_left == []:
                 try:
                     hou.hda.uninstallFile(lib)
                 except Exception as exc:
                     # 未加载的文件卸载会失败，直接删文件即可
                     log.debug("uninstall %s after delete failed: %s",
                               lib, exc)
+                # 与 ensure_libraries_installed 同款尺寸护栏：真空壳只有
+                # 几十字节，读出意外结果时不删可能有内容的文件
                 try:
-                    os.remove(lib)
+                    size = os.path.getsize(lib)
                 except OSError as exc:
-                    log.warning("cannot remove empty recipe library %s: %s",
+                    log.warning("cannot inspect empty shell %s: %s",
                                 lib, exc)
+                    return
+                if size < 512:
+                    try:
+                        os.remove(lib)
+                    except OSError as exc:
+                        log.warning("cannot remove empty recipe library "
+                                    "%s: %s", lib, exc)
+                else:
+                    log.warning("post-delete library %s still %d bytes; "
+                                "kept for inspection", lib, size)
     except Exception as exc:
         log.warning("cleanup after delete %s failed: %s", name, exc)

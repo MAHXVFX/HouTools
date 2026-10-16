@@ -1341,6 +1341,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
     def reload(self):
         """枚举用户库里的 recipe 并重建侧栏/网格（保留分类与搜索词）。"""
         metadata.migrate_legacy_thumb_paths()  # 旧版绝对路径 → 相对插件根
+        metadata.migrate_colliding_doc_dirs()  # safe_name 撞名 → 摘要名（幂等）
         lib_dirs = metadata.get_lib_dirs()
         if not lib_dirs:
             self._recipes = []
@@ -1846,10 +1847,10 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         thumb = metadata.get_thumb(info.name)
         if thumb:
             if thumb.lower().endswith(".gif"):
-                movie = QtGui.QMovie(thumb)
-                movie.jumpToFrame(0)
-                pm = movie.currentPixmap()
-                movie.stop()
+                # GIF 只取首帧：QImageReader 直接读第 0 帧，不依赖
+                # QMovie 未 start() 时 jumpToFrame 的版本相关行为
+                reader = QtGui.QImageReader(thumb)
+                pm = reader.read()
                 icon = QtGui.QIcon(pm) if not pm.isNull() else None
             else:
                 icon = QtGui.QIcon(thumb)

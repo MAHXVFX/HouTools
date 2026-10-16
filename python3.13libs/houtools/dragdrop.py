@@ -172,7 +172,7 @@ def _import_fbx_scenes(context, position, files, stack_from=0):
     created, failed = [], []
     # importFBX 恒定落到 /obj 根：落点定位仅在 /obj 下生效，其余情境照官方
     # 默认位置摆放，状态栏也如实汇报实际落点
-    landing = context.path() if context.path() == "/obj" else "/obj"
+    landing = "/obj"
     for i, path in enumerate(files):
         try:
             parent, messages = hou.hipFile.importFBX(
@@ -213,15 +213,24 @@ def _import_nodes(context, position, files, node_type, parm_name, label,
     import hou
 
     created, failed = [], []
+    broken = []   # (path, 原因) createNode/set 失败的文件
     with hou.undos.group(undo_group or _UNDO_GROUP_ABC):
         for i, path in enumerate(files):
-            node = context.createNode(node_type, node_name=_clean_name(path))
-            _width, height = node.size()
-            node.setPosition(
-                hou.Vector2(position.x(),
-                            position.y() - (stack_from + i)
-                            * (height + _STACK_GAP)))
-            node.parm(parm_name).set(path)
+            # per-file 兜底（与 FBX 分支的逐文件隔离一致）：一个坏文件
+            # 不中止整批，其余文件照常导入
+            try:
+                node = context.createNode(node_type, node_name=_clean_name(path))
+                _width, height = node.size()
+                node.setPosition(
+                    hou.Vector2(position.x(),
+                                position.y() - (stack_from + i)
+                                * (height + _STACK_GAP)))
+                node.parm(parm_name).set(path)
+            except Exception as exc:
+                logger.warning("create %s node for %s failed: %s",
+                               node_type, path, exc)
+                broken.append((path, str(exc)))
+                continue
             if build_hierarchy:
                 node.parm("buildHierarchy").pressButton()
             (created if succeeded is None or succeeded(node)
@@ -232,8 +241,11 @@ def _import_nodes(context, position, files, node_type, parm_name, label,
     for node in failed:
         logger.warning("import produced no hierarchy: %s (%s)",
                        node.path(), node.parm(parm_name).unexpandedString())
-    if failed:
-        _status("%d 个文件未能导入（文件损坏或为空），详见日志" % len(failed))
+    for path, why in broken:
+        logger.warning("import failed: %s\n%s", path, why)
+    if failed or broken:
+        _status("%d 个文件未能导入（文件损坏或为空），详见日志"
+                % (len(failed) + len(broken)))
     return True
 
 

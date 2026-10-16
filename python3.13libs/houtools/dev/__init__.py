@@ -5,8 +5,6 @@ reload machinery stays stable while everything under it is swapped.
 Changes inside houtools.dev therefore require a Houdini restart (rare).
 """
 
-import logging
-
 
 def status(message, error=False):
     """Show a message in Houdini's status bar (no-op outside Houdini)."""

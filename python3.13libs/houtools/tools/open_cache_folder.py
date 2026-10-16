@@ -78,11 +78,16 @@ def resolve_folder(node):
         import hou
         path = os.path.join(hou.text.expandString("$HIP"), path)
     folder = os.path.dirname(os.path.normpath(path))
-    while not os.path.isdir(folder):
+    while folder and not os.path.isdir(folder):
         parent = os.path.dirname(folder)
         if parent == folder:  # 已到盘根
             break
         folder = parent
+    if not folder:
+        # 工程从未保存（$HIP 为空）且输出路径是相对路径：拼不出任何
+        # 可用目录
+        raise RuntimeError(
+            "无法定位输出目录（工程未保存且输出路径是相对路径？）")
     return folder
 
 
@@ -101,5 +106,13 @@ def run(kwargs=None):
             "HouTools: {}".format(exc), severity=hou.severityType.Error
         )
         return
-    os.startfile(folder)
+    try:
+        os.startfile(folder)
+    except OSError as exc:
+        # 目录被删/系统拒绝等：报状态栏而不是把异常抛回菜单分发器
+        log.warning("startfile %s failed: %s", folder, exc)
+        hou.ui.setStatusMessage(
+            "HouTools: 打开 {} 失败（{}）".format(folder, exc),
+            severity=hou.severityType.Error)
+        return
     hou.ui.setStatusMessage("HouTools: 已打开 {}".format(folder))

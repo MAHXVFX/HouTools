@@ -8,15 +8,25 @@
 # 这里只做 HouTools 自己的两件事。装默认键位必须等菜单 XML 注册完热键
 # 符号，所以放 uiready 而不是 ready.py / 123.py。
 
+
+def _log_failure(what, exc):
+    """启动期失败走 logger（进日志、可检索），logger 本身坏了退回 print。"""
+    try:
+        from houtools.core.log import get_logger
+        get_logger("uiready").warning("uiready %s: %s", what, exc)
+    except Exception:
+        print(f"[HouTools] uiready {what}: {exc}")
+
+
 try:
     import houtools.core.hotkeys
     houtools.core.hotkeys.install_defaults()
 except Exception as e:
-    print(f"[HouTools] uiready 安装默认键位失败: {e}")
+    _log_failure("安装默认键位失败", e)
 
 # Recipe Library 的用户库（settings/recipelib.json 的 lib_dirs）在 UI 启动
 # 时即安装：面板打开前 Tab 菜单里就能出现这些 recipe 的 session tool。
-# 未配置库文件夹时静默跳过；失败只打印不阻塞启动。
+# 未配置库文件夹时静默跳过；失败只记录不阻塞启动。
 try:
     from houtools.recipelib import metadata as _rl_meta
     from houtools.recipelib import store as _rl_store
@@ -24,4 +34,4 @@ try:
     if _rl_dirs:
         _rl_store.ensure_libraries_installed(_rl_dirs)
 except Exception as e:
-    print(f"[HouTools] uiready 安装 recipe 库失败: {e}")
+    _log_failure("安装 recipe 库失败", e)

@@ -77,7 +77,7 @@ _houtools_dispatcher.run("delete_viewport_capture", kwargs)
                      houtools/tools/paste_bbox.py 的 is_bbox_target 双处同步。
                      必须 all()：grid 的 size 是二向量（sizex/sizey），
                      any() 会凭 t 三分量误命中 -->
-                <expression>kwargs.get("node") is not None and all(kwargs["node"].parmTuple(n) is not None and len(kwargs["node"].parmTuple(n)) == 3 for n in ("size", "t"))</expression>
+                <expression>kwargs.get("node") is not None and all((t := kwargs["node"].parmTuple(n)) is not None and len(t) == 3 for n in ("size", "t"))</expression>
             </context>
             <scriptItem id="houtools_paste_bbox_absolute">
                 <label>Paste Absolute Values [HT]</label>

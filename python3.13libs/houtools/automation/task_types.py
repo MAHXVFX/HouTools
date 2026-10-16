@@ -90,18 +90,26 @@ class TaskItem:
 
     @staticmethod
     def from_dict(data: dict) -> "TaskItem":
-        """从 dict 反序列化，frame_range 列表恢复为 tuple。"""
+        """从 dict 反序列化，frame_range 列表恢复为 tuple。
+
+        容错语义与 data_manager.deserialize_params 对齐：params 缺失/
+        多余字段走默认值，只有 type 缺失或未知、enabled 缺失才报错——
+        公开 API load_tasks 直接调本方法，硬下标会把手改坏的配置文件
+        变成 KeyError。
+        """
+        if not isinstance(data, dict) or "type" not in data:
+            raise ValueError(f"任务缺少 type 字段: {data!r}")
         type_str = data["type"]
+        params_data = data.get("params") or {}
 
         if type_str == "BUTTON_CLICK":
             task_type = TaskType.BUTTON_CLICK
             params: TaskParams = ButtonClickParams(
-                node_path=data["params"]["node_path"],
-                parm_name=data["params"]["parm_name"],
+                node_path=params_data.get("node_path", ""),
+                parm_name=params_data.get("parm_name", ""),
             )
         elif type_str == "FLIPBOOK":
             task_type = TaskType.FLIPBOOK
-            params_data = data["params"]
             params = FlipbookParams(
                 start_frame=params_data.get("start_frame", "$RFSTART"),
                 end_frame=params_data.get("end_frame", "$RFEND"),
@@ -111,7 +119,7 @@ class TaskItem:
         elif type_str == "HOME_ASSISTANT":
             task_type = TaskType.HOME_ASSISTANT
             params = HomeAssistantParams(
-                webhook_url=data["params"]["webhook_url"],
+                webhook_url=params_data.get("webhook_url", ""),
             )
         elif type_str == "OPEN_DW":
             task_type = TaskType.OPEN_DW
@@ -122,5 +130,5 @@ class TaskItem:
         return TaskItem(
             task_type=task_type,
             params=params,
-            enabled=data["enabled"],
+            enabled=data.get("enabled", True),
         )

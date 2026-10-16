@@ -7,10 +7,8 @@
 import os
 import re
 import json
-import logging
 import subprocess
 from dataclasses import dataclass
-from typing import Optional
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
@@ -503,7 +501,8 @@ class _ExtractWorker(QThread):
     error = Signal(str)
 
     def __init__(self, video_path, output_dir, ffmpeg_path,
-                 quality=90, start_frame=1001, padding=4, prefix="cam"):
+                 quality=90, start_frame=1001, padding=4, prefix="cam",
+                 video_info=None):
         super().__init__()
         self.video_path = video_path
         self.output_dir = output_dir
@@ -512,6 +511,10 @@ class _ExtractWorker(QThread):
         self.start_frame = start_frame
         self.padding = padding
         self.prefix = prefix
+        # 窗口在 _load_video 时已探测过视频信息：直接传入复用，转换前
+        # 不再重探一遍（重探最坏多等一次全片解码，且两次结果可能不一
+        # 致、进度条 max 对不上）；None 时回退自探（兼容直接构造）
+        self._video_info = video_info
         self._cancelled = False
         self._process = None
         self.frames_written = 0   # 已写入帧数快照（取消时供窗口提示用）
@@ -548,8 +551,10 @@ class _ExtractWorker(QThread):
         os.makedirs(self.output_dir, exist_ok=True)
         startup = _get_startup_kwargs()
 
-        # 先获取视频信息以确定总帧数
-        info = self._get_video_info(startup)
+        # 获取视频信息以确定总帧数（窗口传入的探测结果优先，见构造函数）
+        info = self._video_info
+        if info is None:
+            info = self._get_video_info(startup)
         total_frames = info.total_frames
         if total_frames <= 0:
             self.error.emit("无法确定视频帧数，请检查视频文件。")
@@ -1258,6 +1263,7 @@ class _VideoToSequenceWindow(QDialog):
         self._extract_worker = _ExtractWorker(
             self._current_video_path, output_dir, ffmpeg_path,
             quality, start_frame, padding, prefix,
+            video_info=self._video_info,
         )
         self._extract_worker.progress.connect(self._on_extract_progress)
         self._extract_worker.done.connect(self._on_extract_finished)
@@ -1428,6 +1434,13 @@ class _VideoToSequenceWindow(QDialog):
 
         except ImportError:
             pass
+        except Exception as exc:
+            # 锁定参数/节点被删等：帧已经全部写完，装饰性步骤失败不能
+            # 掀掉完成回调（异常穿出槽会让"完成"弹窗永远不出现）
+            logger.warning("设置相机背景失败 %s: %s", cam_path, exc)
+            self._status_label.setVisible(True)
+            self._status_label.setText(f"帧已导出，但设置相机背景失败：{exc}")
+            self._status_label.setStyleSheet("color: #d29a55; font-size: 12px;")
 
     def _on_extract_error(self, error_msg):
         if self.sender() is not self._extract_worker:
@@ -1467,17 +1480,21 @@ class _VideoToSequenceWindow(QDialog):
         return 1001
 
     def _find_scene_cameras(self) -> list:
-        """查找当前场景中的所有相机节点"""
+        """查找当前场景中的所有相机节点（类型实例直查，O(相机数)）。
+
+        原实现 allSubChildren() 递归展开 /obj 全部层级（含锁定 HDA、
+        DOP 网络内部），大场景是几万到几十万次 HOM 往返，且发生在
+        窗口构造期；instances() 与它语义一致（同为 name()=="cam" 的
+        精确匹配），代价只随相机数增长。
+        """
         try:
             import hou
-            cameras = []
-            obj = hou.node("/obj")
-            if obj:
-                for node in obj.allSubChildren():
-                    if node.type().name() == "cam":
-                        cameras.append(node.path())
-            return cameras
-        except ImportError:
+            cam_type = hou.nodeType(hou.objNodeTypeCategory(), "cam")
+            if cam_type is None:
+                return []
+            return [node.path() for node in cam_type.instances()]
+        except Exception as exc:
+            logger.debug("find scene cameras failed: %s", exc)
             return []
 
     def _auto_select_camera(self):
@@ -1499,7 +1516,8 @@ class _VideoToSequenceWindow(QDialog):
             dialogs.info(self, "提示", "当前场景中没有找到相机。")
             return
 
-        cam_names = [c.split("/")[-1] for c in cameras]
+        # 下拉直接列完整路径：多机位/多 shot 布局常有同名相机，按
+        # basename 反查 index 会永远命中第一个，分辨率写进错误的相机
         current = self._camera_edit.text()
         current_idx = cameras.index(current) if current in cameras else 0
 
@@ -1508,16 +1526,15 @@ class _VideoToSequenceWindow(QDialog):
         dlg = QInputDialog(self)
         dlg.setWindowTitle("选择相机")
         dlg.setLabelText("场景中的相机:")
-        dlg.setComboBoxItems(cam_names)
+        dlg.setComboBoxItems(cameras)
         dlg.setComboBoxEditable(False)
-        dlg.setTextValue(cam_names[current_idx])
+        dlg.setTextValue(cameras[current_idx])
         dialogs.localize_buttons(dlg)
         ok = dlg.exec_() == QDialog.Accepted
         name = dlg.textValue()
         dlg.deleteLater()
-        if ok and name:
-            idx = cam_names.index(name)
-            self._set_selected_camera(cameras[idx])
+        if ok and name in cameras:
+            self._set_selected_camera(name)
 
     def _set_selected_camera(self, cam_path: str):
         """记录所选相机并同步分辨率显示（选择对话框/自动选择共用入口）。"""

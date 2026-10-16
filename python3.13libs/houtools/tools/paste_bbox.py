@@ -115,13 +115,19 @@ def _apply(kwargs, expression_mode):
                 if comp.isLocked():
                     skipped.append(comp.name())
                     continue
-                comp.deleteAllKeyframes()
-                if expression_mode:
-                    comp.setExpression(
-                        '{}("{}", {})'.format(func, path, axis),
-                        hou.exprLanguage.Hscript)
-                else:
-                    comp.set(values[(tuple_name, index)])
+                try:
+                    comp.deleteAllKeyframes()
+                    if expression_mode:
+                        comp.setExpression(
+                            '{}("{}", {})'.format(func, path, axis),
+                            hou.exprLanguage.Hscript)
+                    else:
+                        comp.set(values[(tuple_name, index)])
+                except hou.PermissionError:
+                    # 节点级/定义级锁定时 isLocked() 预检不到（那查的是
+                    # 参数级锁）：按跳过处理并如实汇报，循环继续——中途
+                    # 抛出会留下"size 写了一半 t 没写"的半应用状态
+                    skipped.append(comp.name())
     except Exception as exc:
         logger.warning("paste_bbox failed on %s: %s", target.path(), exc)
         _status("粘贴边界框失败：{}".format(exc), error=True)

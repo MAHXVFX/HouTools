@@ -15,14 +15,15 @@
   无主缓存（HDR 已删）在刷新时清理。
   线程不 parent 到窗口：Reload 关窗销毁窗口时，运行中的线程改为
   自行跑完自删（每张图生成前后及子进程等待中均响应中断请求），
-  避免 Qt "QThread: Destroyed while thread is still running" 崩溃。
+  避免 Qt "QThread: Destroyed while thread is still running" 崩溃；
+  运行中的线程由模块级 _LIVE_THREADS 留引用（同 automation 的
+  _LIVE_ENGINES），防窗口销毁后引用链断掉被 GC 连带析构。
 - 缓存固定 256px 宽（清晰度），以相对路径+原扩展名命名（目录用
   __ 连接），子文件夹同名、同名字不同扩展（a.hdr 与 a.exr）不冲突；
   HDR 文件比缩略图新（内容更新过）时缓存自动失效重生成。
-- 显示大小：滑条值决定列数，网格列宽自动拉伸铺满面板宽度（防抖重算），
-  窗口缩放不留大片空白；图标上限 400px（缓存 256px，过度放大会模糊）。
-  网格计算是幂等的（滚动条宽度恒定预留 + 结果未变即跳过）——否则
-  滚动条显隐会翻转列数形成重排死循环，表现为缩略图一直闪。
+- 显示大小：滑条值 = 缩略图宽，网格尺寸固定不随面板宽伸缩（面板宽窄
+  只改变每排列数；原"列宽自适应铺满"方案会随面板宽拉伸缩略图，
+  用户否决，缩略图是刚体——与 Recipe Library 卡片同一套逻辑）。
 - 收藏：右键收藏/取消收藏，侧栏"★ 收藏"一键过滤；收藏以 normcase
   后的绝对路径存 settings（Windows 不区分大小写）。
 - 用户设置（库目录/显示大小/全局置顶/收藏）经 houtools.core.settings.JsonStore
@@ -152,7 +153,7 @@ def _ocio_env():
         cfgs = glob.glob(os.path.join(pkgs, "houdini-config*.ocio")) or \
             glob.glob(os.path.join(pkgs, "*config*.ocio"))
         if cfgs:
-            env["OCIO"] = cfgs[0]
+            env["OCIO"] = sorted(cfgs)[0]
     return env
 
 
@@ -506,13 +507,26 @@ def _assign_hdr_to_node(hdr_path, node):
 # 后台缩略图线程
 # --------------------------------------------------------------------------
 
+# 运行中的缩略图线程留引用位：线程无 parent，窗口销毁后若这是唯一
+# Python 引用，GC 析构运行中的 QThread 在 Qt6 下直接 qFatal。
+# NameError 守卫：本模块会被 Reload Modules 重载，模块体重跑会把绑定
+# 换成新空集合、让旧集合失去引用根——reload 在同一 module dict 里
+# 执行、已有名字可见，守卫让重载后沿用旧集合（同 automation 的
+# _LIVE_ENGINES 手法）。
+try:
+    _LIVE_THREADS
+except NameError:
+    _LIVE_THREADS = set()
+
+
 class ThumbnailThread(QtCore.QThread):
     """后台线程池批量生成缺失缩略图。
 
     - 不 parent 到窗口：Reload/关窗时窗口可能被 deleteLater，QObject 带
       运行中的 QThread 一起销毁会报 "QThread: Destroyed while thread is
-      still running"（Windows 上有崩溃风险）。改为窗口持 Python 引用，
-      线程结束自删；中断请求在每张开工前后及子进程等待中响应。
+      still running"（Windows 上有崩溃风险）。改为窗口持 Python 引用 +
+      模块级 _LIVE_THREADS 留引用，线程结束自删；中断请求在每张开工
+      前后及子进程等待中响应。
     - 并发数按机器性能取中低档（核数/4，夹在 2..4）：每张 hoiiotool
       是独立子进程，几张并行能吃掉空闲核，又给 Houdini 留足余量。
     - oiiotool 与 oiiotool_env 由调用方在主线程解析好传入：线程内
@@ -690,7 +704,7 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self.size_slider.setValue(int(_SETTINGS.get("thumb_size")))
         self.size_slider.setFixedWidth(140)
         self.size_slider.setToolTip(
-            "基准大小：决定每行列数，网格自动拉伸铺满面板宽度")
+            "基准大小：决定缩略图尺寸与每排列数（网格不随面板宽拉伸）")
         self.size_label = QtWidgets.QLabel("{}px".format(self.size_slider.value()))
 
         top = QtWidgets.QHBoxLayout()
@@ -819,7 +833,11 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
             self._apply_filter()
             self.status.setText("未设置库目录，请先点「更换目录」选择 HDR 库")
             return
-        # 先清理无主缩略图（HDR 已被删除/移走的），再递归扫描
+        # 先打断仍在跑的上一轮生成线程再清理缓存目录：clean_stale_thumbs
+        # 会把 ~tmp_<线程id>_ 临时文件当"无主缩略图"删掉，旧线程随后的
+        # os.replace 就会失败（单张异常有兜底，但这一张白生成了）
+        self._stop_worker()
+        # 清理无主缩略图（HDR 已被删除/移走的），再递归扫描
         stale = clean_stale_thumbs(self.lib_dir)
         hdrs = scan_hdrs(self.lib_dir)
         self._hdrs = hdrs
@@ -944,10 +962,6 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self.status.setText("{}：{}/{} 个 HDR{}。选中场景灯光后双击缩略图链接贴图".format(
             self._category_label(key), len(entries), len(self._hdrs), note))
 
-    def _visible_count(self):
-        return sum(0 if self.list.item(i).isHidden() else 1
-                   for i in range(self.list.count()))
-
     # ---------------- 收藏 ----------------
 
     def _item_icon(self, path, fav):
@@ -970,7 +984,7 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self.status.setText("{}：{}".format(
             os.path.basename(path), "已收藏" if fav else "已取消收藏"))
 
-    # ---------------- 网格自适应（铺满面板宽度） ----------------
+    # ---------------- 缩略图尺寸滑条（网格固定，不随面板宽伸缩） ----------------
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -992,7 +1006,8 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         icon_size = QtCore.QSize(icon_w, icon_h)
         grid_size = QtCore.QSize(icon_w + GRID_PADDING_X,
                                  icon_h + GRID_PADDING_Y)
-        if self.list.iconSize() == icon_size                 and self.list.gridSize() == grid_size:
+        if (self.list.iconSize() == icon_size
+                and self.list.gridSize() == grid_size):
             return
         self.list.setIconSize(icon_size)
         self.list.setGridSize(grid_size)
@@ -1110,7 +1125,12 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         elif act is act_copy:
             QtWidgets.QApplication.clipboard().setText(path)
         elif act is act_open:
-            subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
+            try:
+                subprocess.Popen(["explorer", "/select,",
+                                  os.path.normpath(path)])
+            except OSError as exc:
+                log.warning("explorer 启动失败: %s", exc)
+                self.status.setText("无法启动文件资源管理器: {}".format(exc))
 
     def _on_sidebar_menu(self, pos):
         item = self.sidebar.itemAt(pos)
@@ -1126,18 +1146,34 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         if act is act_new:
             self._create_category()
         elif act is act_open and item is not None:
-            subprocess.Popen(["explorer",
-                              os.path.join(self.lib_dir,
-                                           item.data(QtCore.Qt.UserRole))])
+            try:
+                subprocess.Popen(["explorer",
+                                  os.path.join(self.lib_dir,
+                                               item.data(QtCore.Qt.UserRole))])
+            except OSError as exc:
+                log.warning("explorer 启动失败: %s", exc)
+                self.status.setText("无法启动文件资源管理器: {}".format(exc))
+
+    # Windows 保留名（大小写不敏感）：作分类文件夹名会创建失败或不可用
+    _WINDOWS_RESERVED = frozenset(
+        {"CON", "PRN", "AUX", "NUL"}
+        | {f"COM{i}" for i in range(1, 10)}
+        | {f"LPT{i}" for i in range(1, 10)})
 
     def _create_category(self):
         name, ok = dialogs.prompt_text(self, "新建分类", "分类文件夹名：")
         name = (name or "").strip()
         if not ok or not name:
             return
-        if any(c in name for c in '\\/:*?"<>|'):
+        # 校验面与 automation._sanitize_config_name 一致：分隔符之外还须
+        # 拒 NUL、纯点号（".." 不含非法字符，makedirs 会静默"成功"并在
+        # 侧栏留下一个指向库目录上级的分类）与 Windows 保留名
+        if any(c in name for c in '\\/:*?"<>|') or "\x00" in name \
+                or name.replace(".", "") == "" \
+                or name.upper() in self._WINDOWS_RESERVED:
             dialogs.warn(self, "新建分类",
-                         "名称不能包含 \\/ : * ? \" < > | 等字符")
+                         "名称不能包含 \\/ : * ? \" < > | 等字符，"
+                         "也不能是纯点号或 Windows 保留名（CON/NUL 等）")
             return
         try:
             os.makedirs(os.path.join(self.lib_dir, name), exist_ok=True)
@@ -1178,16 +1214,21 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         pm.fill(QtGui.QColor("#313136"))  # 比背景亮一档，读作"待生成"
         return QtGui.QIcon(pm)
 
-    def _start_worker(self, hdr_paths):
+    def _stop_worker(self):
+        """打断当前生成线程（有界等待收尾）；刷新/重开生成前调用。"""
         thread = self._thread
-        if thread is not None:
-            try:
-                if thread.isRunning():
-                    thread.resume()  # 若在暂停中，先唤醒使其能响应中断
-                    thread.requestInterruption()
-                    thread.wait(1000)
-            except RuntimeError:
-                pass  # 已被 deleteLater，C++ 对象不在了
+        if thread is None:
+            return
+        try:
+            if thread.isRunning():
+                thread.resume()  # 若在暂停中，先唤醒使其能响应中断
+                thread.requestInterruption()
+                thread.wait(1000)
+        except RuntimeError:
+            pass  # 已被 deleteLater，C++ 对象不在了
+
+    def _start_worker(self, hdr_paths):
+        self._stop_worker()
         # hoiiotool 路径与环境在主线程（此刻）解析好传入；找不到时线程
         # 照常启动，每张在 make_thumbnail 里记告警跳过（进度仍会走完）
         self._thread = ThumbnailThread(
@@ -1197,6 +1238,10 @@ class _HdrLibraryWindow(QtWidgets.QWidget):
         self._thread.progress.connect(self._on_thumb_progress)
         self._thread.finished.connect(self._on_worker_finished)
         self._thread.finished.connect(self._thread.deleteLater)
+        # 模块级留引用 + 收尾摘除：窗口销毁后线程靠它活到自然结束
+        _LIVE_THREADS.add(self._thread)
+        self._thread.finished.connect(
+            lambda t=self._thread: _LIVE_THREADS.discard(t))
         self.progress_bar.setRange(0, max(1, len(hdr_paths)))
         self.progress_bar.setValue(0)
         self.progress_label.setText("生成缩略图 0/{}（{} 线程）".format(

@@ -60,6 +60,40 @@ def _track_rm(path):
 atexit.register(lambda: [p.unlink(missing_ok=True) for p in _CLEANUP_FILES])
 
 
+def _check_undefined_names():
+    """symtable 静态扫描：全仓不允许存在未定义名。
+
+    这类错误编译期就能抓（如 QtWidgets 未导入就被引用，运行时才在
+    特定分支崩 NameError）。__file__ 由 import 系统注入，豁免。
+    """
+    import builtins
+    import symtable
+
+    allow = {"__file__"}
+
+    def _walk(table, out):
+        for sym in table.get_symbols():
+            if sym.is_global() and not sym.is_assigned():
+                out.setdefault(sym.get_name(), table.get_lineno())
+        for child in table.get_children():
+            _walk(child, out)
+
+    for path in sorted((ROOT / "python3.13libs").rglob("*.py")):
+        top = symtable.symtable(path.read_text(encoding="utf-8"),
+                                str(path), "exec")
+        module_names = {s.get_name() for s in top.get_symbols()
+                        if s.is_assigned() or s.is_imported()}
+        found = {}
+        _walk(top, found)
+        for name, lineno in found.items():
+            if name in module_names or name in allow \
+                    or hasattr(builtins, name):
+                continue
+            raise AssertionError(
+                "undefined name %r in %s:%d" % (name, path, lineno))
+    print("undefined-name scan OK")
+
+
 def main():
     for menu_file in ("MainMenuCommon.xml", "NetworkViewMenu.xml", "OPmenu.xml"):
         ET.parse(ROOT / menu_file)
@@ -210,6 +244,41 @@ def main():
     assert restored.params.node_path == "/obj/grid1"
     assert restored.params.parm_name == "execute"
     print("task_types round-trip OK")
+
+    # from_dict 容错（与 data_manager.deserialize_params 同语义）：
+    # params 缺字段走默认值，缺 type 才报错——load_tasks 直接调它，
+    # 硬下标会把手改坏的配置文件变成 KeyError
+    partial = task_types.TaskItem.from_dict(
+        {"type": "BUTTON_CLICK", "params": {"node_path": "/obj/grid1"}})
+    assert partial.params.node_path == "/obj/grid1"
+    assert partial.params.parm_name == ""
+    assert partial.enabled is True
+    try:
+        task_types.TaskItem.from_dict({"params": {}})
+        raise AssertionError("missing type should fail")
+    except ValueError:
+        pass
+    print("task_types from_dict tolerance OK")
+
+    # JsonStore：顶层不是 JSON 对象（null/数组/字符串）也必须留底回退，
+    # 不能让 TypeError 从 load() 逃逸——metadata/hdrlight 在 import 期
+    # 构造 JsonStore，逃逸 = 整个工具不可用
+    for _content in ("null", "[1,2,3]", '"hello"', "{"):
+        _js_dir = Path(houtools.core.settings.SETTINGS_DIR)
+        _js_dir.mkdir(parents=True, exist_ok=True)
+        _js_path = _js_dir / "_smoke_nondict.json"
+        _js_path.write_text(_content, encoding="utf-8")
+        _js = houtools.core.settings.JsonStore("_smoke_nondict.json",
+                                               defaults={"k": 1})
+        _track_rm(_js_path)
+        assert _js.get("k") == 1, _content
+        _bak = _js_path.with_name(_js_path.name + ".bak")
+        assert _bak.is_file(), (_content, "no .bak left behind")
+        _bak.unlink(missing_ok=True)
+        _js_path.unlink(missing_ok=True)
+    print("JsonStore non-dict top level OK")
+
+    _check_undefined_names()
 
     # 粘贴为 Object Merge：路径/表达式解析
     from houtools.tools import paste_as_object_merge as pam
@@ -575,18 +644,19 @@ def main():
             fav_pm = fav_item.icon().pixmap(1024)
             assert fav_pm.toImage() != base_pm.toImage(), \
                 "收藏角标未合成（图标内容与底图一致）"
-            # 收藏视图过滤：6 个里只有 1 个收藏
+            # 收藏视图过滤：6 个里只有 1 个（_apply_filter 是重建式，
+            # 从不 setHidden，可见数 == 条目数）
             win._select_category(hdr_browser.KEY_FAV)
-            assert win._visible_count() == 1, win._visible_count()
+            assert win.list.count() == 1, win.list.count()
             # 取消收藏后从收藏视图消失
             fav_item = win.list.item(0)
             assert fav_item is not None
             win._set_favorite(fav_item, False)
-            assert win._visible_count() == 0
+            assert win.list.count() == 0
             assert not hdr_browser.get_favorites()
             # 全部视图恢复
             win._select_category(hdr_browser.KEY_ALL)
-            assert win._visible_count() == 6
+            assert win.list.count() == 6
             # 点空白取消选中：current 连同选中一起清空
             win.list.setCurrentRow(0)
             win.list.emptyClicked.emit()
@@ -1021,6 +1091,79 @@ def main():
                         {"recipes/a.hda"}, set())
                     assert hda_import[0][1] == "evil2.hda", hda_import
                     print("transfer zip-slip guard OK")
+
+                    # zip-slip 进阶：文档目录名同样来自包内成员（包作者
+                    # 可任意伪造）。"docs/../doc.md" 会折出 ".."（target
+                    # = DOCS_DIR 的上级 = 整个 settings/）、"docs//doc.md"
+                    # 折出空段（target = DOCS_DIR 本身）——读取阶段必须
+                    # 拒绝，且本地文件完好无损
+                    with tempfile.TemporaryDirectory() as tevil:
+                        evil_store = houtools.core.settings.JsonStore(
+                            "_smoke_transfer_evil.json",
+                            defaults=dict(rl_meta._DEFAULTS))
+                        _track_rm(evil_store.path)
+                        victim = Path(tevil) / "docs"
+                        keep = victim / "keep"
+                        keep.mkdir(parents=True)
+                        (keep / "doc.md").write_text("别删我", encoding="utf-8")
+                        sentinel = Path(tevil) / "recipelib.json"
+                        sentinel.write_text("{}", encoding="utf-8")
+                        with patch.object(rl_meta, "_SETTINGS", evil_store), \
+                             patch.object(rl_meta, "DOCS_DIR", victim), \
+                             patch.object(rl_meta, "THUMBS_DIR",
+                                          Path(tevil) / "thumbs"):
+                            for evil_member in ("docs/../doc.md",
+                                                "docs//doc.md"):
+                                evil_zip = str(Path(tevil) / "evil.zip")
+                                with zipfile.ZipFile(evil_zip, "w") as zf:
+                                    zf.writestr("manifest.json", json.dumps(
+                                        {"format_version": 1,
+                                         "app": rl_transfer.APP_TAG,
+                                         "recipe_count": 0, "recipes": [],
+                                         "include_hda": False,
+                                         "hda_files": {}}))
+                                    zf.writestr("recipelib.json", "{}")
+                                    zf.writestr(evil_member, "x")
+                                try:
+                                    rl_transfer.import_package(evil_zip)
+                                    raise AssertionError(
+                                        "evil member should fail: "
+                                        + evil_member)
+                                except rl_transfer.TransferError:
+                                    pass
+                                assert (keep / "doc.md").is_file(), evil_member
+                                assert sentinel.is_file(), evil_member
+                    print("transfer evil doc-dir guard OK")
+
+                    # safe_name 折叠不是单射（mahx::alpha 与 mahx/alpha
+                    # 同折 mahx__alpha）：真实撞名双方经 unique_safe_name
+                    # 落到不同目录，文档互不覆盖；未撞名者与旧 safe_name
+                    # 完全一致（存量目录零迁移）
+                    with tempfile.TemporaryDirectory() as tcol:
+                        col_store = houtools.core.settings.JsonStore(
+                            "_smoke_collide.json",
+                            defaults=dict(rl_meta._DEFAULTS))
+                        _track_rm(col_store.path)
+                        with patch.object(rl_meta, "_SETTINGS", col_store), \
+                             patch.object(rl_meta, "DOCS_DIR",
+                                          Path(tcol) / "docs"), \
+                             patch.object(rl_meta, "THUMBS_DIR",
+                                          Path(tcol) / "thumbs"):
+                            a, b = "mahx::alpha", "mahx/alpha"
+                            assert rl_meta.safe_name(a) \
+                                == rl_meta.safe_name(b)
+                            rl_meta.write_doc(a, "A")
+                            rl_meta.write_doc(b, "B")
+                            assert rl_meta.read_doc(a) == "A"
+                            assert rl_meta.read_doc(b) == "B"
+                            assert rl_meta.doc_dir(a) != rl_meta.doc_dir(b)
+                            rl_meta.delete_doc_dir(a)
+                            assert rl_meta.read_doc(b) == "B"
+                            solo = "mahx::solo"
+                            rl_meta.write_doc(solo, "S")
+                            assert (Path(rl_meta.doc_dir(solo)).name
+                                    == rl_meta.safe_name(solo))
+                    print("unique_safe_name collision guard OK")
 
             # 浏览器窗口：list_recipes / selected_nodes / 网络编辑器全部打桩
             infos = [

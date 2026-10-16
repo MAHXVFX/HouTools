@@ -134,16 +134,16 @@ class _PasteHotkeyDialog(QDialog):
         key = self._editor.keySequence().toString()
         if not key:
             # 空序列 = 清除自定义键位、恢复默认（此前没有撤销自定义的路径）
-            box = QtWidgets.QMessageBox(self)
+            box = QMessageBox(self)
             box.setWindowTitle("清除自定义键位")
             box.setText(f"未捕获到按键。要清除自定义键位、恢复默认"
                         f"（{DEFAULT_KEY}）吗？")
-            box.setStandardButtons(QtWidgets.QMessageBox.Yes
-                                   | QtWidgets.QMessageBox.No)
+            box.setStandardButtons(QMessageBox.Yes
+                                   | QMessageBox.No)
             localize_buttons(box)
             ret = box.exec_()
             box.deleteLater()
-            if ret != QtWidgets.QMessageBox.Yes:
+            if ret != QMessageBox.Yes:
                 return
             if clear_custom():
                 logger.info("paste_as_object_merge custom hotkey cleared")

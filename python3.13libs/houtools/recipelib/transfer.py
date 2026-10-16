@@ -138,13 +138,15 @@ def export_recipes(recipes, zip_path, include_hda=True, progress=None):
         if not metadata.doc_exists(name):
             continue
         root = metadata.doc_dir(name)
+        # 包内目录名取 doc_dir 实际目录名（真实撞名时是带摘要的
+        # unique 名），与本地查找路径（doc_dir）保持一致
+        arc_dir = os.path.basename(root.rstrip("\\/"))
         for dirpath, dirnames, filenames in os.walk(root):
             dirnames.sort()
             for fn in sorted(filenames):
                 full = os.path.join(dirpath, fn)
                 rel = os.path.relpath(full, root).replace(os.sep, "/")
-                entries.append((_DOC_ARC_DIR + metadata.safe_name(name)
-                                + "/" + rel, full))
+                entries.append((_DOC_ARC_DIR + arc_dir + "/" + rel, full))
 
     hda_files = {}    # 包内名 -> {"original": 磁盘文件名, "recipes": [内部名]}
     if include_hda:
@@ -285,10 +287,27 @@ def _read_packaged_metadata(zf):
 
 
 def _doc_dirs_of(members):
-    """包内含 doc.md 的文档目录名（safe 名）集合。"""
-    return sorted({m.split("/")[1] for m in members
-                   if m.startswith(_DOC_ARC_DIR) and m.endswith("/doc.md")
-                   and "/" in m[len(_DOC_ARC_DIR):]})
+    """包内含 doc.md 的文档目录名（safe 名）集合。
+
+    目录名与叶子路径一样来自包内成员名，同在可信边界之外（包作者可
+    任意伪造），必须过 _safe_rel 同款校验——否则 "docs/../doc.md" 会
+    折出 ".."（target = DOCS_DIR 的上级 = 整个 settings/）、
+    "docs//doc.md" 会折出空段（target = DOCS_DIR 本身），喂给
+    rmtree 就是灾难。校验在读取阶段（inspect/import 共用）完成，
+    非法包在确认对话框处就被拒绝。
+    """
+    dirs = set()
+    for m in members:
+        if not (m.startswith(_DOC_ARC_DIR) and m.endswith("/doc.md")
+                and "/" in m[len(_DOC_ARC_DIR):]):
+            continue
+        safe = m.split("/")[1]
+        try:
+            _safe_rel(safe)
+        except TransferError:
+            raise TransferError("包内文档路径不合法: {}".format(m))
+        dirs.add(safe)
+    return sorted(dirs)
 
 
 def _hda_plan(manifest, members, existing):
@@ -370,18 +389,48 @@ def import_package(zip_path, lib_dir=None, existing_names=(), progress=None):
             done += 1
 
         # ---- 2) 文档：包内有的整目录替换（含 assets），没有的不动 ----
+        # 先解到 <safe>.~incoming 临时目录、全部成员解完才换入：中途
+        # 失败（包损坏/磁盘满等）不破坏本地已有文档——旧版"先删后写"
+        # 会在解包失败时让本地文档凭空消失。取消检查在目录边界，换入的
+        # 都是完整目录，取消后重跑仍然幂等。
+        docs_root = Path(metadata.DOCS_DIR)
+        root_abs = os.path.realpath(str(docs_root)) + os.sep
         for safe in doc_dirs:
             if _report(progress, done, total, "导入文档 {}".format(safe)):
                 raise TransferCancelled()
             prefix = _DOC_ARC_DIR + safe + "/"
-            target = Path(metadata.DOCS_DIR) / safe
-            if target.exists():
-                shutil.rmtree(str(target), ignore_errors=True)
-            target.mkdir(parents=True, exist_ok=True)
-            for arc in members:
-                if arc.startswith(prefix):
-                    _extract_member(zf, members[arc],
-                                    target / _safe_rel(arc[len(prefix):]))
+            target = docs_root / safe
+            # 二次防线：目录名已在 _doc_dirs_of 过检，这里再断言落点
+            # 收敛在 DOCS_DIR 之内
+            if not (os.path.realpath(str(target)) + os.sep).startswith(root_abs):
+                raise TransferError("包内文档路径不合法: {}".format(safe))
+            incoming = docs_root / (safe + ".~incoming")
+            shutil.rmtree(str(incoming), ignore_errors=True)
+            incoming.mkdir(parents=True)
+            try:
+                for arc in members:
+                    if arc.startswith(prefix):
+                        _extract_member(zf, members[arc],
+                                        incoming / _safe_rel(arc[len(prefix):]))
+            except Exception:
+                shutil.rmtree(str(incoming), ignore_errors=True)
+                raise
+            backup = docs_root / (safe + ".~old")
+            shutil.rmtree(str(backup), ignore_errors=True)
+            swapped = False
+            try:
+                if target.exists():
+                    os.rename(str(target), str(backup))
+                os.rename(str(incoming), str(target))
+                swapped = True
+            finally:
+                if swapped:
+                    shutil.rmtree(str(backup), ignore_errors=True)
+                else:
+                    # 换入失败：旧目录原样还原，本地文档不受影响
+                    if backup.exists() and not target.exists():
+                        os.rename(str(backup), str(target))
+                    shutil.rmtree(str(incoming), ignore_errors=True)
             done += 1
 
         # ---- 3) .hda 库文件（导入后由浏览器 reload 自动安装） ----
@@ -421,6 +470,12 @@ def import_package(zip_path, lib_dir=None, existing_names=(), progress=None):
         colors.update(meta["colors"])
         metadata.bulk_set(favorites=favs, tags=tags, thumbs=merged_thumbs,
                           display_names=display, colors=colors)
+        # 登记本次导入产生文档的名字（unique_safe_name 撞名检测的数据源；
+        # 按 manifest 里的 recipe 名反查，导出端的包内目录名与本地
+        # doc_dir 在非撞名场景下天然一致）
+        metadata.register_doc_names(
+            n for n in (str(x) for x in manifest.get("recipes") or [])
+            if metadata.doc_exists(n))
     return {
         "metadata_names": len(set(meta["tags"]) | set(meta["display_names"])
                               | set(meta["colors"]) | set(new_thumbs)

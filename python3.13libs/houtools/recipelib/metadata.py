@@ -18,6 +18,7 @@
 本模块不 import hou，无头环境（smoke test）可完整测试。
 """
 
+import hashlib
 import os
 import re
 import shutil
@@ -35,6 +36,10 @@ _DEFAULTS = {
     "thumbs": {},          # 内部名 -> 缩略图绝对路径
     "display_names": {},   # 内部名 -> 用户自定义显示名（支持中文）
     "colors": {},          # 内部名 -> "#rrggbb"（卡片名字旁的颜色框）
+    "docs": [],            # 内部名 -> 有文档登记（unique_safe_name 撞名
+                           #   检测的数据源之一；内部键，不随导出带走）
+    "stems": {},           # 内部名 -> 已解析的文件名安全串（unique_safe_name
+                           #   的恒定化登记；内部键，不随导出带走）
 }
 
 _SETTINGS = JsonStore("recipelib.json", defaults=_DEFAULTS)
@@ -50,10 +55,40 @@ MEDIA_FILTER = "媒体文件 (*.png *.jpg *.jpeg *.gif *.webp *.bmp *.mp4 *.mov 
 def safe_name(name):
     """内部名转文件名安全串：非字母数字下划线全部折成 __。
 
-    内部名含 :: 与 /（如 houtools::pyro::my_setup、cop/file::sidefx::...），
-    保留全名可保证不同命名空间下同名 label 的缩略图/文档不互撞。
+    ⚠ 折叠不是单射：a::b、a/b、a-b、a b 全都折成 a__b——"保留全名可
+    保证不同命名空间不互撞"是错误结论（内部名大量含 :: 与 /）。写入
+    路径一律走 unique_safe_name：同库出现真实撞名时追加 8 位 md5 摘要
+    消歧；不撞名时返回值与 safe_name 完全一致，存量文件零迁移。
     """
     return re.sub(r"[^0-9a-zA-Z_]+", "__", name).strip("_") or "recipe"
+
+
+def unique_safe_name(name):
+    """safe_name 的单射版：与库内其他 recipe 折叠撞名时加摘要消歧。
+
+    撞名检测以元数据出现过的其他内部名为准（_other_recipe_names，
+    含文档登记），摘要 = 内部名的 md5 前 8 位（照 hdrlight/browser.py
+    thumb_path 对 __ 连接歧义的同一解法）。
+
+    解析结果登记进内部键 stems，此后恒定返回登记值——若每次即时
+    计算，后出现的撞名伙伴会把先写者的 plain 路径"翻转"成摘要路径、
+    已有文件失联。恒定化后先写者保 plain、后写者落摘要，写入顺序
+    不影响正确性；未撞名的名字解析值与 safe_name 一致，存量文件
+    零迁移。
+    """
+    stems = dict(_SETTINGS.get("stems") or {})
+    recorded = stems.get(name)
+    if recorded:
+        return recorded
+    stem = safe_name(name)
+    for other in _other_recipe_names(name):
+        if safe_name(other) == stem:
+            stem = stem + "-" + hashlib.md5(
+                name.encode("utf-8")).hexdigest()[:8]
+            break
+    stems[name] = stem
+    _SETTINGS.set("stems", stems)
+    return stem
 
 
 # --------------------------------------------------------------------------
@@ -98,6 +133,34 @@ def migrate_legacy_thumb_paths():
         _SETTINGS.set("thumbs", thumbs)
         log.info("migrated %d thumb paths to relative", len(thumbs))
     return changed
+
+
+def migrate_colliding_doc_dirs():
+    """真实撞名 recipe 的文档目录迁到 unique_safe_name 新名（幂等）。
+
+    绝大多数名字 unique == plain，什么都不做。真实撞名的双方（写入侧
+    已改为摘要名）若旧 plain 目录仍在且新目录不存在，把 plain 目录
+    改名过去——两个撞名者只有先执行者迁得动（后到者目标已被占，
+    保持原状并告警，手动整理即可）。缩略图路径是存储式（不按名字
+    推导）无需迁移，照旧可用。
+    """
+    moved = 0
+    for name in sorted(_iter_metadata_names()):
+        unique = unique_safe_name(name)
+        plain = safe_name(name)
+        if unique == plain:
+            continue
+        src = DOCS_DIR / plain
+        dst = DOCS_DIR / unique
+        if not src.is_dir() or dst.exists():
+            continue
+        try:
+            os.rename(str(src), str(dst))
+            moved += 1
+            log.info("migrated colliding doc dir %s -> %s", plain, unique)
+        except OSError as exc:
+            log.warning("cannot migrate doc dir %s: %s", src, exc)
+    return moved
 
 
 # --------------------------------------------------------------------------
@@ -273,13 +336,13 @@ def get_thumb(name):
 
 
 def _clean_stale_thumbs(name, skip=()):
-    """按缩略图文件名前缀（safe_name(name) + "."）清理滞留的旧文件。
+    """按缩略图文件名前缀（unique_safe_name(name) + "."）清理滞留的旧文件。
 
     GIF→PNG 等换扩展名重设后，旧文件不再被 settings 引用却留在盘上，
     这里按 stem 前缀整扫。仍被其他 recipe 引用的文件跳过（safe_name
     折叠碰撞时不误伤他人），skip 里的路径（本次要写入的新文件）跳过。
     """
-    stem = safe_name(name) + "."
+    stem = unique_safe_name(name) + "."
     protected = set()
     for other, stored in (_SETTINGS.get("thumbs") or {}).items():
         if stored and other != name:
@@ -314,7 +377,7 @@ def set_thumb_from_file(name, src):
         raise RuntimeError("文件不存在: {}".format(src))
     ext = os.path.splitext(src)[1].lower() or ".png"
     THUMBS_DIR.mkdir(parents=True, exist_ok=True)
-    dst = str(THUMBS_DIR / (safe_name(name) + ext))
+    dst = str(THUMBS_DIR / (unique_safe_name(name) + ext))
     _clean_stale_thumbs(name, skip={dst})   # 换扩展名重设前清掉旧文件
     shutil.copyfile(src, dst)
     thumbs = dict(_SETTINGS.get("thumbs") or {})
@@ -352,7 +415,7 @@ def set_thumb_from_pixmap(name, pixmap, fmt="PNG"):
     else:
         ext, save_args = ".png", ("PNG",)
     THUMBS_DIR.mkdir(parents=True, exist_ok=True)
-    dst = str(THUMBS_DIR / (safe_name(name) + ext))
+    dst = str(THUMBS_DIR / (unique_safe_name(name) + ext))
     _clean_stale_thumbs(name, skip={dst})   # 换扩展名重设前清掉旧文件
     if not pixmap.save(dst, *save_args):
         raise RuntimeError("缩略图保存失败: {}".format(dst))
@@ -382,7 +445,9 @@ def clear_thumb(name):
 # --------------------------------------------------------------------------
 
 def doc_dir(name):
-    return str(DOCS_DIR / safe_name(name))
+    """文档目录：走 unique_safe_name（真实撞名时带摘要后缀），保证
+    不同内部名的文档互不共享目录。"""
+    return str(DOCS_DIR / unique_safe_name(name))
 
 
 def doc_path(name):
@@ -417,10 +482,30 @@ def read_doc(name):
         return ""
 
 
+def register_doc_names(names):
+    """登记有文档的内部名（内部键，不随 all_metadata/bulk_set 导出）。
+
+    unique_safe_name 的撞名检测以此 + 元数据键为数据源：只写文档、
+    没有任何元数据操作的 recipe 也要参与撞名互查。
+    """
+    merged = set(_SETTINGS.get("docs") or [])
+    merged.update(n for n in (names or ()) if n)
+    _SETTINGS.set("docs", sorted(merged))
+
+
+def unregister_doc_name(name):
+    """从文档登记里摘除一个名字（文档目录被删除时调用）。"""
+    merged = set(_SETTINGS.get("docs") or [])
+    if name in merged:
+        merged.discard(name)
+        _SETTINGS.set("docs", sorted(merged))
+
+
 def write_doc(name, text):
     path = doc_path(name)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".~tmp"
+    # 临时名带 PID：固定名会被同盘并发写（两个 Houdini 开同一工程）互踩
+    tmp = path + ".~tmp%d" % os.getpid()
     try:
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(text)
@@ -433,6 +518,7 @@ def write_doc(name, text):
                 os.remove(tmp)
             except OSError as exc:
                 log.debug("cannot remove doc tmp %s: %s", tmp, exc)
+    register_doc_names([name])
 
 
 def assets_dir(name):
@@ -463,14 +549,26 @@ def insert_asset(name, src):
 def _other_recipe_names(name):
     """元数据里出现过的其他 recipe 内部名（收藏值 + 各内容键的键名）。
 
-    本模块没有全量 recipe 名册，删文档目录的 safe_name 碰撞检查以
-    元数据里出现过的名字为准（有元数据的 recipe 才可能有文档）。
+    本模块没有全量 recipe 名册，删文档目录/写缩略图的 safe_name 碰撞
+    检查以元数据里出现过的名字为准（有元数据的 recipe 才可能有文档）。
+    """
+    names = _iter_metadata_names()
+    names.discard(name)
+    return names
+
+
+def _iter_metadata_names():
+    """元数据里出现过的全部内部名——unique_safe_name 的撞名检测数据源。
+
+    收藏值 + 各内容键的键名 + 文档登记（write_doc/register_doc_names
+    写入）：纯文档、从未打过标签/收藏的 recipe 也要能被看到，否则
+    两个撞名者互相探测不到、文档仍会写进同一目录。
     """
     data = all_metadata()
     names = set(data["favorites"])
     for key in ("tags", "thumbs", "display_names", "colors"):
         names.update(data[key].keys())
-    names.discard(name)
+    names.update(_SETTINGS.get("docs") or [])
     return names
 
 
@@ -479,14 +577,16 @@ def delete_doc_dir(name):
 
     safe_name 折叠碰撞防护：其他 recipe 名折叠进同一目录时（如
     "a::b" 与 "a/b" 都折成 a__b）不删目录并告警，防删除连锁误伤
-    别的配方的文档。
+    别的配方的文档。写入侧走 unique_safe_name 消歧后正常情况不再
+    共享目录，此处按 unique 名比对，兜底历史数据。
     """
-    stem = safe_name(name)
+    stem = unique_safe_name(name)
     for other in _other_recipe_names(name):
-        if safe_name(other) == stem:
+        if unique_safe_name(other) == stem:
             log.warning("keep doc dir %s: safe_name collides with "
                         "recipe %s", stem, other)
             return
     d = doc_dir(name)
     if os.path.isdir(d):
         shutil.rmtree(d, ignore_errors=True)
+    unregister_doc_name(name)

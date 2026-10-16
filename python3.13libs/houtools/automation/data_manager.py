@@ -17,7 +17,7 @@ Automation — Data Manager 数据持久化模块
 import os
 import json
 import tempfile
-import logging
+import threading
 from dataclasses import asdict, fields
 from typing import Optional
 
@@ -242,7 +242,10 @@ class AutomationDataManager:
             True 写入成功,False 写入异常。
         """
         path = cls.get_data_path(filename)
-        tmp_path = path + ".~tmp"  # 先于 try 定义,失败清理路径不会 NameError
+        tmp_path = path + ".~tmp%d_%d" % (os.getpid(), threading.get_ident())
+        # 名字带 PID/线程 id：固定临时名在同盘并发写时会互踩（两个
+        # Houdini 开同一 $HIP、或 reload 后新旧实例并存），os.replace
+        # 可能把对方半写的文件搬上正式名
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)  # 仅此处创建配置目录
             # 读取现有数据（保留 settings）；读不出来先留底再覆盖，
@@ -328,7 +331,10 @@ class AutomationDataManager:
         写入结构: ``{"tasks": [...], "settings": settings_data}``
         """
         path = cls.get_data_path(filename)
-        tmp_path = path + ".~tmp"  # 先于 try 定义,失败清理路径不会 NameError
+        tmp_path = path + ".~tmp%d_%d" % (os.getpid(), threading.get_ident())
+        # 名字带 PID/线程 id：固定临时名在同盘并发写时会互踩（两个
+        # Houdini 开同一 $HIP、或 reload 后新旧实例并存），os.replace
+        # 可能把对方半写的文件搬上正式名
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             # 读取现有数据（保留 tasks）；读不出来先留底再覆盖，

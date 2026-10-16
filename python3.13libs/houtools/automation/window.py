@@ -8,11 +8,11 @@ Automation — 主界面（Python Panel 部件）
 """
 
 import functools
-import logging
 import os
 import re
 import subprocess
 import sys
+import threading
 import weakref
 from datetime import datetime
 from pathlib import Path
@@ -145,6 +145,35 @@ class _LogTee:
     def flush(self):
         self._original.flush()
 
+    def __getattr__(self, name):
+        # 替换 sys.stdout/stderr 后，第三方库可能访问 fileno/isatty/
+        # encoding 等完整流协议成员——全部转发给原始流（write/flush/
+        # _original/_log_fn 是实例属性，不会走到这里）
+        if name.startswith("__"):
+            raise AttributeError(name)
+        try:
+            original = object.__getattribute__(self, "_original")
+        except AttributeError:
+            raise AttributeError(name) from None
+        return getattr(original, name)
+
+
+def _force_restore_stdout():
+    """模块级兜底：摘掉还挂在 sys.stdout/stderr 上的任何 _LogTee。
+
+    面板在执行中被销毁时（pane 可关、收不到 closeEvent），实例的
+    _restore_stdout 不可达，进程级重定向会一直挂着——此后全 Houdini
+    的 print 都写进已销毁面板的日志。挂在面板 destroyed 信号上调用
+    （连普通函数按直连处理，销毁时必触发），沿 _original 链解包。
+    """
+    if not isinstance(sys.stdout, _LogTee) \
+            and not isinstance(sys.stderr, _LogTee):
+        return
+    while isinstance(sys.stdout, _LogTee):
+        sys.stdout = sys.stdout._original
+    while isinstance(sys.stderr, _LogTee):
+        sys.stderr = sys.stderr._original
+
 
 # ── 运行中引擎留痕 ───────────────────────────────────────────
 
@@ -153,7 +182,14 @@ class _LogTee:
 # 销毁一个仍在运行的 QThread（"QThread: Destroyed while thread is still
 # running"，可致崩溃）。取消后引擎会一直挂在 _run_deferred 的等待里直到
 # 主线程空闲，这段时间必须留引用。
-_LIVE_ENGINES: list["ExecutionEngine"] = []
+#
+# NameError 守卫：本模块会被 Reload Modules 重载，模块体重跑会把绑定
+# 换成新空列表、让旧列表失去引用根（运行中引擎随之可被 GC 析构）。
+# reload 在同一 module dict 里执行、已有名字可见，守卫让重载后沿用旧列表。
+try:
+    _LIVE_ENGINES
+except NameError:
+    _LIVE_ENGINES: list["ExecutionEngine"] = []
 
 
 def _release_engine(engine: "ExecutionEngine"):
@@ -1234,7 +1270,12 @@ class AutomationWindow(QWidget):
                     f"输出路径的文件夹不存在：\n{folder}"
                 )
                 return
-            subprocess.Popen(["explorer", os.path.normpath(folder)])
+            try:
+                subprocess.Popen(["explorer", os.path.normpath(folder)])
+            except OSError as exc:
+                logger.warning("explorer 启动失败: %s", exc)
+                dialogs.warn(slot, "打开文件夹失败",
+                             f"无法启动文件资源管理器:\n{exc}")
 
         open_folder_btn.clicked.connect(lambda: _on_open_folder())
 
@@ -1883,23 +1924,54 @@ class AutomationWindow(QWidget):
     def _write_log(self, message: str):
         """写入日志（如果启用了日志输出到磁盘）。
 
-        使用缓存路径,同一次执行内所有输出写入同一文件。
+        文件句柄缓存到本次执行结束（_restore_stdout 关闭），不再每行
+        open/close 一轮。tee 挂在进程级 sys.stdout 上，任意线程的 print
+        都会进来——句柄的惰性创建与写入都经 _log_lock 串行化，防止两个
+        线程同时首调 _get_log_path 拿到不同文件、日志分裂成两份。
         """
         if not self._log_to_disk_enabled:
             return
 
-        # 首次调用时确定路径并缓存("" = 目录创建失败,本次已停用)
-        if not hasattr(self, "_current_log_path") or self._current_log_path is None:
-            self._current_log_path = self._get_log_path()
-        if not self._current_log_path:
-            return
+        lock = getattr(self, "_log_lock", None)
+        if lock is None:
+            lock = self._log_lock = threading.Lock()
+        with lock:
+            # 首次调用时确定路径并缓存("" = 目录创建失败,本次已停用)
+            if not getattr(self, "_current_log_path", None):
+                self._current_log_path = self._get_log_path()
+            if not self._current_log_path:
+                return
+            fileobj = getattr(self, "_log_file", None)
+            if fileobj is None:
+                try:
+                    self._log_file = fileobj = open(
+                        self._current_log_path, "a", encoding="utf-8")
+                except OSError as exc:
+                    # 打不开不影响主流程，本次执行停写（路径已缓存，
+                    # 不反复重试同一个失败点）
+                    logger.debug("打开执行日志失败 %s: %s",
+                                 self._current_log_path, exc)
+                    self._log_file = False
+                    return
+            if fileobj is False:
+                return
+            try:
+                fileobj.write(message + "\n")
+                fileobj.flush()
+            except Exception as exc:
+                # 日志写入失败不影响主流程，但留一条诊断记录
+                logger.debug("写执行日志失败 %s: %s",
+                             self._current_log_path, exc)
 
-        try:
-            with open(self._current_log_path, "a", encoding="utf-8") as f:
-                f.write(message + "\n")
-        except Exception as exc:
-            # 日志写入失败不影响主流程，但留一条诊断记录
-            logger.debug("写执行日志失败 %s: %s", self._current_log_path, exc)
+    def _close_log_file(self):
+        """关闭缓存中的执行日志句柄（幂等；destroyed 兜底也调它）。"""
+        fileobj = getattr(self, "_log_file", None)
+        self._log_file = None
+        if fileobj:   # None/False 哨兵都无需关闭
+            try:
+                fileobj.close()
+            except Exception as exc:
+                logger.debug("关闭执行日志失败: %s", exc)
 
     def _write_log_header(self):
         """写入日志头部（当前任务列表信息）。"""
@@ -2255,6 +2327,11 @@ class AutomationWindow(QWidget):
             self._orig_stderr = sys.stderr
             sys.stdout = _LogTee(self._orig_stdout, self._write_log)
             sys.stderr = _LogTee(self._orig_stderr, self._write_log)
+            # 面板在执行中被销毁时（收不到 closeEvent）进程级重定向必须
+            # 有人摘：destroyed 连模块级/只碰实例属性的兜底，不依赖实例
+            # 方法可达（销毁后 Python wrapper 属性访问仍安全）
+            self.destroyed.connect(_force_restore_stdout)
+            self.destroyed.connect(self._close_log_file)
 
         self._engine = ExecutionEngine(task_items)
         _LIVE_ENGINES.append(self._engine)
@@ -2343,6 +2420,7 @@ class AutomationWindow(QWidget):
             while isinstance(sys.stderr, _LogTee):
                 sys.stderr = sys.stderr._original
             self._current_log_path = None
+        self._close_log_file()   # 重定向解除后日志句柄一并释放
 
     # ── 工具栏动作 ──────────────────────────────────────────
 

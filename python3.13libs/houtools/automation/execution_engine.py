@@ -106,7 +106,8 @@ class ExecutionEngine(QThread):
                 self.task_completed.emit(idx, True, "执行成功", elapsed)
                 success_count += 1
             except Exception as e:
-                self.task_completed.emit(idx, False, str(e), 0)
+                elapsed = (datetime.now() - start_time).total_seconds()
+                self.task_completed.emit(idx, False, str(e), elapsed)
                 fail_count += 1
 
             self.msleep(100)
@@ -217,8 +218,10 @@ class ExecutionEngine(QThread):
             if scene is None:
                 raise RuntimeError("未找到 Scene Viewer")
 
-            # 读取当前 flipbook 设置
-            settings = scene.flipbookSettings()
+            # stash() 复制用户当前对话框设置为底再改，与
+            # capture_viewport_embed 同一手法——直接改 flipbookSettings()
+            # 活对象会把用户的输出路径/帧范围永久留脏
+            settings = scene.flipbookSettings().stash()
 
             # 解析帧范围表达式
             try:
@@ -290,6 +293,10 @@ class ExecutionEngine(QThread):
             raise ValueError(f"DW 软件路径不存在: {exe_path}")
 
         try:
-            subprocess.Popen([exe_path])
+            # CREATE_NO_WINDOW 防配置成控制台程序时弹黑框（与 videoseq
+            # 的 get_startup_kwargs 同一套约定）
+            subprocess.Popen(
+                [exe_path],
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         except OSError as e:
             raise ValueError(f"启动 DW 失败: {exe_path} ({e})") from e

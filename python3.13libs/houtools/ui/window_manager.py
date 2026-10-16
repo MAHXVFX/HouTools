@@ -18,7 +18,16 @@ _windows = {}
 # 持有引用：registry 已清空后若无人引用，Python 侧回收会连带析构仍在
 # 运行的 QThread —— Qt6 下直接 qFatal 崩溃。窗口在延迟关闭收尾时自行
 # deleteLater，destroyed 信号再把条目摘掉。
-_closing = set()
+#
+# NameError 守卫：本模块会被 Reload Modules 重载，模块体重跑会把绑定
+# 换成新空集合、让旧集合失去唯一的外部根（运行中的延迟关闭窗口随之
+# 可被 GC 析构）。reload 在同一 module dict 里执行、已有名字可见，
+# 守卫让重载后沿用旧集合。_windows 不需要守卫：reload 前 close_all()
+# 已把它清空，重造空 dict 等价。
+try:
+    _closing
+except NameError:
+    _closing = set()
 
 
 def open_window(tool_id, factory):

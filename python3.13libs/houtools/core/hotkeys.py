@@ -58,6 +58,9 @@ def install_defaults() -> list[str]:
 
     failed: list[str] = []
     for context, symbol, default_key in DEFAULT_ASSIGNMENTS:
+        # key 先绑定默认值：get_custom_key 抛异常（如设置文件损坏）时
+        # 异常分支才有东西可报，不会变成 UnboundLocalError 掩盖真因
+        key = default_key
         try:
             custom = get_custom_key(symbol)
             key = custom or default_key

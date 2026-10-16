@@ -191,7 +191,9 @@ def _recompress_jpg(file_abs):
     if image.isNull():
         log.warning("截图重编码：无法读取 %s（保留原质量）", file_abs)
         return
-    tmp_abs = file_abs + ".~tmp.jpg"
+    # 临时名带 PID：固定名会被同节点的并发截图（两次快速右键）或同盘
+    # 两个 Houdini 互写
+    tmp_abs = file_abs + ".~tmp%d.jpg" % os.getpid()
     try:
         if not image.save(tmp_abs, "JPG", _JPG_QUALITY):
             log.warning("截图重编码失败（保留原质量）: %s", file_abs)
