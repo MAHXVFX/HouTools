@@ -1,6 +1,6 @@
 ---
 name: houtools-release
-description: HouTools 发版流程（版本号更新、README/About 手册同步、截图重生成、提交打标签推送、打包 HouTools.zip 到系统下载文件夹、产出发行说明代码块）。当用户要求打包发布、发新版本、创建发行版/release、更新版本号、打 git 标签、打 zip 包或写发行说明时使用——即使用户只要了其中一步（如仅打包、仅改版本号、仅要发行说明）。版本号从调用参数读取（如 $houtools-release v1.4.0）；参数缺版本号时先弹选项卡向用户要，不得自行猜测。
+description: HouTools 发版流程（版本号更新、README/About 手册同步、截图重生成、提交打标签推送、打包 HouTools.zip 到系统下载文件夹、自动创建 gitcode 发行版并上传附件、产出发行说明）。当用户要求打包发布、发新版本、创建发行版/release、更新版本号、打 git 标签、打 zip 包或写发行说明时使用——即使用户只要了其中一步（如仅打包、仅改版本号、仅要发行说明、仅上传发行附件）。版本号从调用参数读取（如 $houtools-release v1.4.0）；参数缺版本号时先弹选项卡向用户要，不得自行猜测。
 ---
 
 # HouTools 发版流程
@@ -30,6 +30,13 @@ description: HouTools 发版流程（版本号更新、README/About 手册同步
 - **gitcode 的 owner/repo**：从 `git remote get-url origin` 解析——SSH 形态
   `git@gitcode.com:<owner>/<repo>.git`、https 形态 `.../gitcode.com/<owner>/<repo>.git`，
   取 `.git` 前的 `<owner>/<repo>` 两段（本仓库当前为 `mahx-vfx`/`HouTools`）。
+- **gitcode 访问令牌**（第 6 步 create_release.py 用）：按顺序读取
+  ① 配置文件 `~/.gitcode_api_token`（单行纯文本；兼容 UTF-8-sig/UTF-16，
+  PowerShell 重定向写出也能读）② 注册表用户环境变量 `GITCODE_TOKEN`
+  （HKCU\Environment 持久值，setx 后即时生效）——脚本故意不读进程环境快照
+  （那是启动时的一次性拷贝，可能过时；手法同 zhuque-ai-detector 的 key 处理）。
+  未配置或 401/403 时按脚本输出引导用户更新令牌
+  （https://gitcode.com/setting/token-classic，需授予仓库 releases 相关权限）。
 - **系统下载文件夹**：用户目录可能被重定向（作者机器实测 Documents 与 Downloads
   都不在 C: 默认位置）——一律走 pack_zip.py 内置的 SHGetKnownFolderPath 解析，
   勿假设 `C:\Users\<名>\Downloads`。
@@ -105,11 +112,18 @@ description: HouTools 发版流程（版本号更新、README/About 手册同步
 release 端点——**附注 tag 的 message 就是上一版发行说明**，列表最新一条即上一版；
 可对照本地 `git tag -l -n99 <上一版tag>` 核实。
 
-## 6. 给出发行说明（代码块，用户自行创建发行版）
+## 6. 创建发行版并上传附件（gitcode OpenAPI；发布前必须确认）
 
-把当前版发行说明放 markdown 代码块给用户复制。**不要**代替用户创建发行版
-（MCP 无此能力，用户明确要求自行创建）。收尾提示：附件上传第 4 步的
-HouTools.zip，标签选 vX.Y.Z。
+按模板产出发行说明，放进 markdown 代码块展示后，**必须停下弹选项卡
+（AskUserQuestion）等用户确认，不得未经确认直接发布**。弹卡要点：
+
+- 问题 header 用「发行说明」；选项一「可以」→ 按此文本直接发布。
+- 选项二「用户输入」→ 用户要改措辞：按其补充的修改意见修订发行说明
+  （用户也可直接走选项卡自带的自由输入 Other 填意见，等效且少一步）。
+- 用户给了修改意见时，先修订文本，再同步 tag 附注保持两处同源：
+  修订文本写临时文件，`git tag -f -a <tag> -F <文件>` 重打附注 +
+  `git push -f origin <tag>` 强推（此刻发行版尚未创建，强推无副作用），
+  然后照常发布；选「可以」则跳过本条直接发布。
 
 模板（与 tag 附注一致）：
 
@@ -123,3 +137,33 @@ HouTools vX.Y.Z
 
 要点从第 2 步 `git log <tag>..HEAD` 的提交提炼，用用户视角措辞（功能效果而非
 实现细节），3~6 条；首行概括 + 空行 + 条目列表的骨架不可变。
+
+确认（或修订附注）后，用 skill 附带脚本创建发行版并上传附件
+（2026-10-17 于 v1.6.0 实测跑通，取代早期"MCP 无 release 端点、用户自行
+在网页创建"的流程）：
+
+```
+"$(bash .agents/skills/houtools-release/scripts/find_houdini_python.sh)" .agents/skills/houtools-release/scripts/create_release.py vX.Y.Z
+```
+
+脚本行为与原因（细节见脚本 docstring，勿手搓 curl 复刻）：
+
+- **零参数即完整流程**：发行说明默认读本地附注 tag 的 message
+  （`git tag -l --format=%(contents)`，第 3 步已写入），附件默认取下载文件夹
+  的 HouTools.zip（SHGetKnownFolderPath 解析，与 pack_zip.py 同源；缺文件先跑
+  第 4 步）；`--notes <文件>` / `--zip <路径>` / `--root <仓库>` 可覆盖。
+  owner/repo 从 `git remote get-url origin` 解析（见「机器无关」节）。
+- **流程**：校验令牌 → 查重（已有发行版不重建；body 为空才 PATCH 补写发行
+  说明，非空但不一致视为用户手改、保留原样）→ POST 创建（tag 已推送到远端，
+  无需 target_commitish）→ 取 OBS 临时签名地址 → PUT 上传 zip（**此步不带**
+  gitcode 令牌、**不跟随重定向**、返回的 headers 原样透传一个不能少——
+  `x-obs-callback` 是 OBS 上传完成后回调 gitcode 把附件挂到发行版的关键）→
+  轮询确认 assets 出现 HouTools.zip（OBS 回调有几秒延迟）。OBS 签名地址
+  有效期短，脚本拿到立即用；手工复刻同样不要"先取地址稍后传"。
+- **幂等**：重复运行安全——已存在的发行版不重建、已上传的附件不重传。
+- 汇报成功时给发行页 URL（`https://gitcode.com/<owner>/<repo>/releases/tag/vX.Y.Z`）；
+  assets 里 `vX.Y.Z.zip/.tar.gz/.tar.bz2/.tar` 是平台按 tag 自动生成的源码
+  归档，不是上传的附件，汇报时不必当作异常。
+- **令牌安全**：令牌是明文落盘的密钥；若用户在对话里明文发过令牌，跑完提醒
+  到 https://gitcode.com/setting/token-classic 吊销轮换，并同步更新
+  `~/.gitcode_api_token`。
