@@ -135,7 +135,11 @@ def ensure_libraries_installed(lib_dirs):
 
     - 已加载的文件跳过（realpath 比对，重复刷新不重装）；
     - 新安装后检查 definitionsInFile：没有任何 data 类定义的（误放进
-      来的普通 OTL）立即卸载——安装是读 recipe 的必要手段，不该有副作用。
+      来的普通 OTL）立即卸载——安装是读 recipe 的必要手段，不该有副作用；
+    - **扫描全程不删任何磁盘文件**：装不上/读不到定义的空壳、装不上
+      的损坏大文件一律只卸载还原会话 + 告警，文件保留待用户手动清理
+      （lib_dirs 可能指向共享盘/生产目录，未经确认的自动删除不可接受；
+      原 <512B 空壳自愈已按用户要求撤除）。
     """
     import hou
     loaded = {_norm(p) for p in hou.hda.loadedFiles()}
@@ -146,20 +150,16 @@ def ensure_libraries_installed(lib_dirs):
         if key not in loaded:
             try:
                 hou.hda.installFile(path)
-            except Exception:
-                # 装不上的 .hda：极小的是空壳/垃圾（destroy 残留的空库
-                # 连 installFile 都过不去），直接清掉；大文件可能是损坏
-                # 的真资产，保留并告警，交给用户处理。
+            except Exception as exc:
+                # 装不上的 .hda 一律保留：lib_dirs 可能指向共享盘/生产
+                # 目录，未经确认的自动删除不可接受（原 <512B 空壳自愈
+                # 已撤，用户拍板只告警不删，文件交用户手动处理）
                 try:
-                    if os.path.getsize(path) < 512:
-                        os.remove(path)
-                        log.debug("removed tiny invalid library %s", path)
-                    else:
-                        log.warning("install recipe library %s failed: "
-                                    "kept for inspection", path)
-                except OSError as exc:
-                    log.warning("cannot inspect invalid library %s: %s",
-                                path, exc)
+                    size = os.path.getsize(path)
+                except OSError:
+                    size = -1
+                log.warning("install recipe library %s failed (%d bytes);"
+                            " kept for manual cleanup: %s", path, size, exc)
                 continue
         try:
             has_recipe = any(
@@ -181,10 +181,10 @@ def ensure_libraries_installed(lib_dirs):
                             path, exc)
                 defs_here = []
             if not defs_here and os.path.isfile(path):
-                # 空壳库文件（0 个定义，历史删除残留）：卸载并删掉，
-                # 免得每次刷新都走一遍安装→卸载。删除前与安装路径同样
-                # 的尺寸护栏：读不到定义但文件不小（可能是损坏的真资产）
-                # 保留待查，只清极小的空壳
+                # 空壳库文件（0 个定义，历史删除残留）：卸载还原会话，
+                # 磁盘文件保留（自动删除已撤，用户拍板只告警不删）。
+                # 每次刷新会对它重试一次安装并留一条告警，直到用户手动
+                # 清理——文件名即来源，删除无歧义
                 try:
                     hou.hda.uninstallFile(path)
                 except Exception as exc:
@@ -192,13 +192,9 @@ def ensure_libraries_installed(lib_dirs):
                               path, exc)
                 try:
                     size = os.path.getsize(path)
-                    if size < 512:
-                        os.remove(path)
-                        log.debug("removed empty recipe library shell %s",
-                                  path)
-                    else:
-                        log.warning("empty recipe library shell %s is %d "
-                                    "bytes; kept for inspection", path, size)
+                    log.warning("empty recipe library shell %s (%d bytes) "
+                                "uninstalled from session; file kept, "
+                                "remove manually if unwanted", path, size)
                 except OSError as exc:
                     log.warning("cannot inspect empty shell %s: %s",
                                 path, exc)
