@@ -69,13 +69,15 @@ description: HouTools 发版流程（版本号更新、README/About 手册同步
 - 跑无头回归，必须全绿再继续：
   `"$(bash .agents/skills/houtools-release/scripts/find_houdini_python.sh)" tests/smoke_test.py`
 
-## 3. 提交 + 打标签 + 推送
+## 3. 提交 + 推送 main（此处不打 tag）
 
 提交拆两个（与仓库历史一致）：docs 改动一个 commit（`docs: ...`），版本号一个
-（`chore: 更新版本号至X.Y.Z`）。
+（`chore: 更新版本号至X.Y.Z`），推送 main：`git push origin main`。
 
-附注标签的附注消息就是发行说明（历史发行版均如此，gitcode 发行说明即照抄它），
-格式见第 6 步模板。标签创建后与 main 一起推送：`git push origin main vX.Y.Z`。
+**不要在这一步打附注标签**——附注消息就是发行说明（历史发行版均如此，gitcode
+发行说明即照抄它），文本必须先经第 6 步用户确认才定稿。若先打 tag 推送再确认，
+用户要改措辞就得 `tag -f` 重打 + 强推远端（已公开的引用，fetch 过的副本不会
+自动更新），顺序是错的。
 
 ## 4. 打包 HouTools.zip（文件名硬性要求）
 
@@ -112,7 +114,7 @@ description: HouTools 发版流程（版本号更新、README/About 手册同步
 release 端点——**附注 tag 的 message 就是上一版发行说明**，列表最新一条即上一版；
 可对照本地 `git tag -l -n99 <上一版tag>` 核实。
 
-## 6. 创建发行版并上传附件（gitcode OpenAPI；发布前必须确认）
+## 6. 确认发行说明 → 打附注标签推送 → 创建发行版并上传附件
 
 按模板产出发行说明，放进 markdown 代码块展示后，**必须停下弹选项卡
 （AskUserQuestion）等用户确认，不得未经确认直接发布**。弹卡要点：
@@ -120,10 +122,15 @@ release 端点——**附注 tag 的 message 就是上一版发行说明**，列
 - 问题 header 用「发行说明」；选项一「可以」→ 按此文本直接发布。
 - 选项二「用户输入」→ 用户要改措辞：按其补充的修改意见修订发行说明
   （用户也可直接走选项卡自带的自由输入 Other 填意见，等效且少一步）。
-- 用户给了修改意见时，先修订文本，再同步 tag 附注保持两处同源：
-  修订文本写临时文件，`git tag -f -a <tag> -F <文件>` 重打附注 +
-  `git push -f origin <tag>` 强推（此刻发行版尚未创建，强推无副作用），
-  然后照常发布；选「可以」则跳过本条直接发布。
+
+用户确认（或按意见修订完）后，把定稿文本写临时文件，创建附注标签（附注 =
+发行说明，单一来源）并与 main 一起推送——发行文本此刻才首次公开，此前任何
+修订都只是改草稿，不存在强推 tag 的场景。
+
+```
+git tag -a vX.Y.Z -F <定稿文本文件>
+git push origin main vX.Y.Z
+```
 
 模板（与 tag 附注一致）：
 
@@ -138,7 +145,7 @@ HouTools vX.Y.Z
 要点从第 2 步 `git log <tag>..HEAD` 的提交提炼，用用户视角措辞（功能效果而非
 实现细节），3~6 条；首行概括 + 空行 + 条目列表的骨架不可变。
 
-确认（或修订附注）后，用 skill 附带脚本创建发行版并上传附件
+定稿 tag 推送到远端后，用 skill 附带脚本创建发行版并上传附件
 （2026-10-17 于 v1.6.0 实测跑通，取代早期"MCP 无 release 端点、用户自行
 在网页创建"的流程）：
 
@@ -149,7 +156,7 @@ HouTools vX.Y.Z
 脚本行为与原因（细节见脚本 docstring，勿手搓 curl 复刻）：
 
 - **零参数即完整流程**：发行说明默认读本地附注 tag 的 message
-  （`git tag -l --format=%(contents)`，第 3 步已写入），附件默认取下载文件夹
+  （`git tag -l --format=%(contents)`，第 6 步确认后已写入），附件默认取下载文件夹
   的 HouTools.zip（SHGetKnownFolderPath 解析，与 pack_zip.py 同源；缺文件先跑
   第 4 步）；`--notes <文件>` / `--zip <路径>` / `--root <仓库>` 可覆盖。
   owner/repo 从 `git remote get-url origin` 解析（见「机器无关」节）。

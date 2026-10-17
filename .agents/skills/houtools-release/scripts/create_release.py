@@ -4,10 +4,11 @@ Usage:
     python create_release.py <version> [--notes <file>] [--zip <path>] [--root <repo>]
 
 <version>  release tag with or without the leading "v" (v1.6.0 / 1.6.0). The
-           tag must already exist locally AND on the remote (skill step 3
-           pushes it); its annotated message doubles as the release notes.
+           tag must already exist locally AND on the remote (skill step 6
+           pushes it after the user confirms the notes); its annotated
+           message doubles as the release notes.
 --notes    notes file override; default reads the annotated tag message via
-           `git tag -l --format=%(contents)` (skill step 3 writes the notes
+           `git tag -l --format=%(contents)` (skill step 6 writes the notes
            there, so the default path needs no extra file).
 --zip      attachment override; defaults to HouTools.zip in the user's REAL
            Downloads folder (SHGetKnownFolderPath -- user folders may be
@@ -198,8 +199,8 @@ def main(argv: list[str]) -> None:
     if "--notes" in args:
         notes = Path(args[args.index("--notes") + 1]).read_text(encoding="utf-8").strip()
     if not notes:
-        raise SystemExit("tag %s has no annotated message - skill step 3 writes "
-                         "the release notes into the tag first" % tag)
+        raise SystemExit("tag %s has no annotated message - skill step 6 writes "
+                         "the confirmed release notes into the tag first" % tag)
     zip_path = (Path(args[args.index("--zip") + 1]) if "--zip" in args
                 else downloads_dir() / FILE_NAME)
     if not zip_path.is_file():
