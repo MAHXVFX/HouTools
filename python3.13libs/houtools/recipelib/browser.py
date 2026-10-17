@@ -440,6 +440,22 @@ class _PreviewImageLabel(_ClickableImage):
         super().resizeEvent(event)
 
 
+class _SidebarTree(QtWidgets.QTreeWidget):
+    """侧栏树：右键只弹菜单，不改选中/不切分组。
+
+    QAbstractItemView 默认任何键按下都会把按下位置设为 current——右键
+    即跳转分组（2026-10 用户指定右键不应跳转），故右键 press 在此吞掉。
+    右键菜单走 customContextMenuRequested（由窗口系统的右键事件合成，
+    不依赖控件的 mousePressEvent），不受影响；左键行为不变。
+    """
+
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.RightButton:
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+
 class _ZoomScrollArea(QtWidgets.QScrollArea):
     """滚轮即缩放（拦截 wheel 转发步进）；中键按住拖动平移视框——
     与 Houdini 网络编辑器中键拖动同手感：内容跟随抓取移动、光标
@@ -1137,7 +1153,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         # QTreeWidget + 全自绘 delegate：去掉系统展开箭头（delegate 画在
         # 行内），段头行不可选中、itemClicked 整行切换折叠，子项经
         # indentation 缩进
-        self.sidebar = QtWidgets.QTreeWidget()
+        self.sidebar = _SidebarTree()
         self.sidebar.setColumnCount(1)
         self.sidebar.setHeaderHidden(True)
         self.sidebar.setRootIsDecorated(False)
@@ -1976,6 +1992,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.preview_comment.setVisible(True)
         self.preview_doc.setVisible(False)
         self.tags_view.setText("（无标签）")
+        self._apply_tags_panel_theme(None)
 
     def _view_image(self):
         """点击预览缩略图：弹大图查看器（原图分辨率，GIF 播放动画）。"""
@@ -2033,6 +2050,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             self.preview_comment.setText(
                 info.comment or "（无备注——点「编辑文档」补一篇用法说明）")
         self._show_tags(metadata.get_tags(info.name))
+        self._apply_tags_panel_theme(info)
 
         # 大图预览：GIF 动起来，其余静态缩放；有图时光标手形提示可点。
         # 原图存 _preview_pm（面板变宽时 _refresh_preview_image 从原图
@@ -2069,6 +2087,20 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
                 self._clear_preview_image()
         else:
             self._clear_preview_image()
+
+    def _apply_tags_panel_theme(self, info):
+        """预览标签栏的面板框随卡片主题色（背景主题色混暗底 + 同色边框）；
+        框内标签文字不随卡片色，按各自的标签色显示（2026-10 用户反馈：
+        框要跟随卡片颜色，只取消文字的主题化）。未选中/未设色回默认灰。"""
+        custom = metadata.get_color(info.name) if info else ""
+        theme = QtGui.QColor(custom) if custom \
+            else QtGui.QColor(_CardDelegate.DEFAULT_THEME)
+        bg = _CardDelegate._tint(theme, 0.35)
+        self.tags_panel.setStyleSheet(
+            "QFrame#tagsPanel {{ background-color: rgb({}, {}, {}); "
+            "border: 1px solid rgb({}, {}, {}); border-radius: 6px; }}".format(
+                bg.red(), bg.green(), bg.blue(),
+                theme.red(), theme.green(), theme.blue()))
 
     def _preview_box(self):
         """预览图可用绘制区（标签当前尺寸 - 边距）。"""

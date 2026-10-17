@@ -1532,6 +1532,45 @@ def main():
                         win.sidebar.visualItemRect(
                             win.sidebar.topLevelItem(0)).center())
                 assert not mock_menu.called, "非标签行右键不得弹菜单"
+                # 侧栏右键不得改选中/切分组（press 被吞、仅弹菜单）；
+                # 左键选中行为不得被破坏。item_ye 是取色流程重建前的
+                # 旧条目（C++ 对象已销毁），先重新获取
+                item_ye = _find_sidebar_item("夜灯")
+                assert item_ye is not None
+                before = win.sidebar.currentItem()
+
+                def _sidebar_press(button):
+                    return QtGui.QMouseEvent(
+                        QtCore.QEvent.Type.MouseButtonPress,
+                        QtCore.QPointF(win.sidebar.visualItemRect(item_ye)
+                                       .center()),
+                        button, button, QtCore.Qt.NoModifier)
+
+                # 合成按键必须走 sendEvent：viewport 的鼠标事件由
+                # QAbstractScrollArea 的 eventFilter 转发，直接调
+                # viewport.event() 会绕过过滤器、根本到不了树控件
+                QtWidgets.QApplication.sendEvent(
+                    win.sidebar.viewport(),
+                    _sidebar_press(QtCore.Qt.RightButton))
+                assert win.sidebar.currentItem() is before, \
+                    "右键不得改变侧栏选中"
+                QtWidgets.QApplication.sendEvent(
+                    win.sidebar.viewport(),
+                    _sidebar_press(QtCore.Qt.LeftButton))
+                assert win.sidebar.currentItem() is item_ye, \
+                    "左键选中行为不得被破坏"
+                win._select_category(rl_browser.KEY_ALL)   # 还原过滤状态
+                # 标签栏面板框随卡片主题色（背景混暗底+同色边框），框内
+                # 标签文字仍按标签色（2026-10 用户反馈）；无色回默认灰
+                rl_meta.set_color("houtools::pyro::a", "#ff0000")
+                win.list.setCurrentRow(-1)
+                win.list.setCurrentRow(0)
+                assert "border: 1px solid rgb(255, 0, 0)" \
+                    in win.tags_panel.styleSheet()
+                win._clear_preview()
+                assert "border: 1px solid rgb(154, 154, 162)" \
+                    in win.tags_panel.styleSheet()
+                rl_meta.set_color("houtools::pyro::a", None)
                 assert win.list.currentItem() is not None, "选中态须保留"
                 win.list.setCurrentRow(1)
                 assert win.preview_comment.isVisibleTo(win)
