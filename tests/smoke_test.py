@@ -1708,6 +1708,214 @@ def main():
         rl_store_ps.path.unlink(missing_ok=True)
     print("RecipeLibrary metadata + window OK")
 
+    # ------------------------------------------------------------------
+    # 代码块（codeblock.py）：存储 CRUD / 唯一名 / 高亮与缩略图渲染 /
+    # 编辑弹窗 / 面板集成（侧栏段、代码搜索、预览代码视图、双击追加、
+    # 右键菜单）/ transfer 打包往返（纯 Qt，不触 hou）
+    # ------------------------------------------------------------------
+    from houtools.recipelib import codeblock as rl_cb
+    from PySide6 import QtCore as _qtc
+    from PySide6 import QtGui as _qtg
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cb_store = houtools.core.settings.JsonStore(
+            "_smoke_rl_cb.json", defaults=dict(rl_meta._DEFAULTS))
+        _track_rm(cb_store.path)
+        with patch.object(rl_meta, "_SETTINGS", cb_store):
+            # ---- 存储层：CRUD / 唯一名 / 中文名回退 / 时间戳 ----
+            n1 = rl_meta.unique_code_name("my vex", "vex")
+            assert n1 == "htcode::my_vex", n1
+            rl_meta.set_code_block(n1, "vex", "int x = 1;\n// 注释")
+            assert rl_meta.unique_code_name("my vex", "vex") \
+                == "htcode::my_vex_2"
+            # 纯中文名无 ASCII 可留：按语言回退生成 token，中文由
+            # display_names 承载（显示链不变）
+            assert rl_meta.unique_code_name("烟雾", "python") \
+                == "htcode::python_code"
+            assert rl_meta.sanitize_code_name("烟雾") == ""
+            rec = rl_meta.set_code_block("htcode::py_a", "python",
+                                         "print(1)\n")
+            assert rec["created"] and rec["modified"]
+            created0 = rec["created"]
+            # 语言不认识 → vex 收敛；更新保留 created
+            rl_meta.set_code_block("htcode::py_a", "rust", "x")
+            assert rl_meta.get_code_block("htcode::py_a")["language"] == "vex"
+            rl_meta.set_code_block("htcode::py_a", "python", "print(2)")
+            assert rl_meta.get_code_block("htcode::py_a")["created"] \
+                == created0
+            assert len(rl_meta.list_code_blocks()) == 2
+            rl_meta.delete_code_block(n1)
+            assert rl_meta.get_code_block(n1) is None
+            # unique_safe_name 的撞名检测数据源必须含代码块内部名
+            assert "htcode::py_a" in rl_meta._iter_metadata_names()
+            rl_meta.delete_code_block("htcode::py_a")   # 清掉本段残留
+            assert len(rl_meta.list_code_blocks()) == 0
+            print("code block metadata CRUD OK")
+
+            # ---- 模块层：高亮器 / 缩略图渲染 / CodeInfo ----
+            doc = _qtg.QTextDocument()
+            h = rl_cb.make_highlighter("vex", doc)
+            assert isinstance(h, rl_cb.VexHighlighter)
+            doc.setPlainText("int n = ptnum;\n// c\nv@P = noise(@P);")
+            assert isinstance(rl_cb.make_highlighter("python", doc),
+                              rl_cb.PythonHighlighter)
+            pm = rl_cb.render_code_pixmap("int a = 1;\nfloat b = 2.0;",
+                                          "vex", 100, 66, 1.0)
+            assert not pm.isNull() and (pm.width(), pm.height()) == (100, 66)
+            # 空代码给占位文案，不崩、非空图
+            assert not rl_cb.render_code_pixmap(
+                "", "vex", 100, 66, 1.0).isNull()
+            ci = rl_cb.CodeInfo.from_record(
+                "htcode::x", {"language": "python", "code": "print(1)"})
+            assert ci.is_code and ci.display_label == "x"
+            assert ci.language == "python" and ci.category == "code"
+            # 坏记录容错：语言不认识归 vex、非 dict 记录给空码
+            ci_bad = rl_cb.CodeInfo.from_record("htcode::y", "junk")
+            assert ci_bad.language == "vex" and ci_bad.code == ""
+            print("codeblock highlight/render/model OK")
+
+            # ---- 编辑弹窗：offscreen 实例化 + 语言切换不清码 + 取值 ----
+            dlg = rl_cb.CodeEditorDialog(None, info=ci)
+            assert dlg.name_edit.text() == "x"
+            assert dlg.editor.toPlainText() == "print(1)"
+            dlg.lang_combo.setCurrentIndex(dlg.lang_combo.findData("vex"))
+            assert dlg.editor.toPlainText() == "print(1)"
+            dlg.name_edit.setText("自定义名")
+            assert dlg.result_values() == ("自定义名", "vex", "print(1)")
+            dlg.deleteLater()
+            print("codeblock editor dialog OK")
+
+            # ---- 面板集成：侧栏段 / 过滤 / 搜索 / 预览 / 双击 / 右键 ----
+            rl_meta.set_code_block("htcode::smoke_vex", "vex",
+                                   "int smoke = 1;")
+            rl_meta.set_display_name("htcode::smoke_vex", "烟雾测试")
+            rl_meta.set_tags("htcode::smoke_vex", ["测试"])
+            rl_meta.set_favorite("htcode::smoke_vex", True)
+            rl_meta.set_code_block("htcode::smoke_py", "python",
+                                   "print('x')")
+            cb_ui_store = houtools.core.settings.JsonStore(
+                "_smoke_rl_cb_ui.json",
+                defaults=dict(rl_browser._UI_SETTINGS._defaults))
+            _track_rm(cb_ui_store.path)
+            # 未配置库目录也加载代码块（内容存 metadata，不依赖 .hda）
+            with patch.object(rl_meta, "get_lib_dirs", return_value=[]), \
+                 patch.object(rl_browser, "_UI_SETTINGS", cb_ui_store):
+                wcb = rl_browser._RecipeLibraryWindow()
+                wcb.reload()
+                assert wcb.list.count() == 2, wcb.list.count()
+                keys = [wcb.sidebar.topLevelItem(i).data(0, _qtc.Qt.UserRole)
+                        for i in range(wcb.sidebar.topLevelItemCount())]
+                assert rl_browser.KEY_CODE in keys, keys
+                wcb._select_category(rl_browser.KEY_CODE)
+                assert wcb._category_label() == "代码块"
+                assert wcb.list.count() == 2
+                # 代码全文参与搜索
+                wcb.search.setText("print")
+                wcb._apply_filter()
+                assert wcb.list.count() == 1
+                assert wcb.list.item(0).data(_qtc.Qt.UserRole) \
+                    == "htcode::smoke_py"
+                wcb.search.setText("")
+                wcb._apply_filter()
+                # 标签段含代码块标签；收藏段含代码块
+                wcb._select_category("tag::测试")
+                assert wcb.list.count() == 1
+                wcb._select_category(rl_browser.KEY_FAV)
+                assert wcb.list.count() == 1
+                wcb._select_category(rl_browser.KEY_CODE)
+                # 卡片缩略图 = 代码文本渲染（无自定义缩略图）
+                pm_card = wcb.thumb_pixmap(
+                    wcb._info_by_name["htcode::smoke_vex"], 100, 66)
+                assert not pm_card.isNull()
+                # 选中 → 预览代码视图接码（内容与 info.code 一致）
+                wcb.list.setCurrentRow(0)
+                cur = wcb._selected_info()
+                assert cur is not None and cur.is_code
+                assert wcb.preview_code.toPlainText() == cur.code
+                # 预览代码区右键：菜单 = 编辑代码
+                def _exec_code_menu(menu, *_a, **_k):
+                    texts = [a.text() for a in menu.actions()]
+                    assert texts == ["编辑代码"], texts
+                    return None   # 不选，只验证菜单结构
+
+                with patch("houtools.recipelib.browser.QtWidgets.QMenu.exec_",
+                           _exec_code_menu):
+                    wcb.preview_code.customContextMenuRequested.emit(
+                        _qtc.QPoint(10, 10))
+                # 双击追加：全部选中节点透传给 append_to_nodes
+                calls = {}
+
+                def _fake_append(nodes, language, code):
+                    calls.update(nodes=list(nodes), language=language,
+                                 code=code)
+                    return ([str(n) for n in nodes], [])
+
+                with patch.object(rl_browser.store, "selected_nodes",
+                                  return_value=["/obj/n1", "/obj/n2"]), \
+                     patch.object(rl_browser.codeblock, "append_to_nodes",
+                                  side_effect=_fake_append):
+                    wcb._apply_recipe(wcb._info_by_name["htcode::smoke_py"])
+                assert calls == {"nodes": ["/obj/n1", "/obj/n2"],
+                                 "language": "python",
+                                 "code": "print('x')"}, calls
+                assert "追加到 2 个节点" in wcb.status.text()
+                # 无选中：不触 append，状态栏引导
+                with patch.object(rl_browser.store, "selected_nodes",
+                                  return_value=[]), \
+                     patch.object(rl_browser.codeblock, "append_to_nodes",
+                                  side_effect=_fake_append) as m_ap:
+                    wcb._apply_recipe(wcb._info_by_name["htcode::smoke_py"])
+                assert m_ap.call_count == 0
+                assert "选中" in wcb.status.text()
+                # 空白数据区右键：菜单 = 新建代码块
+                def _exec_new_menu(menu, *_a, **_k):
+                    texts = [a.text() for a in menu.actions()]
+                    assert texts == ["新建代码块"], texts
+                    return None
+
+                with patch.object(wcb.list, "itemAt", return_value=None), \
+                     patch("houtools.recipelib.browser.QtWidgets.QMenu.exec_",
+                           _exec_new_menu):
+                    wcb._on_context_menu(_qtc.QPoint(1, 1))
+                # 代码块卡片右键菜单结构（对照 recipe 卡片：+编辑代码）
+                def _exec_card_menu(menu, *_a, **_k):
+                    texts = [a.text() for a in menu.actions()]
+                    assert "编辑代码" in texts and "删除代码块" in texts, texts
+                    return None
+
+                with patch("houtools.recipelib.browser.QtWidgets.QMenu.exec_",
+                           _exec_card_menu):
+                    wcb._on_context_menu(
+                        wcb.list.visualItemRect(wcb.list.item(0)).center())
+                wcb.deleteLater()
+            print("code block panel integration OK")
+
+            # ---- transfer：代码块随包导出/导入往返 ----
+            import houtools.recipelib.transfer as rl_transfer2
+            with patch.object(rl_meta, "THUMBS_DIR", Path(tmp) / "thumbs"), \
+                 patch.object(rl_meta, "DOCS_DIR", Path(tmp) / "docs"):
+                items = rl_cb.list_code_infos()
+                assert len(items) == 2
+                zip_path = str(Path(tmp) / "cb_pack.zip")
+                summary = rl_transfer2.export_recipes(
+                    items, zip_path, include_hda=False)
+                assert summary["code_blocks"] == 2, summary
+                dst_store = houtools.core.settings.JsonStore(
+                    "_smoke_rl_cb_dst.json",
+                    defaults=dict(rl_meta._DEFAULTS))
+                _track_rm(dst_store.path)
+                with patch.object(rl_meta, "_SETTINGS", dst_store):
+                    result = rl_transfer2.import_package(zip_path)
+                    assert result["code_blocks"] == 2, result
+                    got = rl_meta.get_code_block("htcode::smoke_py")
+                    assert got and got["code"] == "print('x')", got
+                    assert got["language"] == "python"
+                    # 收藏/显示名按内部名随包合并
+                    assert rl_meta.is_favorite("htcode::smoke_vex")
+                    assert rl_meta.get_display_name("htcode::smoke_vex") \
+                        == "烟雾测试"
+            print("code block transfer roundtrip OK")
+
     # 文档编辑器：实例化（无文档=空白）+ 确认/取消模式 + 实时预览渲染
     # （纯 Qt，不触 hou）
     with tempfile.TemporaryDirectory() as tmp:

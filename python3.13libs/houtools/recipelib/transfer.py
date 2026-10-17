@@ -13,10 +13,16 @@ Houdini 按库优先级二选一，行为不可预期，宁跳过不覆盖（导
 
 zip 布局（manifest.json 的 format_version=1）：
   manifest.json            # 格式版本/导出信息/hda_files（文件→内含 recipe 名）
-  recipelib.json           # 过滤后的元数据；thumbs 值改写为包内路径 thumbs/<名>
+  recipelib.json           # 过滤后的元数据；thumbs 值改写为包内路径 thumbs/<名>；
+                           #   code_blocks 段携带代码块卡片（v1 起向后兼容——
+                           #   旧包没有该键，导入按空处理）
   thumbs/<safe名>.<ext>
   docs/<safe名>/doc.md + assets/*
   recipes/<原文件名>.hda     # 仅勾选「连同工具打包」时
+
+代码块随元数据文件整体打包（不单独成文件）：调用方传入的条目列表里
+含代码块 CodeInfo（同样暴露 .name），标签/收藏/缩略图/文档按内部名
+过滤的既有逻辑对其自动生效；导入合并语义 = 包内覆盖同名。
 
 零 hou 依赖（枚举由调用方传入 store.list_recipes 的结果；导入后的库
 安装走浏览器 reload() → ensure_libraries_installed 链路）——本模块只
@@ -178,13 +184,18 @@ def export_recipes(recipes, zip_path, include_hda=True, progress=None):
                           if n in name_set and v},
         "colors": {n: v for n, v in (raw["colors"] or {}).items()
                    if n in name_set and v},
+        "code_blocks": {n: dict(rec) for n, rec in
+                        (raw.get("code_blocks") or {}).items()
+                        if n in name_set and isinstance(rec, dict)},
     }
+    code_names = sorted(packaged["code_blocks"])
     manifest = {
         "format_version": FORMAT_VERSION,
         "app": APP_TAG,
         "exported_at": datetime.now().isoformat(timespec="seconds"),
         "recipe_count": len(names),
         "recipes": names,
+        "code_blocks": code_names,
         "include_hda": bool(include_hda),
         "hda_files": hda_files,
     }
@@ -225,6 +236,7 @@ def export_recipes(recipes, zip_path, include_hda=True, progress=None):
     return {
         "path": zip_path,
         "recipes": len(names),
+        "code_blocks": len(code_names),
         "docs": sum(1 for a, _ in entries
                     if a.startswith(_DOC_ARC_DIR) and a.endswith("/doc.md")),
         "thumbs": len(thumbs_arc),
@@ -272,6 +284,24 @@ def _read_packaged_metadata(zf):
         raise TransferError("recipelib.json 损坏: {}".format(exc))
     if not isinstance(data, dict):
         raise TransferError("recipelib.json 内容异常")
+    # 代码块条目收紧：只收"有非空代码、语言可识别"的记录（v1 旧包没有
+    # 该键，按空处理）；语言不认识一律按 vex 收敛（metadata 同款容错）
+    code_blocks = {}
+    for k, v in (data.get("code_blocks") or {}).items():
+        if not isinstance(v, dict):
+            continue
+        code = str(v.get("code") or "")
+        if not code.strip():
+            continue
+        language = str(v.get("language") or "vex")
+        if language not in ("vex", "python"):
+            language = "vex"
+        code_blocks[str(k)] = {
+            "language": language,
+            "code": code,
+            "created": str(v.get("created") or ""),
+            "modified": str(v.get("modified") or ""),
+        }
     return {
         "favorites": [str(x) for x in (data.get("favorites") or []) if x],
         # 空列表条目不收：导入按"包内覆盖同名"合并，空标签会误删本地内容
@@ -283,6 +313,7 @@ def _read_packaged_metadata(zf):
                           (data.get("display_names") or {}).items() if v},
         "colors": {str(k): str(v) for k, v in
                    (data.get("colors") or {}).items() if v},
+        "code_blocks": code_blocks,
     }
 
 
@@ -344,6 +375,7 @@ def inspect_package(zip_path, existing_names=()):
     return {
         "recipes": names,
         "conflicts": [n for n in names if n in existing],
+        "code_blocks": [str(n) for n in manifest.get("code_blocks") or []],
         "docs": _doc_dirs_of(members),
         "thumbs": [n for n, arc in meta["thumbs"].items() if arc in members],
         "hda_import": hda_import,
@@ -468,8 +500,11 @@ def import_package(zip_path, lib_dir=None, existing_names=(), progress=None):
         display.update(meta["display_names"])
         colors = dict(local["colors"])
         colors.update(meta["colors"])
+        code_blocks = dict(local.get("code_blocks") or {})
+        code_blocks.update(meta.get("code_blocks") or {})
         metadata.bulk_set(favorites=favs, tags=tags, thumbs=merged_thumbs,
-                          display_names=display, colors=colors)
+                          display_names=display, colors=colors,
+                          code_blocks=code_blocks)
         # 登记本次导入产生文档的名字（unique_safe_name 撞名检测的数据源；
         # 按 manifest 里的 recipe 名反查，导出端的包内目录名与本地
         # doc_dir 在非撞名场景下天然一致）
@@ -480,6 +515,7 @@ def import_package(zip_path, lib_dir=None, existing_names=(), progress=None):
         "metadata_names": len(set(meta["tags"]) | set(meta["display_names"])
                               | set(meta["colors"]) | set(new_thumbs)
                               | set(meta["favorites"])),
+        "code_blocks": len(meta.get("code_blocks") or {}),
         "docs": len(doc_dirs),
         "thumbs": len(new_thumbs),
         "hda_copied": hda_copied,

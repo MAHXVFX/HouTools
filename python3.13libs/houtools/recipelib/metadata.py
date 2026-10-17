@@ -22,6 +22,7 @@ import hashlib
 import os
 import re
 import shutil
+from datetime import datetime
 
 from houtools.core.constants import PROJECT_ROOT, SETTINGS_DIR
 from houtools.core.log import get_logger
@@ -41,6 +42,8 @@ _DEFAULTS = {
                            #   检测的数据源之一；内部键，不随导出带走）
     "stems": {},           # 内部名 -> 已解析的文件名安全串（unique_safe_name
                            #   的恒定化登记；内部键，不随导出带走）
+    "code_blocks": {},     # 内部名（htcode:: 前缀）-> {language, code,
+                           #   created, modified}（代码块卡片内容）
 }
 
 _SETTINGS = JsonStore("recipelib.json", defaults=_DEFAULTS)
@@ -169,18 +172,19 @@ def migrate_colliding_doc_dirs():
 # --------------------------------------------------------------------------
 
 def all_metadata():
-    """五个内容键的副本（导出打包用；不含 lib_dirs——机器相关不带）。"""
+    """六个内容键的副本（导出打包用；不含 lib_dirs——机器相关不带）。"""
     return {
         "favorites": list(_SETTINGS.get("favorites") or []),
         "tags": dict(_SETTINGS.get("tags") or {}),
         "thumbs": dict(_SETTINGS.get("thumbs") or {}),
         "display_names": dict(_SETTINGS.get("display_names") or {}),
         "colors": dict(_SETTINGS.get("colors") or {}),
+        "code_blocks": dict(_SETTINGS.get("code_blocks") or {}),
     }
 
 
 def bulk_set(favorites=None, tags=None, thumbs=None, display_names=None,
-             colors=None):
+             colors=None, code_blocks=None):
     """按键整体覆盖写入（导入合并的结果一次落盘），None 的键不动。
 
     thumbs 的值须已是"存储形式"（相对插件根，同 _to_stored 的产出）。
@@ -196,6 +200,8 @@ def bulk_set(favorites=None, tags=None, thumbs=None, display_names=None,
         _SETTINGS.set("display_names", dict(display_names), save=False)
     if colors is not None:
         _SETTINGS.set("colors", dict(colors), save=False)
+    if code_blocks is not None:
+        _SETTINGS.set("code_blocks", dict(code_blocks), save=False)
     _SETTINGS.save()
 
 
@@ -222,6 +228,79 @@ def set_lib_dirs(dirs):
             clean.append(d)
     _SETTINGS.set("lib_dirs", clean)
     return clean
+
+
+# --------------------------------------------------------------------------
+# 代码块（VEX / Python 文本片段卡片；内容存这里，不进 HDA 库）
+# --------------------------------------------------------------------------
+
+CODE_NAME_PREFIX = "htcode::"   # 代码块内部名前缀（与 recipe 内部名空间隔离）
+CODE_LANGUAGES = ("vex", "python")
+
+
+def sanitize_code_name(base):
+    """用户输入名转 ASCII token（内部名/节点名用）；无 ASCII 可留返回空串。
+
+    内部名与 thumbs/docs 等文件路径共用 safe_name 折叠，中文等非 ASCII
+    输入折出来全是空——这类输入返回空串由调用方回退生成名，显示名
+    （display_names）才承载中文。
+    """
+    return re.sub(r"[^0-9a-zA-Z_]+", "_", str(base or "")).strip("_")
+
+
+def list_code_blocks():
+    """全部代码块记录（内部名 -> {language, code, created, modified} 副本）。"""
+    data = _SETTINGS.get("code_blocks") or {}
+    return {k: dict(v) for k, v in data.items() if isinstance(v, dict)}
+
+
+def get_code_block(name):
+    rec = (_SETTINGS.get("code_blocks") or {}).get(name)
+    return dict(rec) if isinstance(rec, dict) else None
+
+
+def unique_code_name(base, language):
+    """生成未占用的代码块内部名：htcode::token / token_2 / token_3...
+
+    token 取 sanitize_code_name；输入无 ASCII 可留（如纯中文名）时按
+    语言回退 vex_code/python_code——显示名走 display_names，不依赖内部名。
+    """
+    blocks = _SETTINGS.get("code_blocks") or {}
+    token = sanitize_code_name(base)
+    if not token:
+        token = "python_code" if language == "python" else "vex_code"
+    stem = token
+    i = 2
+    while CODE_NAME_PREFIX + token in blocks:
+        token = "{}_{}".format(stem, i)
+        i += 1
+    return CODE_NAME_PREFIX + token
+
+
+def set_code_block(name, language, code):
+    """创建/更新代码块内容；created/modified 时间戳自动维护。
+
+    language 不在 CODE_LANGUAGES 内一律按 "vex" 收敛（旧数据容错）。
+    """
+    blocks = dict(_SETTINGS.get("code_blocks") or {})
+    now = datetime.now().isoformat(timespec="seconds")
+    prev = blocks.get(name) if isinstance(blocks.get(name), dict) else {}
+    blocks[name] = {
+        "language": language if language in CODE_LANGUAGES else "vex",
+        "code": str(code or ""),
+        "created": prev.get("created") or now,
+        "modified": now,
+    }
+    _SETTINGS.set("code_blocks", blocks)
+    return dict(blocks[name])
+
+
+def delete_code_block(name):
+    """删除代码块内容条目；收藏/标签/缩略图等按名键控的元数据由调用方清理。"""
+    blocks = dict(_SETTINGS.get("code_blocks") or {})
+    if name in blocks:
+        del blocks[name]
+        _SETTINGS.set("code_blocks", blocks)
 
 
 # --------------------------------------------------------------------------
@@ -597,6 +676,7 @@ def _iter_metadata_names():
     for key in ("tags", "thumbs", "display_names", "colors"):
         names.update(data[key].keys())
     names.update(_SETTINGS.get("docs") or [])
+    names.update((data.get("code_blocks") or {}).keys())
     return names
 
 

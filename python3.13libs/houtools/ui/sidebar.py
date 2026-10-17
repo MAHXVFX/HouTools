@@ -2,7 +2,7 @@
 
 行结构：行首图标 + 名称 + 右对齐计数；选中行蓝底圆角高亮；树形视图的
 段头行带折叠箭头（收拢态整行调暗）。图标为 QPainter 手绘的扁平线稿
-（grid/star/folder/tag/level/sliders），按 (种类, 尺寸, DPR) 缓存。
+（grid/star/folder/tag/level/sliders/code），按 (种类, 尺寸, DPR) 缓存。
 
 数据协议（条目经 ItemRole 携带，QListWidget / QTreeWidget 通用）：
 - SIDEBAR_HEADER_ROLE（bool）：段头行（画折叠箭头；不可选中由条目 flags 保证）
@@ -83,7 +83,7 @@ def sidebar_icon_pixmap(kind, size, dpr, tint=None):
     p.scale(size / 14.0, size / 14.0)
     color = {"grid": "#b4b4bc", "star": "#d9a544",
              "folder": "#a4a4ac", "tag": "#5b9bd5",
-             "level": "#9b8cd9"}.get(kind, "#a4a4ac")
+             "level": "#9b8cd9", "code": "#5aa885"}.get(kind, "#a4a4ac")
     if tint:
         color = tint
     if kind == "grid":
@@ -155,6 +155,18 @@ def sidebar_icon_pixmap(kind, size, dpr, tint=None):
         path.lineTo(10.5, 10.5)
         path.lineTo(10.5, 6.0)
         p.strokePath(path, pen)
+    elif kind == "code":
+        # 尖括号斜杠 </>（代码语义）
+        pen = QtGui.QPen(QtGui.QColor(color), 1.2)
+        pen.setCapStyle(QtCore.Qt.RoundCap)
+        pen.setJoinStyle(QtCore.Qt.RoundJoin)
+        p.setPen(pen)
+        p.setBrush(QtCore.Qt.NoBrush)
+        p.drawLine(QtCore.QPointF(4.8, 3.6), QtCore.QPointF(1.8, 7.0))
+        p.drawLine(QtCore.QPointF(1.8, 7.0), QtCore.QPointF(4.8, 10.4))
+        p.drawLine(QtCore.QPointF(9.2, 3.6), QtCore.QPointF(12.2, 7.0))
+        p.drawLine(QtCore.QPointF(12.2, 7.0), QtCore.QPointF(9.2, 10.4))
+        p.drawLine(QtCore.QPointF(8.0, 2.8), QtCore.QPointF(6.0, 11.2))
     elif kind == "star":
         # 与卡片收藏角标同一素材（favorite_badge.svg）；QtSvg 缺失或
         # 文件损坏时回退 QPainter 手绘星

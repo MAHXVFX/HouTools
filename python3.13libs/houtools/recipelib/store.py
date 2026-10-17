@@ -41,6 +41,7 @@ CATEGORY_LABELS = {
     "decoration": "Decoration（装饰）",
     "parmTemplate": "Parm Template（参数模板）",
     "data": "Data（数据）",
+    "code": "Code（代码块）",
 }
 
 

@@ -25,7 +25,7 @@ import time
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from houtools.core.log import get_logger
-from houtools.recipelib import metadata, store, transfer
+from houtools.recipelib import codeblock, metadata, store, transfer
 from houtools.recipelib.crop import ThumbCropDialog
 from houtools.recipelib.capture import HIDE_DELAY_MS, SnipOverlay
 from houtools.recipelib.docs import DocEditorDialog, MarkdownMediaView, MediaDialog
@@ -74,6 +74,7 @@ def _cover_crop(src, w, h):
 
 KEY_ALL = "__all__"
 KEY_FAV = "__fav__"
+KEY_CODE = "__code__"          # 侧栏「代码块」段（文本卡片，见 codeblock.py）
 CAT_PREFIX = "cat::"
 TAG_PREFIX = "tag::"
 LEVEL_PREFIX = "net::"         # 层级（net_category："Sop"/"Lop"/...）
@@ -144,18 +145,20 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
         f.setBold(bold)
         return f
 
-    def _draw_watermark(self, painter, option, clip_path, card, thumb_h):
+    def _draw_watermark(self, painter, option, clip_path, card, thumb_h,
+                        kind="sliders"):
         """「节点参数」卡片水印：侧栏「节点参数」行同款滑块图标
-        （sidebar_icon_pixmap("sliders")，自带 (kind, size, dpr) 缓存），
-        低透明度铺在文字区右侧（垂直居中）——文字左对齐、右侧天然
-        留空，图标如"盖在右下角的章"；居中会与文字重叠打架（实测）。
-        调用方已保证画在缩略图/文字之前。"""
+        （sidebar_icon_pixmap，自带 (kind, size, dpr) 缓存），低透明度
+        铺在文字区右侧（垂直居中）——文字左对齐、右侧天然留空，图标
+        如"盖在右下角的章"；居中会与文字重叠打架（实测）。代码块卡片
+        传 kind="code" 用同位版式画 </> 水印。调用方已保证画在缩略图/
+        文字之前。"""
         dpr = option.widget.devicePixelRatioF() \
             if option.widget is not None else 1.0
         block_h = self.text_block_height()
         text_w = card.width() - self.MARGIN * 2
         size = max(18, min(48, int(block_h * 0.55), int(text_w * 0.6)))
-        pm = sidebar_icon_pixmap("sliders", size, dpr)
+        pm = sidebar_icon_pixmap(kind, size, dpr)
         area = QtCore.QRectF(card.left() + self.MARGIN,
                              card.top() + self.MARGIN + thumb_h
                              + self.TEXT_TOP_GAP,
@@ -206,10 +209,13 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
         path.addRoundedRect(QtCore.QRectF(card), 8, 8)
         painter.fillPath(path, bg)
 
-        # 「节点参数」卡片水印：侧栏「节点参数」行同款滑块图标，铺在
-        # 卡片最底层（clip 圆角内、缩略图/文字之下）；缩略图不透明会
-        # 盖住上半部分，水印实际在文字区与边距透出
-        if info is not None and not self._win._submenus_of(info):
+        # 「节点参数」卡片水印 = 侧栏滑块图标；代码块卡片 = 同位版式的
+        # </> 图标。都铺在卡片最底层（clip 圆角内、缩略图/文字之下）；
+        # 缩略图不透明会盖住上半部分，水印实际在文字区与边距透出
+        if info is not None and getattr(info, "is_code", False):
+            self._draw_watermark(painter, option, path, card, thumb_h,
+                                 kind="code")
+        elif info is not None and not self._win._submenus_of(info):
             self._draw_watermark(painter, option, path, card, thumb_h)
 
         m = self.MARGIN
@@ -304,7 +310,10 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
 
     @staticmethod
     def _type_line(info):
-        """第二行：网络类别（缺省用类别短名）+ 节点数。"""
+        """第二行：网络类别（缺省用类别短名）+ 节点数；代码块 = 语言。"""
+        if getattr(info, "is_code", False):
+            return "代码块 • {}".format(codeblock.LANGUAGE_LABELS.get(
+                info.language, info.language))
         parts = []
         cat = info.net_category or {
             "tool": "Tool", "node": "Node", "parm": "Parm",
@@ -438,6 +447,25 @@ class _PreviewImageLabel(_ClickableImage):
     def resizeEvent(self, event):
         self.resized.emit()
         super().resizeEvent(event)
+
+
+class _PreviewCode(codeblock._CodeEditor):
+    """预览面板的代码视图（代码块无自定义缩略图时顶替预览图位）。
+
+    只读 + 行号栏复用 codeblock._CodeEditor；等宽字体经 apply_mono
+    显式压回（fonts.py 的 ChildAdded 过滤器在挂树时先刷了工具字体）。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setReadOnly(True)
+        self._highlighter = None
+
+    def set_code(self, code, language):
+        self.setPlainText(code)
+        if self._highlighter is not None:
+            self._highlighter.setDocument(None)   # 摘旧高亮器防双重着色
+        self._highlighter = codeblock.make_highlighter(
+            language, self.document())
 
 
 class _SidebarTree(QtWidgets.QTreeWidget):
@@ -1103,6 +1131,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         tool_fonts.apply(self)   # 工具统一字体（子树继承，delegate 度量随之）
 
         self._recipes = []          # 全量 RecipeInfo（store.list_recipes）
+        self._code_infos = []       # 代码块 CodeInfo（metadata.code_blocks）
         self._info_by_name = {}
         self._category_key = KEY_ALL
         self._thumb_cache = {}      # name -> QIcon（GIF 首帧也在这里）
@@ -1125,7 +1154,8 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.settings_btn.setToolTip(
             "导入 / 导出与库目录设置（后续更多设置项在此面板增加）")
         self.search = QtWidgets.QLineEdit()
-        self.search.setPlaceholderText("搜索 名称 / 标签 / 备注...（#前缀 仅搜标签）")
+        self.search.setPlaceholderText(
+            "搜索 名称 / 标签 / 备注 / 代码...（#前缀 仅搜标签）")
         self.search.setClearButtonEnabled(True)
         self.pin_chk = QtWidgets.QCheckBox("全局置顶")
         self.pin_chk.setChecked(bool(_UI_SETTINGS.get("pin_on_top")))
@@ -1224,6 +1254,19 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             QtCore.Qt.CustomContextMenu)
         self.preview_label.customContextMenuRequested.connect(
             self._on_thumb_context_menu)
+
+        # 代码块无自定义缩略图时的预览位：带高亮的只读代码视图（默认
+        # 隐藏，_update_preview 按条目类型切换它与预览图的可见性）
+        self.preview_code = _PreviewCode()
+        self.preview_code.setFixedHeight(self.PREVIEW_H)
+        self.preview_code.setStyleSheet(
+            "background-color: #1D1D20; border: 1px solid #3d3d3d; "
+            "border-radius: 6px;")
+        self.preview_code.setVisible(False)
+        self.preview_code.setContextMenuPolicy(
+            QtCore.Qt.CustomContextMenu)
+        self.preview_code.customContextMenuRequested.connect(
+            self._on_code_context_menu)
 
         self.preview_name = _PreviewNameLabel()
         self.preview_name.setWordWrap(True)
@@ -1333,6 +1376,8 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         pv = QtWidgets.QVBoxLayout()
         pv.setContentsMargins(0, 0, 0, 0)
         pv.addWidget(self.preview_label)
+        pv.addWidget(self.preview_code)
+        self.preview_code.apply_mono()   # 挂树后压回等宽（fonts.py 过滤器）
         pv.addWidget(self.preview_name)
         pv.addWidget(self.meta_panel)
         pv.addSpacing(8)
@@ -1392,32 +1437,36 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
     # ---------------- 数据加载与过滤 ----------------
 
     def reload(self):
-        """枚举用户库里的 recipe 并重建侧栏/网格（保留分类与搜索词）。"""
+        """枚举用户库里的 recipe 并重建侧栏/网格（保留分类与搜索词）。
+
+        代码块内容存 metadata、不依赖库文件——未配置库目录也照常加载。"""
         metadata.migrate_legacy_thumb_paths()  # 旧版绝对路径 → 相对插件根
         metadata.migrate_colliding_doc_dirs()  # safe_name 撞名 → 摘要名（幂等）
+        self._code_infos = codeblock.list_code_infos()
         lib_dirs = metadata.get_lib_dirs()
-        if not lib_dirs:
-            self._recipes = []
-            self._info_by_name = {}
-            self._rebuild_sidebar()
-            self._apply_filter(note="；请先在「设置 ▸ 库目录」配置库文件夹")
-            return
-        try:
-            self._recipes = store.list_recipes(lib_dirs)
-        except Exception as exc:
-            log.warning("list recipes failed: %s", exc, exc_info=True)
-            self._recipes = []
-            self._info_by_name = {}
-            # 与空库同路径重建侧栏/网格：否则网格残留旧卡片，点选会
-            # 命中 _info_by_name 里已不存在的 recipe
-            self._rebuild_sidebar()
-            self._apply_filter()
-            self.status.setText("枚举 recipe 失败: {}".format(exc))
-            return
+        self._recipes = []
+        error_text = None
+        if lib_dirs:
+            try:
+                self._recipes = store.list_recipes(lib_dirs)
+            except Exception as exc:
+                log.warning("list recipes failed: %s", exc, exc_info=True)
+                self._recipes = []
+                # 与空库同路径重建侧栏/网格：否则网格残留旧卡片，点选会
+                # 命中 _info_by_name 里已不存在的 recipe
+                error_text = "枚举 recipe 失败: {}".format(exc)
         self._info_by_name = {r.name: r for r in self._recipes}
+        self._info_by_name.update({c.name: c for c in self._code_infos})
         self._rebuild_sidebar()
-        self._apply_filter(
-            note="，共 {} 个".format(len(self._recipes)))
+        if self._recipes or self._code_infos:
+            note = "，共 {} 个".format(len(self._recipes) + len(self._code_infos))
+        else:
+            note = "；请先在「设置 ▸ 库目录」配置库文件夹"
+        self._apply_filter(note=note)
+        if error_text:
+            # _apply_filter 会写状态栏（分类计数），错误文案必须在其后
+            # 写入才能露出来（旧版顺序即如此）
+            self.status.setText(error_text)
 
     # ---------------- 设置面板：库目录 / 导入导出 ----------------
 
@@ -1449,24 +1498,25 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
     def _export_recipes(self, parent=None):
         """导出向导：选项对话框 → 带进度打包（transfer.export_recipes）。
 
-        recipes 用当前枚举缓存 self._recipes——面板只从设置面板进入导出，
-        打开设置前必然已 reload 过，缓存即当前库。
+        条目用当前枚举缓存 self._recipes + self._code_infos（代码块随
+        元数据一起走）——面板只从设置面板进入导出，打开设置前必然已
+        reload 过，缓存即当前库。
         """
         parent = parent or self
-        if not self._recipes:
+        if not self._recipes and not self._code_infos:
             warn(parent, "导出", "当前库为空，没有可导出的内容。")
             return
-        dlg = _ExportDialog(parent, len(self._recipes))
+        items = list(self._recipes) + list(self._code_infos)
+        dlg = _ExportDialog(parent, len(items))
         if dlg.exec_() != QtWidgets.QDialog.Accepted:
             return
         zip_path = dlg.zip_path()
         include_hda = dlg.include_hda()
-        recipes = list(self._recipes)
         try:
             summary = _run_with_progress(
                 parent, "正在打包导出...",
                 lambda report: transfer.export_recipes(
-                    recipes, zip_path, include_hda=include_hda,
+                    items, zip_path, include_hda=include_hda,
                     progress=report))
         except (transfer.TransferError, OSError) as exc:
             warn(parent, "导出失败", str(exc))
@@ -1475,9 +1525,11 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             self.status.setText("导出已取消")
             return
         _UI_SETTINGS.set("last_export_dir", os.path.dirname(zip_path))
-        msg = ("导出完成：{} 个配方（文档 {} 份、缩略图 {} 张、库文件 {} 个）\n{}"
-               .format(summary["recipes"], summary["docs"],
-                       summary["thumbs"], summary["hda"], summary["path"]))
+        msg = ("导出完成：{} 个配方、代码块 {} 个（文档 {} 份、缩略图 {} 张、"
+               "库文件 {} 个）\n{}"
+               .format(summary["recipes"], summary["code_blocks"],
+                       summary["docs"], summary["thumbs"], summary["hda"],
+                       summary["path"]))
         self.status.setText("导出完成 → {}".format(summary["path"]))
         info(parent, "导出完成", msg)
 
@@ -1525,7 +1577,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         except transfer.TransferError as exc:
             warn(parent, "导入失败", str(exc))
             return
-        if not s["recipes"] and not s["hda_import"]:
+        if not s["recipes"] and not s["hda_import"] and not s["code_blocks"]:
             warn(parent, "导入失败", "包内没有可导入的内容。")
             return
 
@@ -1534,6 +1586,9 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
                  .format(len(s["recipes"]), len(s["conflicts"]))]
         lines.append("文档 {} 份、缩略图 {} 张。"
                      .format(len(s["docs"]), len(s["thumbs"])))
+        if s["code_blocks"]:
+            lines.append("代码块 {} 个（同名的代码内容会合并覆盖）。"
+                         .format(len(s["code_blocks"])))
         if s["hda_import"]:
             lines.append("库文件 {} 个将复制到下方指定的库文件夹。"
                          .format(len(s["hda_import"])))
@@ -1569,8 +1624,10 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             if lib_dir not in dirs:
                 metadata.set_lib_dirs(dirs + [lib_dir])
         self.reload()
-        msg = ("导入完成：配方 {} 个、文档 {} 份、缩略图 {} 张、库文件 {} 个{}"
-               .format(len(s["recipes"]), result["docs"], result["thumbs"],
+        msg = ("导入完成：配方 {} 个、代码块 {} 个、文档 {} 份、缩略图 {} 张、"
+               "库文件 {} 个{}"
+               .format(len(s["recipes"]), result["code_blocks"],
+                       result["docs"], result["thumbs"],
                        len(result["hda_copied"]),
                        ("；跳过库文件 {} 个（同名冲突）"
                         .format(len(result["hda_skipped"]))
@@ -1609,9 +1666,17 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             if metadata.is_favorite(r.name):
                 fav_count += 1
 
+        # 代码块并入标签/收藏计数；自身单独成段
+        code_count = len(self._code_infos)
+        for c in self._code_infos:
+            for t in metadata.get_tags(c.name):
+                tag_counts[t] = tag_counts.get(t, 0) + 1
+            if metadata.is_favorite(c.name):
+                fav_count += 1
+
         # 「常规」设置勾选时全部视图不含「节点参数」类型：行计数同步
         # 扣减，保持"计数 = 该组实际显示条数"
-        all_count = len(self._recipes)
+        all_count = len(self._recipes) + code_count
         if _UI_SETTINGS.get("hide_nodeparm_in_all"):
             all_count -= ungrouped
 
@@ -1638,6 +1703,8 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
 
         _add(None, "全部", all_count, KEY_ALL, "grid")
         _add(None, "收藏", fav_count, KEY_FAV, "star")
+        if code_count:
+            _add(None, "代码块", code_count, KEY_CODE, "code")
         _add(None, "节点参数", ungrouped, CAT_PREFIX, "sliders")
         if cat_counts:
             grp = _add(None, "子菜单", len(cat_counts), KEY_GRP_HDR,
@@ -1746,9 +1813,17 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
                 if not any(term in t for t in tags):
                     return False
         if plain_terms:
-            hay = " ".join([self._display_label(info), info.name,
-                            info.comment,
-                            " ".join(metadata.get_tags(info.name))]).lower()
+            if getattr(info, "is_code", False):
+                # 代码块全文参与搜索（片段内容检索是代码块的核心用法）
+                hay = " ".join([self._display_label(info), info.name,
+                                getattr(info, "language", ""),
+                                info.code,
+                                " ".join(metadata.get_tags(info.name))])
+            else:
+                hay = " ".join([self._display_label(info), info.name,
+                                info.comment,
+                                " ".join(metadata.get_tags(info.name))])
+            hay = hay.lower()
             for term in plain_terms:
                 if term not in hay:
                     return False
@@ -1758,14 +1833,19 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         key = self._category_key
         if key in (KEY_ALL, None):
             # 「常规」设置勾选时全部视图隐藏「节点参数」类型（无 submenu
-            # 的 recipe）；其余分组不受影响
+            # 的 recipe）；代码块有自己的侧栏段，不受该设置影响
             if _UI_SETTINGS.get("hide_nodeparm_in_all") \
+                    and not getattr(info, "is_code", False) \
                     and not self._submenus_of(info):
                 return False
             return True
         if key == KEY_FAV:
             return metadata.is_favorite(info.name)
+        if key == KEY_CODE:
+            return getattr(info, "is_code", False)
         if key.startswith(CAT_PREFIX):
+            if getattr(info, "is_code", False):
+                return False   # 代码块不归「节点参数」/子菜单任何段
             sub = key[len(CAT_PREFIX):]
             if not sub:   # 节点参数：没有任何 submenu 的 recipe
                 return not self._submenus_of(info)
@@ -1793,6 +1873,9 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             keep_name = current.data(QtCore.Qt.UserRole)
         entries = [r for r in self._recipes
                    if self._match_category(r) and self._match_search(r)]
+        entries += [c for c in self._code_infos
+                    if self._match_category(c) and self._match_search(c)]
+        total = len(self._recipes) + len(self._code_infos)
         self.list.setUpdatesEnabled(False)
         self.list.blockSignals(True)
         try:
@@ -1816,9 +1899,10 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
                     self.list.setCurrentRow(i)
                     self.list.blockSignals(False)
                     break
-        self.status.setText("{}：{}/{} 个 recipe{}。{}".format(
-            self._category_label(), len(entries), len(self._recipes), note,
-            "双击应用；或按住拖入网络编辑器。"))
+        self.status.setText("{}：{}/{} 个{}。{}".format(
+            self._category_label(), len(entries), total,
+            "代码块" if self._category_key == KEY_CODE else "recipe", note,
+            "双击应用；或按住拖入网络编辑器/代码编辑框。"))
         current = self.list.currentItem()
         if current is None:
             self._clear_preview()
@@ -1838,6 +1922,8 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             return "全部"
         if key == KEY_FAV:
             return "收藏"
+        if key == KEY_CODE:
+            return "代码块"
         if key.startswith(CAT_PREFIX):
             return key[len(CAT_PREFIX):] or "节点参数"
         if key.startswith(TAG_PREFIX):
@@ -1885,11 +1971,19 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         # 1024——QIcon 按请求尺寸生成并内部缓存位图，1024 档每个 recipe
         # 常驻近原图分辨率的大位图
         dpr = self.list.devicePixelRatioF()
-        want = max(64, int(max(w, h) * (dpr if dpr > 0 else 1.0)))
-        src = self._base_icon(info).pixmap(want, want)
-        pm = _cover_crop(src, w, h)
-        if pm is None:
-            pm = self._placeholder.pixmap(w, h)
+        if getattr(info, "is_code", False) \
+                and not metadata.get_thumb(info.name):
+            # 代码块无自定义缩略图：直接渲染代码文本（顶部对齐、不做
+            # cover——文本必须从第一行可读；代码内容变更后由编辑入口
+            # 清 _cover_cache 失效）
+            pm = codeblock.render_code_pixmap(info.code, info.language,
+                                              w, h, dpr)
+        else:
+            want = max(64, int(max(w, h) * (dpr if dpr > 0 else 1.0)))
+            src = self._base_icon(info).pixmap(want, want)
+            pm = _cover_crop(src, w, h)
+            if pm is None:
+                pm = self._placeholder.pixmap(w, h)
         if len(self._cover_cache) >= _COVER_CACHE_MAX:
             self._cover_cache.clear()   # 上限兜底：旧尺寸条目整表让位
         self._cover_cache[key] = pm
@@ -1971,6 +2065,8 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self._preview_info = None   # 空态即无预览对象，防 _view_image 摸旧值
         self._stop_preview_movie()
         self._preview_pm = None
+        self.preview_code.setVisible(False)   # 代码视图让位回预览图
+        self.preview_label.setVisible(True)
         self.preview_label.setPixmap(QtGui.QPixmap())
         self.preview_label.setText("未选中")
         self.preview_label.setCursor(QtCore.Qt.ArrowCursor)
@@ -2016,24 +2112,41 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.preview_name.set_bar_color(
             metadata.get_color(info.name) or _CardDelegate.BAR_DEFAULT)
         lib = os.path.basename(info.library) if info.library else ""
-        self.preview_meta.setText("\n".join([
-            "内部名称: " + info.name,
-            "类型: " + store.CATEGORY_LABELS.get(info.category, info.category),
-            "来源: " + lib,
-        ]))
-        net_meta = []
-        if info.net_category:
-            net_meta.append(info.net_category)
-        if info.node_count >= 0:
-            net_meta.append("{} 节点".format(info.node_count))
-        self.meta_cell_category.setText(
-            "子菜单: " + (info.submenu or "无"))
-        self.meta_cell_network.setText("层级: " + " • ".join(net_meta))
-        self.meta_cell_version.setText("版本: " + info.houdini_version)
-        self.meta_cell_targets.setText(
-            "焦点: " + (", ".join(
-                p.rsplit("/", 1)[-1] for p in info.patterns)
-                if info.patterns else ""))
+        if getattr(info, "is_code", False):
+            # 代码块的元信息：语言/修改时间/行数（无库来源、无网络层级）
+            self.preview_meta.setText("\n".join([
+                "内部名称: " + info.name,
+                "类型: " + store.CATEGORY_LABELS.get(info.category,
+                                                     info.category),
+                "来源: 面板内建",
+            ]))
+            self.meta_cell_category.setText("子菜单: 无")
+            self.meta_cell_network.setText("语言: " + info.language_label)
+            self.meta_cell_version.setText(
+                "修改: " + (info.modified or "—"))
+            self.meta_cell_targets.setText(
+                "行数: {}".format(info.code.count("\n") + 1
+                                  if info.code else 0))
+        else:
+            self.preview_meta.setText("\n".join([
+                "内部名称: " + info.name,
+                "类型: " + store.CATEGORY_LABELS.get(info.category,
+                                                     info.category),
+                "来源: " + lib,
+            ]))
+            net_meta = []
+            if info.net_category:
+                net_meta.append(info.net_category)
+            if info.node_count >= 0:
+                net_meta.append("{} 节点".format(info.node_count))
+            self.meta_cell_category.setText(
+                "子菜单: " + (info.submenu or "无"))
+            self.meta_cell_network.setText("层级: " + " • ".join(net_meta))
+            self.meta_cell_version.setText("版本: " + info.houdini_version)
+            self.meta_cell_targets.setText(
+                "焦点: " + (", ".join(
+                    p.rsplit("/", 1)[-1] for p in info.patterns)
+                    if info.patterns else ""))
         self.meta_panel.setVisible(True)
         # 文档区：有文档渲染 markdown（内联 GIF/视频按钮），
         # 无文档回退显示官方备注
@@ -2059,6 +2172,15 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.preview_label.setText("")
         self._preview_pm = None
         thumb = metadata.get_thumb(info.name)
+        if getattr(info, "is_code", False) and not thumb:
+            # 代码块无自定义缩略图：预览位显示带高亮的只读代码（编辑走
+            # 右键菜单）；预览图让位
+            self.preview_label.setVisible(False)
+            self.preview_code.setVisible(True)
+            self.preview_code.set_code(info.code, info.language)
+            return
+        self.preview_code.setVisible(False)
+        self.preview_label.setVisible(True)
         if thumb:
             self.preview_label.setCursor(QtCore.Qt.PointingHandCursor)
         else:
@@ -2161,7 +2283,30 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         与"点工架按钮"同体验；预设/装饰类需要先选中目标节点。
         """
         try:
-            if info.category == "tool":
+            if getattr(info, "is_code", False):
+                # 代码块双击 = 追加到全部选中节点（2026-10 用户拍板）；
+                # 无匹配参数的节点逐个跳过并汇报
+                nodes = store.selected_nodes()
+                if not nodes:
+                    self.status.setText(
+                        "代码块：请先在场景中选中目标节点"
+                        "（双击 = 把代码追加到选中节点的代码参数）")
+                    return
+                appended, skipped = codeblock.append_to_nodes(
+                    nodes, info.language, info.code)
+                if appended:
+                    msg = "已把「{}」追加到 {} 个节点".format(
+                        self._display_label(info), len(appended))
+                else:
+                    msg = "追加失败：「{}」没有可填充的节点".format(
+                        self._display_label(info))
+                if skipped:
+                    msg += "；跳过 {} 个（{}）".format(len(skipped),
+                                                      skipped[0])
+                self.status.setText(msg)
+                if not appended:
+                    _push_houdini_error(msg)
+            elif info.category == "tool":
                 editor = store.current_network_editor()
                 if editor is None:
                     self.status.setText("找不到网络编辑器面板，请先打开一个网络视图")
@@ -2209,6 +2354,9 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         if info is None:
             return
         if info.category != "tool":
+            if getattr(info, "is_code", False):
+                self._start_code_drag(info)
+                return
             self.status.setText(
                 "{} 是 {} 类型：请先选中目标节点后双击应用（拖拽仅支持 Tool）"
                 .format(self._display_label(info),
@@ -2295,14 +2443,159 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         ghost.hide()
         ghost.deleteLater()
 
+    # ---------------- 代码块（codeblock.py） ----------------
+
+    def _start_code_drag(self, info):
+        """代码块拖拽（方案 A，真 QDrag + text/plain；语义见 codeblock
+        模块头注释）。
+
+        - 落在文本编辑框（VEX 编辑器等）：Houdini 编辑器原生接受
+          text/plain 时在落点光标处插入——追加不覆盖由 Qt 文本拖放语义
+          天然保证（只替换拖放时刻的已有选区，未选中即纯插入）
+        - 落在网络编辑器：外部 MIME 不被接受 → exec 返回 IgnoreAction
+          → 按松手点创建对应节点并填码
+        - Esc 取消与"落在不接受拖放的空白"在 QDrag 层面不可区分（都是
+          IgnoreAction 且无 Drop 事件）：以"松手时是否在网络编辑器上"
+          判定——Esc 取消时光标恰停在网络编辑器上会误创建，这是方案 A
+          的已知边角，实测不可接受时整体换方案 B（程序化插入），不并存
+        """
+        drag = QtGui.QDrag(self)
+        mime = QtCore.QMimeData()
+        mime.setText(info.code)
+        drag.setMimeData(mime)
+        pm = codeblock.render_code_pixmap(
+            info.code, info.language, 72, 48,
+            self.list.devicePixelRatioF())
+        drag.setPixmap(pm)
+        drag.setHotSpot(QtCore.QPoint(pm.width() // 2, pm.height() // 2))
+        result = drag.exec(QtCore.Qt.CopyAction)
+        if result != QtCore.Qt.IgnoreAction:
+            # 有目标接受了拖放：文本编辑框已原生插入，无需补刀
+            self.status.setText("代码已投递到落点（文本编辑框内在光标处追加）")
+            return
+        pane = store.network_editor_under_cursor()
+        if pane is None:
+            self.status.setText("已取消拖拽")
+            return
+        position = None
+        try:
+            position = pane.cursorPosition()
+        except Exception as exc:
+            log.debug("cursorPosition failed, apply default: %s", exc)
+        try:
+            node = codeblock.create_node_with_code(
+                pane.pwd(), info.language, info.code,
+                self._display_label(info), position)
+            self.status.setText("已在当前网络创建 {} 并填入代码".format(
+                node.name()))
+        except Exception as exc:
+            log.warning("code drag create failed: %s", exc, exc_info=True)
+            self.status.setText("创建失败: {}".format(exc))
+            _push_houdini_error(str(exc))
+
+    def _apply_code_blocks(self):
+        """代码块数据变更后的轻量重建：不重扫 HDA 库，只并表 + 重建
+        侧栏/网格，当前选中还在时按新数据刷新预览。"""
+        self._code_infos = codeblock.list_code_infos()
+        self._info_by_name = {r.name: r for r in self._recipes}
+        self._info_by_name.update({c.name: c for c in self._code_infos})
+        self._rebuild_sidebar()
+        self._apply_filter()
+        if self._preview_info is not None:
+            current = self._info_by_name.get(self._preview_info.name)
+            if current is not None:
+                self._update_preview(current)
+
+    def _new_code_block(self):
+        """空白数据区右键「新建代码块」：弹窗录入，确认才落库；创建后
+        切到「代码块」段并选中新卡片（其他段看不到它，主动亮出来）。"""
+        dlg = codeblock.CodeEditorDialog(self, info=None)
+        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+            dlg.deleteLater()   # exec_ 的模态框用完即释放，防积存
+            return
+        display, language, code = dlg.result_values()
+        dlg.deleteLater()
+        name = metadata.unique_code_name(display, language)
+        metadata.set_code_block(name, language, code)
+        if display:
+            metadata.set_display_name(name, display)
+        self._apply_code_blocks()
+        self._select_category(KEY_CODE)
+        for i in range(self.list.count()):
+            if self.list.item(i).data(QtCore.Qt.UserRole) == name:
+                self.list.setCurrentRow(i)
+                break
+        self.status.setText("已创建代码块「{}」".format(display or name))
+
+    def _edit_code(self, info):
+        """编辑代码块内容/语言/显示名（内部名与元数据键不变）。"""
+        dlg = codeblock.CodeEditorDialog(self, info=info)
+        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+            dlg.deleteLater()   # exec_ 的模态框用完即释放，防积存
+            return
+        display, language, code = dlg.result_values()
+        dlg.deleteLater()
+        metadata.set_code_block(info.name, language, code)
+        metadata.set_display_name(info.name, display)   # 空串=恢复自动名
+        self._thumb_cache.pop(info.name, None)
+        self._cover_cache.clear()   # 代码变了：代码文本缩略图全部重渲染
+        self._apply_code_blocks()
+        self.status.setText("已更新代码块「{}」".format(
+            display or info.display_label))
+
+    def _delete_code_block(self, info):
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("删除代码块")
+        box.setText("确定删除「{}」？\n{}\n（缩略图与文档也会一并清理）"
+                    .format(self._display_label(info), info.name))
+        box.setStandardButtons(QtWidgets.QMessageBox.Yes
+                               | QtWidgets.QMessageBox.No)
+        localize_buttons(box)   # Yes → 确认、No → 取消
+        choice = box.exec_()
+        box.deleteLater()   # exec_ 的模态框用完即释放，防积存
+        if choice != QtWidgets.QMessageBox.Yes:
+            return
+        metadata.delete_code_block(info.name)
+        metadata.clear_thumb(info.name)
+        metadata.set_favorite(info.name, False)
+        metadata.set_tags(info.name, [])
+        metadata.set_display_name(info.name, None)
+        metadata.set_color(info.name, None)
+        self._thumb_cache.pop(info.name, None)
+        self._cover_cache.clear()
+        self._apply_code_blocks()
+        self.status.setText("已删除代码块 {}".format(info.name))
+
+    def _on_code_context_menu(self, pos):
+        """预览代码区右键：「编辑代码」（卡片右键同款入口的预览位版）。"""
+        info = self._preview_info
+        if info is None or not getattr(info, "is_code", False):
+            return
+        menu = QtWidgets.QMenu(self.preview_code)
+        act_edit = menu.addAction("编辑代码")
+        act = menu.exec_(self.preview_code.viewport().mapToGlobal(pos))
+        menu.deleteLater()   # exec_ 的模态菜单用完即释放，防积存
+        if act is act_edit:
+            self._edit_code(info)
+
     # ---------------- 右键菜单 ----------------
 
     def _on_context_menu(self, pos):
         item = self.list.itemAt(pos)
         if item is None:
+            # 空白数据区右键：新建代码块入口（2026-10 新功能）
+            menu = QtWidgets.QMenu(self)
+            act_new = menu.addAction("新建代码块")
+            act = menu.exec_(self.list.mapToGlobal(pos))
+            menu.deleteLater()   # exec_ 的模态菜单用完即释放，防积存
+            if act is act_new:
+                self._new_code_block()
             return
         info = self._info_by_name.get(item.data(QtCore.Qt.UserRole))
         if info is None:
+            return
+        if getattr(info, "is_code", False):
+            self._on_code_card_menu(pos, info)
             return
         fav = metadata.is_favorite(info.name)
         menu = QtWidgets.QMenu(self)
@@ -2346,6 +2639,53 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             QtWidgets.QApplication.clipboard().setText(info.name)
         elif act is not None and act is act_del:
             self._delete_recipe(info)
+
+    def _on_code_card_menu(self, pos, info):
+        """代码块卡片右键：编辑代码/显示名/文档/缩略图三件套/颜色/删除
+        （结构对照 recipe 卡片菜单，少了「删除 Recipe」的出厂保护——
+        代码块永远可删）。"""
+        fav = metadata.is_favorite(info.name)
+        menu = QtWidgets.QMenu(self)
+        act_fav = menu.addAction("取消收藏" if fav else "收藏")
+        menu.addSeparator()
+        # 恢复默认显示名不进菜单：自定义显示名留空确认即恢复
+        act_edit = menu.addAction("编辑代码")
+        act_rename = menu.addAction("自定义显示名")
+        act_doc = menu.addAction("编辑文档")
+        menu.addSeparator()
+        act_thumb = menu.addAction("设置缩略图")
+        act_thumb_snip = menu.addAction("截取缩略图")
+        act_thumb_clear = None
+        if metadata.get_thumb(info.name):
+            act_thumb_clear = menu.addAction("清除缩略图")
+        menu.addSeparator()
+        # 清除颜色不进菜单：颜色对话框里「恢复默认」+ 确认
+        act_color = menu.addAction("自定义颜色")
+        act_copy = menu.addAction("复制内部名")
+        menu.addSeparator()
+        act_del = menu.addAction("删除代码块")
+        act = menu.exec_(self.list.mapToGlobal(pos))
+        menu.deleteLater()   # exec_ 的模态菜单用完即释放，防积存
+        if act is act_fav:
+            self._set_favorite(info, not fav)
+        elif act is act_edit:
+            self._edit_code(info)
+        elif act is act_rename:
+            self._rename_selected()
+        elif act is act_doc:
+            self._open_doc_for(info)
+        elif act is act_thumb:
+            self._set_thumb(info)
+        elif act is act_thumb_snip:
+            self._snip_thumb(info)
+        elif act is not None and act is act_thumb_clear:
+            self._clear_thumb(info, self.list.currentItem())
+        elif act is act_color:
+            self._set_color(info)
+        elif act is act_copy:
+            QtWidgets.QApplication.clipboard().setText(info.name)
+        elif act is not None and act is act_del:
+            self._delete_code_block(info)
 
     def _on_doc_context_menu(self, pos):
         """文档/备注渲染区右键：自建「编辑文档」菜单（替代 QTextBrowser
