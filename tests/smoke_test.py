@@ -1809,24 +1809,6 @@ def main():
             dlg2.deleteLater()
             print("codeblock editor dialog OK")
 
-            # ---- 并入弹窗（拖卡片到代码节点上触发；纯 UI：字符串进出，
-            # 不触 hou）：预填 = 现有代码 + 卡片代码空行追加，可继续编辑 ----
-            ndlg = rl_cb.NodeCodeDialog(
-                None, "/obj/geo1/wrangle1", "snippet", "vex",
-                "int a = 1;", "int b = 2;\n")
-            text = ndlg.editor.toPlainText()
-            assert "int a = 1;" in text and "int b = 2;" in text, text
-            assert text.count("\n") >= 2, text   # 空行分隔的两段
-            assert ndlg.result_code() == ndlg.editor.toPlainText()
-            ndlg.deleteLater()
-            # 现有代码为空：不产生前导空行
-            ndlg2 = rl_cb.NodeCodeDialog(
-                None, "/obj/x", "snippet", "vex", "", "int only;")
-            assert ndlg2.editor.toPlainText() == "int only;", \
-                ndlg2.editor.toPlainText()
-            ndlg2.deleteLater()
-            print("codeblock node merge dialog OK")
-
             # ---- 面板集成：侧栏段 / 过滤 / 搜索 / 预览 / 双击 / 右键 ----
             rl_meta.set_display_name("my_vex-1", "烟雾测试")
             rl_meta.set_tags("my_vex-1", ["测试"])

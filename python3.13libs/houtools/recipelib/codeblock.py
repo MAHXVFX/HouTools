@@ -11,20 +11,7 @@
 交互语义（2026-10 用户拍板）：
 - 双击卡片 = 把代码**追加**到全部选中节点的代码参数（VEX→snippet、
   Python→python），不是覆盖；无匹配参数的节点逐个跳过并汇报
-- 拖入文本编辑框（VEX 编辑器等）= **方案 E：放行原生落点 + HOM 参数
-  变更通知刷新**——Houdini 自己的落点处理负责定位+写入（它对落点
-  定位是对的，坏的只是显示层不重算：只渲染首行、其余可框选不可见），
-  exec 返回后对选中节点的代码参数做"值往返"（读到什么写回什么，中间
-  临时 +\\n 再还原，保证必发变更通知），其编辑器跟随参数变更信号重读，
-  显示完整内容——与外部 set 即时刷新参数框是同一机制，纯公开 API，
-  无任何模拟/剪贴板/注入。防误写护栏：读到的参数值不含本卡片代码
-  （落点内容没同步到参数）就绝不动参数。前序方案已全部判死并移除：
-  原生直投/行尾 CRLF/insertText 直插（显示层不重算，2026-10-18 三次
-  会话实测）、接管 Drop 走 Qt 文本控件/粘贴管线（探针实证 Houdini
-  编辑器是 GL 面板里的虚拟控件，Qt 控件树里没有文本控件）、Qt 合成
-  事件与 OS 级 SendInput 输入模拟（无效且用户否决）
-- 拖入网络编辑器 = 非文本控件落点不接管，松手在网络编辑器 → 创建
-  对应节点（VEX→attribwrangle、Python→python SOP）并填入代码
+- 拖拽触发已移除（2026-10-18）：内建 VEX 编辑器的多行拖放渲染是 SideFX bug（内容写进编辑器但显示层不重算——纯文本/CRLF/官方 nodePath 格式/外部拖源/文件拖/Ctrl+Enter 全部实验排除；GL 虚拟控件无法编程驱动，编辑器私有撤销栈 API 不可达，撤销/重做方案失效）。完整实验代码与结论存档在 feature/codeblock-drag 分支。触发方式仅保留双击追加
 - 卡片水印 = Houdini 官方节点图标（VEX=attribwrangle、Python=python
   SOP，hou.qt.Icon 取自图标索引；无头回退自绘 </>）
 - 卡片无自定义缩略图时，缩略图区直接渲染代码文本（深底 + 语法色，
@@ -51,8 +38,8 @@ log = get_logger("recipelib.codeblock")
 
 LANGUAGE_LABELS = {"vex": "VEX", "python": "Python"}
 
-# 拖到网络编辑器时按语言创建的节点 / 承载代码的参数名（22.0.429 无头实测）
-_NODE_TYPE_FOR_LANGUAGE = {"vex": "attribwrangle", "python": "python"}
+# 双击追加的目标参数名（22.0.429 无头实测：attribwrangle/volumewrangle
+# 等 wrangle 家族与 python SOP 均有该参数）
 _PARM_FOR_LANGUAGE = {"vex": "snippet", "python": "python"}
 
 
@@ -479,120 +466,6 @@ class PythonHighlighter(_RuleHighlighter):
                      QtCore.QRegularExpression(r"'''"))}
 
 
-def code_parm_name(node, language):
-    """节点上承载该语言代码的参数名；不匹配返回 None。
-
-    VEX→snippet（attribwrangle/volumewrangle 等 wrangle 家族）、
-    Python→python（python SOP），22.0.429 无头实测均有该参数。
-    """
-    import hou
-    if node is None:
-        return None
-    parm_name = _PARM_FOR_LANGUAGE.get(language)
-    if parm_name and node.parm(parm_name) is not None:
-        return parm_name
-    return None
-
-
-def find_code_node_at(pane, language, position=None):
-    """网络编辑器里落点处的代码节点（带对应语言代码参数），无则 None。
-
-    以鼠标网络坐标对各子节点做矩形命中（position 为 tile 中心、
-    size 为 tile 尺寸，外加半格宽容差）；命中多个取迭代序最后一个
-    （后创建的节点渲染在上层）。position 缺省用 pane.cursorPosition()
-    （拖放松手点）。"""
-    import hou
-    if pane is None:
-        return None
-    try:
-        if position is None:
-            position = pane.cursorPosition()
-        children = pane.pwd().children()
-    except Exception as exc:
-        log.debug("find_code_node_at failed: %s", exc)
-        return None
-    hit = None
-    for child in children:
-        if code_parm_name(child, language) is None:
-            continue
-        try:
-            p = child.position()
-            s = child.size()
-        except Exception:
-            continue
-        if (abs(position.x() - p.x()) <= s.x() / 2 + 0.5
-                and abs(position.y() - p.y()) <= s.y() / 2 + 0.5):
-            hit = child
-    return hit
-
-
-class NodeCodeDialog(QtWidgets.QDialog):
-    """把卡片代码并入目标节点代码参数的编辑弹窗（拖卡片到 wrangle/
-    python 节点上触发——内建 VEX 编辑器的多行拖放渲染是 SideFX bug，
-    自建编辑器是第三方工具验证多年的替代形态）。
-
-    预填 = 节点现有代码 + 卡片代码追加在尾部（空行分隔），语法高亮、
-    可继续编辑；确认后由调用方取 result_code() 写回参数（本弹窗是
-    纯 UI：字符串进出，不触 hou，无头可测）。"""
-
-    def __init__(self, parent, node_path, parm_name, language,
-                 existing_code, extra_code):
-        super().__init__(parent)
-        self._node_path = node_path
-        self._parm_name = parm_name
-        self._language = language if language in metadata.CODE_LANGUAGES \
-            else "vex"
-        self.setWindowTitle("并入代码 - {}".format(node_path))
-        self.resize(680, 520)
-        self.setMinimumSize(520, 380)
-
-        tip = QtWidgets.QLabel("目标: {}  （{} 参数「{}」，追加不覆盖，可再编辑）"
-                               .format(node_path,
-                                       LANGUAGE_LABELS[self._language],
-                                       parm_name))
-        tip.setStyleSheet("color: #9a9aa2;")
-
-        self.editor = _CodeEditor()
-        self._highlighter = None
-
-        buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self._on_accept)
-        buttons.rejected.connect(self.reject)
-        localize_buttons(buttons)
-
-        lay = QtWidgets.QVBoxLayout(self)
-        lay.addWidget(tip)
-        lay.addWidget(self.editor, 1)
-        lay.addWidget(buttons)
-
-        existing = str(existing_code or "")
-        extra = str(extra_code or "")
-        if existing.strip():
-            combined = existing.rstrip() + "\n\n" + extra.strip("\n")
-        else:
-            combined = extra
-        self.editor.setPlainText(combined)
-        self._highlighter = make_highlighter(self._language,
-                                             self.editor.document())
-        # 挂树之后压回等宽字体（fonts.py ChildAdded 过滤器刚刷过工具字体）
-        self.editor.apply_mono()
-        cursor = self.editor.textCursor()
-        cursor.movePosition(QtGui.QTextCursor.End)   # 焦点给插入点尾部
-        self.editor.setTextCursor(cursor)
-        self.editor.setFocus()
-
-    def _on_accept(self):
-        if not self.editor.toPlainText().strip():
-            warn(self, "并入代码", "代码内容为空。")
-            return
-        self.accept()
-
-    def result_code(self):
-        """确认后的完整代码（现有 + 追加，用户可改）。"""
-        return self.editor.toPlainText()
-
-
 def make_highlighter(language, document):
     """按语言给 document 装高亮器；旧的须先 setDocument(None) 摘除
     （QSyntaxHighlighter 挂在 document 上，不摘会两个同时生效）。"""
@@ -938,36 +811,3 @@ def append_to_nodes(nodes, language, code):
                 skipped.append("{}: {}".format(node.path(), exc))
     return appended, skipped
 
-
-def create_node_with_code(parent, language, code, display_label="",
-                          position=None):
-    """在 parent 网络里创建对应节点并填入代码（拖代码块进网络编辑器）。
-
-    仅 SOP 网络（attribwrangle / python SOP 都是 SOP 类）；层级不符抛
-    RuntimeError（中文提示，browser 推状态栏红字）。节点名取显示名的
-    ASCII token（中文显示名不进节点名——节点名 charset 限制，显示层
-    不受影响）。创建失败不残留半截节点。
-    """
-    import hou
-    ntype = _NODE_TYPE_FOR_LANGUAGE.get(language)
-    if not ntype:
-        raise RuntimeError("语言 {} 不支持创建节点".format(language))
-    try:
-        cat = parent.childTypeCategory().name()
-    except Exception:
-        cat = ""
-    if cat != "Sop":
-        have = _NETWORK_HINTS.get(cat, cat or "未知")
-        raise RuntimeError("代码块节点需要 SOP 网络（geo 内部），"
-                           "当前是 {} 网络".format(have))
-    token = metadata.sanitize_code_name(display_label) \
-        or ("python_code" if language == "python" else "vex_code")
-    node = parent.createNode(ntype, token)
-    try:
-        node.parm(_PARM_FOR_LANGUAGE[language]).set(code)
-    except Exception:
-        node.destroy()
-        raise
-    if position is not None:
-        node.setPosition(position)
-    return node
