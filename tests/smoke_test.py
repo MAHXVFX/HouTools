@@ -737,6 +737,7 @@ def main():
     import houtools.recipelib.store as rl_store
     import houtools.recipelib.docs as rl_docs  # noqa: F401
     import houtools.recipelib.crop as rl_crop
+    import houtools.recipelib.codeblock as rl_cb
     import houtools.recipelib.browser as rl_browser
     import houtools.tools.recipe_library  # noqa: F401
 
@@ -1188,6 +1189,8 @@ def main():
                  patch.object(rl_browser.store, "list_recipes",
                               side_effect=lambda lib_dirs=None:
                                   list(infos) if lib_dirs else []), \
+                 patch.object(rl_cb, "CODELIB_ROOT",
+                              Path(tmp) / "scanlib_vexplib"), \
                  patch.object(rl_browser, "_UI_SETTINGS", ui_store):
                 win = rl_browser._RecipeLibraryWindow()
                 win.reload()
@@ -1699,7 +1702,9 @@ def main():
                 # 未配置库文件夹：列表为空，状态栏给「库目录」引导
                 # （外层 get_lib_dirs 补丁仍在生效，这里覆盖为空）
                 rl_meta.set_lib_dirs([])
-                with patch.object(rl_meta, "get_lib_dirs", return_value=[]):
+                with patch.object(rl_meta, "get_lib_dirs", return_value=[]), \
+                     patch.object(rl_cb, "CODELIB_ROOT",
+                                  Path(tmp) / "empty_vexplib"):
                     win2 = rl_browser._RecipeLibraryWindow()
                     win2.reload()
                 assert win2.list.count() == 0, win2.list.count()
@@ -1803,6 +1808,24 @@ def main():
             assert dlg2.editor.toPlainText() == "int x = 0;"
             dlg2.deleteLater()
             print("codeblock editor dialog OK")
+
+            # ---- 并入弹窗（拖卡片到代码节点上触发；纯 UI：字符串进出，
+            # 不触 hou）：预填 = 现有代码 + 卡片代码空行追加，可继续编辑 ----
+            ndlg = rl_cb.NodeCodeDialog(
+                None, "/obj/geo1/wrangle1", "snippet", "vex",
+                "int a = 1;", "int b = 2;\n")
+            text = ndlg.editor.toPlainText()
+            assert "int a = 1;" in text and "int b = 2;" in text, text
+            assert text.count("\n") >= 2, text   # 空行分隔的两段
+            assert ndlg.result_code() == ndlg.editor.toPlainText()
+            ndlg.deleteLater()
+            # 现有代码为空：不产生前导空行
+            ndlg2 = rl_cb.NodeCodeDialog(
+                None, "/obj/x", "snippet", "vex", "", "int only;")
+            assert ndlg2.editor.toPlainText() == "int only;", \
+                ndlg2.editor.toPlainText()
+            ndlg2.deleteLater()
+            print("codeblock node merge dialog OK")
 
             # ---- 面板集成：侧栏段 / 过滤 / 搜索 / 预览 / 双击 / 右键 ----
             rl_meta.set_display_name("my_vex-1", "烟雾测试")
