@@ -146,19 +146,21 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
         return f
 
     def _draw_watermark(self, painter, option, clip_path, card, thumb_h,
-                        kind="sliders"):
-        """「节点参数」卡片水印：侧栏「节点参数」行同款滑块图标
-        （sidebar_icon_pixmap，自带 (kind, size, dpr) 缓存），低透明度
-        铺在文字区右侧（垂直居中）——文字左对齐、右侧天然留空，图标
-        如"盖在右下角的章"；居中会与文字重叠打架（实测）。代码块卡片
-        传 kind="code" 用同位版式画 </> 水印。调用方已保证画在缩略图/
-        文字之前。"""
+                        pixmap_fn=None):
+        """卡片水印：低透明度铺在文字区右侧（垂直居中）——文字左对齐、
+        右侧天然留空，图标如"盖在右下角的章"；居中会与文字重叠打架
+        （实测）。pixmap_fn(size, dpr) -> QPixmap 由调用侧决定图标：
+        缺省 = 侧栏「节点参数」行同款滑块图标（sidebar_icon_pixmap，
+        自带缓存）；代码块传 codeblock.code_watermark_pixmap（Houdini
+        官方节点图标）。调用方已保证画在缩略图/文字之前。"""
         dpr = option.widget.devicePixelRatioF() \
             if option.widget is not None else 1.0
         block_h = self.text_block_height()
         text_w = card.width() - self.MARGIN * 2
         size = max(18, min(48, int(block_h * 0.55), int(text_w * 0.6)))
-        pm = sidebar_icon_pixmap(kind, size, dpr)
+        if pixmap_fn is None:
+            pixmap_fn = lambda s, d: sidebar_icon_pixmap("sliders", s, d)
+        pm = pixmap_fn(size, dpr)
         area = QtCore.QRectF(card.left() + self.MARGIN,
                              card.top() + self.MARGIN + thumb_h
                              + self.TEXT_TOP_GAP,
@@ -209,12 +211,16 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
         path.addRoundedRect(QtCore.QRectF(card), 8, 8)
         painter.fillPath(path, bg)
 
-        # 「节点参数」卡片水印 = 侧栏滑块图标；代码块卡片 = 同位版式的
-        # </> 图标。都铺在卡片最底层（clip 圆角内、缩略图/文字之下）；
-        # 缩略图不透明会盖住上半部分，水印实际在文字区与边距透出
+        # 「节点参数」卡片水印 = 侧栏滑块图标；代码块卡片 = Houdini
+        # 官方节点图标（VEX=attribwrangle、Python=python SOP，用户指定）。
+        # 都铺在卡片最底层（clip 圆角内、缩略图/文字之下）；缩略图不
+        # 透明会盖住上半部分，水印实际在文字区与边距透出
         if info is not None and getattr(info, "is_code", False):
-            self._draw_watermark(painter, option, path, card, thumb_h,
-                                 kind="code")
+            lang = info.language
+            self._draw_watermark(
+                painter, option, path, card, thumb_h,
+                pixmap_fn=lambda s, d: codeblock.code_watermark_pixmap(
+                    lang, s, d))
         elif info is not None and not self._win._submenus_of(info):
             self._draw_watermark(painter, option, path, card, thumb_h)
 
@@ -2426,7 +2432,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             self.status.setText(str(exc))
             _push_houdini_error(str(exc))
         except Exception as exc:
-            log.warning("drag apply %s failed: %s", info.name, exc, exc_info=True)
+            log.warning("drag apply %s failed: %s", exc, exc_info=True)
             self.status.setText("创建失败: {}".format(exc))
             _push_houdini_error(str(exc))
 
@@ -2444,44 +2450,102 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         ghost.hide()
         ghost.deleteLater()
 
-    # ---------------- 代码块（codeblock.py） ----------------
-
     def _start_code_drag(self, info):
-        """代码块拖拽（方案 A，真 QDrag + text/plain；语义见 codeblock
-        模块头注释）。
+        """代码块拖拽（方案 G 终态）：放行原生落点 + 撤销/重做管线重建
+        显示；网络编辑器分支 = 代码节点并入 / 空白创建节点。
 
-        - 落在文本编辑框（VEX 编辑器等）：Houdini 编辑器原生接受
-          text/plain 时在落点光标处插入——追加不覆盖由 Qt 文本拖放语义
-          天然保证（只替换拖放时刻的已有选区，未选中即纯插入）
-        - 落在网络编辑器：外部 MIME 不被接受 → exec 返回 IgnoreAction
-          → 按松手点创建对应节点并填码
-        - Esc 取消与"落在不接受拖放的空白"在 QDrag 层面不可区分（都是
-          IgnoreAction 且无 Drop 事件）：以"松手时是否在网络编辑器上"
-          判定——Esc 取消时光标恰停在网络编辑器上会误创建，这是方案 A
-          的已知边角，实测不可接受时整体换方案 B（程序化插入），不并存
+        探针实证（2026-10-18 用户会话）：内建 VEX 编辑器是 GL 虚拟控件，
+        其原生落点把多行文本写进编辑器但显示层不重算（只渲染首行、其余
+        可框选不可见）；格式（text/CRLF/官方 nodePath 与原生节点拖拽
+        逐位对齐）、拖拽来源（外部文本/文件拖）全部无关，Ctrl+Enter
+        提交也不救——但**用户发现手动 Ctrl+Z 再 Ctrl+Shift+Z 后内容
+        完整正常显示**（重做管线会正确重建，drop 处理器漏掉的正是这一
+        步刷新）。G 的机制——纯公开 API，无模拟/无剪贴板/无注入：
+        1. 拖放前记录 hou.undos.undoLabels()（安全基线）；
+        2. QDrag 正常发车、**不拦截 Drop**——Houdini 自己的落点处理
+           负责定位+写入（落点定位是对的）；
+        3. exec 返回非 Ignore（落点被接受）后：比对 undoLabels——撤销
+           系统新增了条目（= 落点编辑注册进了统一撤销）才执行
+           hou.undos.performUndo() + performRedo()（复刻用户手动的那对
+           按键，重做管线重建显示）；**没新增就不执行**（防止误撤销用户
+           最近的其他操作——护栏，见 _rebuild_dropped_editor_display）；
+           重做后撤销条目保留（用户仍可正常 Ctrl+Z）。
+        拖在网络编辑器上：原生落点不接受外来文本（exec 返回 Ignore），
+        落点命中代码节点 → NodeCodeDialog 并入；空白 → 创建对应节点
+        并填码（同 recipe 拖拽语义）。
         """
         drag = QtGui.QDrag(self)
         mime = QtCore.QMimeData()
-        # MIME 文本必须 CRLF：Houdini VEX 编辑框的行模型按 \r\n 切行，
-        # 投 \n-only 会整段挤成一行且排版错乱（2026-10-18 会话实测——
-        # 内容全在、逐字删除才露出后续行）；Windows 文本交换一律 CRLF，
-        # Qt 自家文本控件收到 \r\n 也会归一化回 \n，双投无副作用
-        mime.setText(info.code.replace("\r\n", "\n")
-                     .replace("\n", "\r\n"))
+        mime.setText(info.code)   # 纯文本兜底（其他控件的通用路径）
+        try:
+            # 方案 F：同时携带 Houdini 官方 nodePath 拖放格式（载荷=代码
+            # 文本）。官方文档（hou.qt.mimeType）明确"部分原生 Houdini
+            # 控件按 MIME 类型走不同的落点行为"——原生"拖节点进 VEX
+            # 编辑器"好用走的就是 node.path 格式的专用插入管线，纯文本
+            # 回退分支才有"写进不刷新"的 bug。载荷不是有效节点路径时其
+            # 处理器是否仍按文本插入，需真机验证（本方案的实验点）。
+            import hou
+            fmt = getattr(hou.qt.mimeType, "nodePath",
+                          "application/sidefx-houdini-node.path")
+            mime.setData(fmt, info.code.encode("utf-8"))
+        except Exception as exc:
+            log.debug("nodePath mime unavailable: %s", exc)
         drag.setMimeData(mime)
         pm = codeblock.render_code_pixmap(
             info.code, info.language, 72, 48,
             self.list.devicePixelRatioF())
         drag.setPixmap(pm)
         drag.setHotSpot(QtCore.QPoint(pm.width() // 2, pm.height() // 2))
+        labels_before = None
+        try:
+            import hou
+            labels_before = tuple(hou.undos.undoLabels())
+        except Exception as exc:
+            log.debug("undoLabels unavailable: %s", exc)
         result = drag.exec(QtCore.Qt.CopyAction)
+        drag.deleteLater()
         if result != QtCore.Qt.IgnoreAction:
-            # 有目标接受了拖放：文本编辑框已原生插入，无需补刀
-            self.status.setText("代码已投递到落点（文本编辑框内在光标处追加）")
+            self._rebuild_dropped_editor_display(labels_before)
             return
         pane = store.network_editor_under_cursor()
         if pane is None:
             self.status.setText("已取消拖拽")
+            return
+        # 拖在已有代码节点上：弹自建编辑器并入（内建 VEX 编辑器的多行
+        # 拖放渲染是 SideFX bug——格式/拖拽来源/文件拖/Ctrl+Enter 全部
+        # 实验排除，2026-10-18；自建编辑器是第三方工具验证多年的替代
+        # 形态，见 codeblock.NodeCodeDialog）
+        try:
+            target = codeblock.find_code_node_at(pane, info.language)
+        except Exception as exc:
+            log.debug("find code node failed: %s", exc)
+            target = None
+        if target is not None:
+            parm_name = codeblock.code_parm_name(target, info.language)
+            try:
+                existing = target.parm(parm_name).unexpandedString()
+            except Exception as exc:
+                log.debug("read existing code failed: %s", exc)
+                existing = ""
+            dlg = codeblock.NodeCodeDialog(
+                self, target.path(), parm_name, info.language,
+                existing, info.code)
+            accepted = dlg.exec_() == QtWidgets.QDialog.Accepted
+            code_out = dlg.result_code() if accepted else None
+            dlg.deleteLater()   # exec_ 的模态框用完即释放，防积存
+            if not accepted:
+                return
+            try:
+                import hou
+                with hou.undos.group("HouTools 并入代码块"):
+                    target.parm(parm_name).set(code_out)
+            except Exception as exc:
+                log.warning("merge code failed: %s", exc, exc_info=True)
+                self.status.setText("并入失败: {}".format(exc))
+                _push_houdini_error(str(exc))
+                return
+            self.status.setText("已把「{}」并入 {}".format(
+                self._display_label(info), target.path()))
             return
         position = None
         try:
@@ -2497,6 +2561,36 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         except Exception as exc:
             log.warning("code drag create failed: %s", exc, exc_info=True)
             self.status.setText("创建失败: {}".format(exc))
+            _push_houdini_error(str(exc))
+
+    def _rebuild_dropped_editor_display(self, labels_before):
+        """原生落点写入后，用 Houdini 撤销/重做管线重建编辑器显示
+        （方案 G，纯 API）：其 drop 处理器插入内容后漏了刷新（只渲染
+        首行），而撤销/重做管线会正确重建——用户手动 Ctrl+Z/
+        Ctrl+Shift+Z 实测发现，这里以 hou.undos.performUndo()+
+        performRedo() 复刻同样的操作。
+
+        安全护栏：拖放前后比对 undoLabels——撤销系统新增了条目（=落点
+        编辑注册进了统一撤销，performUndo 撤的必然是它）才执行；没新增
+        就绝不动手（防止误撤销用户最近的其他操作）。新条目入栈会清空
+        重做栈，performRedo 重做的也必然是这条。"""
+        try:
+            import hou
+            if labels_before is None:
+                return
+            if tuple(hou.undos.undoLabels()) == labels_before:
+                # 撤销系统没新增条目：编辑器的落点编辑没走统一撤销，
+                # performUndo 会误伤用户最近的其他操作——不动
+                self.status.setText(
+                    "代码已由原生落点写入（其编辑器未注册撤销条目，"
+                    "显示若异常需手动编辑一处触发）")
+                return
+            hou.undos.performUndo()
+            hou.undos.performRedo()
+            self.status.setText("代码已插入落点（经撤销/重做管线重建显示）")
+        except Exception as exc:
+            log.warning("undo/redo rebuild failed: %s", exc, exc_info=True)
+            self.status.setText("刷新编辑器显示失败: {}".format(exc))
             _push_houdini_error(str(exc))
 
     def _apply_code_blocks(self):
