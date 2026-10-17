@@ -618,10 +618,12 @@ def delete_recipe(name):
     # 有幸存定义 → 不动文件。
     try:
         if os.path.isfile(lib) and not _is_under(lib, hfs):
+            auto_unloaded = False
             try:
                 defs_left = hou.hda.definitionsInFile(lib)
             except hou.OperationFailed:
                 defs_left = []  # 库已被 Houdini 自动卸载 = 已无定义
+                auto_unloaded = True
             except Exception as exc:
                 # 读不到 ≠ 已空（杀软/同步盘瞬时占用、网络抖动等）：
                 # 宁可留下文件，也不能误删装着其他 recipe 的库
@@ -629,12 +631,15 @@ def delete_recipe(name):
                             "delete, kept as-is: %s", lib, exc)
                 defs_left = None
             if defs_left == []:
-                try:
-                    hou.hda.uninstallFile(lib)
-                except Exception as exc:
-                    # 未加载的文件卸载会失败，直接删文件即可
-                    log.debug("uninstall %s after delete failed: %s",
-                              lib, exc)
+                # 自动卸载分支不再补 uninstallFile：对未加载的文件卸载必
+                # 然报 OperationFailed，删末尾 recipe 时每次都徒留一条
+                # "failed" 日志误导排查；直接走下方尺寸护栏删空壳。
+                if not auto_unloaded:
+                    try:
+                        hou.hda.uninstallFile(lib)
+                    except Exception as exc:
+                        log.warning("uninstall %s after delete failed: %s",
+                                    lib, exc)
                 # 与 ensure_libraries_installed 同款尺寸护栏：真空壳只有
                 # 几十字节，读出意外结果时不删可能有内容的文件
                 try:
