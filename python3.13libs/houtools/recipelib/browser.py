@@ -1249,11 +1249,21 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.preview_comment.setAlignment(QtCore.Qt.AlignLeft
                                           | QtCore.Qt.AlignTop)
         self.preview_comment.setStyleSheet("color: #aaaaaa;")
+        # 备注区与文档区同占一格：无文档时这里显示官方备注，右键同样弹
+        # 「编辑文档」——此时文档区是隐藏的，备注区是无文档 recipe 唯一
+        # 的右键入口（2026-10 用户反馈补的）
+        self.preview_comment.setContextMenuPolicy(
+            QtCore.Qt.CustomContextMenu)
+        self.preview_comment.customContextMenuRequested.connect(
+            self._on_doc_context_menu)
         # 有文档时直接渲染 markdown 文档内容（内联 GIF/视频按钮），
         # 无文档时隐藏、显示官方备注 comment
         self.preview_doc = MarkdownMediaView("")
         self.preview_doc.setStyleSheet(
             "color: #cccccc; background: transparent; border: none;")
+        # 文档区右键弹自建「编辑文档」菜单（默认菜单已在 _DocPreview 禁用）
+        self.preview_doc.customContextMenuRequested.connect(
+            self._on_doc_context_menu)
 
         # 标签展示：卡片式主题背景（与卡片颜色一致），文字居中、加大
         # 加粗加亮；只读，修改走旁边的「标签设置」弹窗
@@ -2281,6 +2291,26 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             QtWidgets.QApplication.clipboard().setText(info.name)
         elif act is not None and act is act_del:
             self._delete_recipe(info)
+
+    def _on_doc_context_menu(self, pos):
+        """文档/备注渲染区右键：自建「编辑文档」菜单（替代 QTextBrowser
+        自带英文标准菜单）。customContextMenuRequested 的 pos 在事件接收
+        控件的坐标系里——QAbstractScrollArea 的右键事件投递给 viewport，
+        QLabel 则是控件自身，按 sender 分流定位。"""
+        info = self._preview_info
+        if info is None:
+            return
+        w = self.sender() or self.preview_doc
+        if isinstance(w, QtWidgets.QAbstractScrollArea):
+            anchor = w.viewport().mapToGlobal(pos)
+        else:
+            anchor = w.mapToGlobal(pos)
+        menu = QtWidgets.QMenu(w)
+        act_doc = menu.addAction("编辑文档")
+        act = menu.exec_(anchor)
+        menu.deleteLater()   # exec_ 的模态菜单用完即释放，防积存
+        if act is act_doc:
+            self._open_doc_for(info)
 
     def _set_color(self, info):
         """卡片颜色框取色（非原生 QColorDialog，中文按钮）。

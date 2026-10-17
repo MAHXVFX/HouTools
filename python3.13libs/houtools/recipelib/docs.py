@@ -39,6 +39,11 @@ class _DocPreview(QtWidgets.QTextBrowser):
         self._doc_dir = doc_dir
         self.setOpenLinks(False)
         self.anchorClicked.connect(self._on_anchor)
+        # 吞掉 QTextBrowser 自带的英文标准右键菜单（Copy/Copy Link
+        # Location/Select All，未选中文字时大半灰置徒增困惑）：
+        # CustomContextMenu 策略只发信号、不弹默认菜单——主面板接收信号
+        # 自建「编辑文档」菜单，无人接收（文档编辑器预览栏）= 右键不弹
+        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
 
     def set_doc_dir(self, doc_dir):
         self._doc_dir = doc_dir

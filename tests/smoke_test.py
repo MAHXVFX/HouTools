@@ -1412,6 +1412,25 @@ def main():
                 win.list.setCurrentRow(0)
                 assert win.preview_doc.isVisibleTo(win), "doc view hidden"
                 assert "标题甲" in win.preview_doc.toPlainText()
+                # 文档渲染区右键：QTextBrowser 自带英文标准菜单必须已禁用
+                # （CustomContextMenu 只发信号）；主面板自建「编辑文档」
+                # 菜单，选中后走 _open_doc_for 打开编辑器
+                from PySide6 import QtCore
+                assert win.preview_doc.contextMenuPolicy() \
+                    == QtCore.Qt.CustomContextMenu
+
+                def _fake_exec(menu, *_a, **_k):
+                    assert [a.text() for a in menu.actions()] == ["编辑文档"]
+                    return menu.actions()[0]
+
+                with patch("houtools.recipelib.browser.QtWidgets.QMenu.exec_",
+                           _fake_exec):
+                    win.preview_doc.customContextMenuRequested.emit(
+                        QtCore.QPoint(10, 10))
+                assert isinstance(win._doc_dialog, rl_browser.DocEditorDialog)
+                win._doc_dialog.close()
+                win._doc_dialog.deleteLater()
+                win._doc_dialog = None
                 assert not win.preview_comment.isVisibleTo(win)
                 # 标签设置弹窗：确认后 _apply_filter 须恢复选中态——
                 # 否则 _selected_info() 变 None，按钮第二次点击"失灵"
@@ -1430,6 +1449,18 @@ def main():
                 win.list.setCurrentRow(1)
                 assert win.preview_comment.isVisibleTo(win)
                 assert not win.preview_doc.isVisibleTo(win)
+                # 无文档 recipe：文档区隐藏，备注区是唯一右键入口——
+                # 同样弹「编辑文档」并打开编辑器
+                assert win.preview_comment.contextMenuPolicy() \
+                    == QtCore.Qt.CustomContextMenu
+                with patch("houtools.recipelib.browser.QtWidgets.QMenu.exec_",
+                           _fake_exec):
+                    win.preview_comment.customContextMenuRequested.emit(
+                        QtCore.QPoint(10, 10))
+                assert isinstance(win._doc_dialog, rl_browser.DocEditorDialog)
+                win._doc_dialog.close()
+                win._doc_dialog.deleteLater()
+                win._doc_dialog = None
                 rl_meta.set_tags("houtools::pyro::a", [])
                 rl_meta.delete_doc_dir("houtools::pyro::a")
                 rl_meta.set_display_name("houtools::pyro::a", None)
