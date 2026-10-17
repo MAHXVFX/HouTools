@@ -39,7 +39,7 @@ Houdini 22 插件工具集，开发期支持**手动热加载**：改完代码�
 | 粘贴边界框 | 节点右键 `Paste Bounding Box [HT]` | Ctrl+C 复制源节点后，右键带三分量 `size`/`t` 参数的目标节点（如 box），把源节点包围盒尺寸/中心粘贴到其 `size`/`t`——绝对值或 `bbox()`/`centroid()` 表达式（同网络相对路径、跨层级绝对路径）两种模式 |
 | 视频转序列图 | `HouTools → Video to Sequence` | ffmpeg 提取视频为 JPG 序列（帧级进度，质量/起始帧/位数/前缀可调），相机分辨率可读取/编辑（宽/高双框 + 预设），可选自动设置相机 Background Image |
 | Hdr Library | `HouTools → Hdr Library` | HDR 环境贴图库浏览器：缩略图网格（后台生成）、子文件夹分类 + 收藏，选中灯光后双击即贴图 |
-| Recipe Library | `HouTools → Recipe Library` | recipes 资产库浏览器：官方 recipes 卡片网格浏览（缩略图/标签/主题色），树形侧栏过滤，双击/拖拽应用到网络，Markdown 文档，数据导入/导出 |
+| Recipe Library | `HouTools → Recipe Library` | recipes 资产库浏览器：官方 recipes 卡片网格浏览（缩略图/标签/主题色），树形侧栏过滤，双击/拖拽应用到网络，VEX/Python 代码块卡片（双击追加到选中节点），Markdown 文档，数据导入/导出 |
 | About HouTools | `HouTools → About HouTools` | 用默认浏览器打开离线使用手册（`docs/index.html` + 本地截图，零外部网络资源）：全部工具的功能与用法 |
 
 ### Automation
@@ -158,15 +158,21 @@ Houdini 22 官方 recipes 资产库面板（独立窗口，进任务栏）。**�
 Tab 菜单里的 session tool 从会话开始可用。recipe 的创建走 Houdini 官方保存流程，面板纯展示。
 
 - **浏览**：卡片网格显示缩略图、标签、版本、节点数，卡片支持自定义主题色与收藏角标；
-  树形侧栏按 全部 / 收藏 / 节点参数 / 子菜单 / 标签 / 网络层级 过滤；搜索框支持
-  `#` 前缀只搜标签、多词 AND 匹配；预览缩略图点击放大查看（滚轮缩放、中键平移）
+  标签可自定义颜色（侧栏、卡片、预览三处生效）；树形侧栏按 全部 / 收藏 / 代码块 /
+  节点参数 / 子菜单 / 标签 / 网络层级 过滤；搜索框支持 `#` 前缀只搜标签、多词 AND
+  匹配；预览缩略图右键可设置/截取/清除缩略图，点击放大查看（滚轮缩放、中键平移）
+- **代码块**：VEX / Python 代码片段卡片，一卡一文件存 `settings/vex_python_lib/`
+  （`vex/*.h`、`python/*.py`，文件即数据源），卡片缩略图即代码高亮渲染；空白网格区
+  右键「新建代码块」创建；双击卡片把代码追加到全部选中节点的代码参数
+  （VEX→snippet、Python→python）；搜索含代码全文
 - **应用**：双击卡片 = 官方工具架体验（参数照抄，视角不拉远），拖拽到网络 = 在落点对齐创建；
   应用前做网络层级匹配检查（如 SOP recipe 进 LOP 网络会给出中文提示）
-- **元数据**：自定义显示名（支持中文）、标签、颜色、收藏存 `settings/recipelib.json`，
-  缩略图存 `settings/recipe_thumbs/`（相对路径存储，项目挪动不失效）；无文档时预览回退官方备注
+- **元数据**：自定义显示名（支持中文）、标签（可自定义颜色）、颜色、收藏存
+  `settings/recipelib.json`，缩略图存 `settings/recipe_thumbs/`（相对路径存储，项目挪动不失效）；
+  无文档时预览回退官方备注，文档/备注区右键「编辑文档」
 - **文档**：每条 recipe 可配 Markdown 文档（存 `settings/recipe_docs/`），确认/取消模式编辑，
   渲染支持 GIF 动图与视频播放
-- **数据交换**：「设置 ▸ 数据」导出/导入 zip 交换包（元数据 + 缩略图 + 文档 + HDA），
+- **数据交换**：「设置 ▸ 数据」导出/导入 zip 交换包（元数据 + 缩略图 + 文档 + HDA + 代码块），
   打包带走、分享；导入按内部名合并，与本地同名定义的 HDA 整文件跳过
 
 ## 新增一个工具
@@ -247,7 +253,8 @@ HouTools/
     ├── hdr_library.json           # Hdr Library 的库目录/缩略图大小/收藏
     ├── recipelib.json             # Recipe Library 的库目录与元数据（标签/收藏/颜色/显示名）
     ├── recipe_thumbs/             # Recipe Library 缩略图
-    └── recipe_docs/               # Recipe Library Markdown 文档
+    ├── recipe_docs/               # Recipe Library Markdown 文档
+    └── vex_python_lib/            # Recipe Library 代码块（vex/*.h、python/*.py，一卡一文件）
 ```
 
 ## 许可

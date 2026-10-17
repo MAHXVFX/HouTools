@@ -19,6 +19,12 @@ import time
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# offscreen 平台用 QBasicFontDatabase，只认 QT_QPA_FONTDIR 指向的字体目录，
+# 缺省路径不存在时私有字体缺字形（如 •）无系统回退、渲染成豆腐块——指到
+# 系统字体目录，回退行为贴近真实会话（真实会话同样靠系统字体回退补 •）
+os.environ.setdefault("QT_QPA_FONTDIR",
+                      os.path.join(os.environ.get("WINDIR", r"C:\Windows"),
+                                   "Fonts"))
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python3.13libs"))
@@ -212,11 +218,13 @@ def shot_recipe(tmp: Path):
     from houtools.core.settings import JsonStore
     from houtools.recipelib import metadata as rl_meta
     from houtools.recipelib import browser as rl_browser
+    from houtools.recipelib import codeblock as rl_code
     from houtools.recipelib import store as rl_store
 
     store = JsonStore("_about_shots_rl.json", defaults=dict(rl_meta._DEFAULTS))
     thumbs = tmp / "rl_thumbs"
     thumbs.mkdir(parents=True, exist_ok=True)
+    codelib = tmp / "vex_python_lib"
 
     infos = [
         rl_store.RecipeInfo(name="mahx::karma_pyro_setup",
@@ -247,7 +255,8 @@ def shot_recipe(tmp: Path):
                       return_value=["X:/demo_lib"]), \
          patch.object(rl_browser.store, "list_recipes",
                       side_effect=lambda lib_dirs=None:
-                          list(infos) if lib_dirs else []):
+                          list(infos) if lib_dirs else []), \
+         patch.object(rl_code, "CODELIB_ROOT", codelib):
         for info, color in zip(infos, palette):
             pm = QtGui.QPixmap(256, 169)
             pm.fill(QtGui.QColor(color))
@@ -265,6 +274,30 @@ def shot_recipe(tmp: Path):
         rl_meta.set_display_name(infos[1].name, "穹顶灯光装备")
         rl_meta.set_tags(infos[0].name, ["pyro", "常用"])
         rl_meta.set_tags(infos[3].name, ["材质", "预览"])
+
+        # 代码块打桩:两个语言各一块(卡片缩略图 = 代码高亮渲染),
+        # 展示侧栏「代码块」段与代码卡片
+        rl_code.save_code("packed_normal", "vex", """\
+// 把 @N 转成 packed 朝向(@orient)
+vector n = normalize(v@N);
+vector up = {0, 1, 0};
+if (abs(dot(n, up)) > 0.99) up = {1, 0, 0};
+vector axis = cross(up, n);
+p@orient = quaternion(axis, n);
+""")
+        rl_code.save_code("batch_rename", "python", """\
+# 按前缀批量重命名选中节点
+import hou
+
+prefix = "sim_"
+for node in hou.selectedNodes():
+    node.setName(prefix + node.name())
+print("renamed %d nodes" % len(hou.selectedNodes()))
+""")
+        rl_meta.set_display_name("batch_rename", "批量重命名")
+        rl_meta.set_tags("packed_normal", ["vex", "常用"])
+        rl_meta.set_tags("batch_rename", ["python"])
+        rl_meta.set_color("packed_normal", "#0d6399")
 
         win = rl_browser._RecipeLibraryWindow()
         win.resize(SHOT_W, SHOT_H)

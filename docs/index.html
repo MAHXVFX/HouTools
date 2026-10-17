@@ -658,7 +658,7 @@
 
     <a class="slide" href="#recipe-library">
       <img src="about_shots/recipe.png" alt="Recipe Library 界面截图:recipe 卡片网格与预览面板">
-      <div class="slide-cap"><strong>Recipe Library</strong><span>recipes 资产卡片浏览,双击/拖拽入网</span></div>
+      <div class="slide-cap"><strong>Recipe Library</strong><span>recipes 卡片与 VEX/Python 代码块,双击/拖拽入网</span></div>
     </a>
 
   </div>
@@ -819,13 +819,14 @@
 <section id="recipe-library">
   <h2>Recipe Library<span class="zh">recipes 资产库</span></h2>
   <p class="entry">入口:<code>HouTools → Recipe Library</code>(独立窗口,进任务栏)</p>
-  <p>基于 Houdini 22 官方 recipes 的资产面板:卡片网格浏览、树形侧栏过滤、双击/拖拽应用到网络、Markdown 文档、数据导入导出。</p>
+  <p>基于 Houdini 22 官方 recipes 的资产面板:卡片网格浏览、树形侧栏过滤、双击/拖拽应用到网络、VEX/Python 代码块、Markdown 文档、数据导入导出。</p>
   <h3>浏览</h3>
   <ul>
     <li>卡片显示缩略图、标签、版本、节点数,支持自定义主题色(右键「自定义颜色」)与收藏角标。</li>
-    <li>树形侧栏按 全部 / 收藏 / 节点参数 / 子菜单 / 标签 / 网络层级 过滤。</li>
+    <li>标签可自定义颜色(侧栏标签行右键「自定义颜色」),侧栏行、卡片标签行、预览标签栏三处生效。</li>
+    <li>树形侧栏按 全部 / 收藏 / 代码块 / 节点参数 / 子菜单 / 标签 / 网络层级 过滤;右键仅弹菜单,不切换分组。</li>
     <li>搜索框支持 <code>#</code> 前缀只搜标签(如 <code>#pyro</code>),多词 AND 匹配;自定义显示名(支持中文)同步参与搜索。</li>
-    <li>预览缩略图点击放大:滚轮缩放、中键平移、双击或 Esc 关闭;GIF 显示动图,文档中的视频可播放。</li>
+    <li>预览缩略图区域右键可直接 设置缩略图 / 截取缩略图 / 清除缩略图;点击放大:滚轮缩放、中键平移、双击或 Esc 关闭;GIF 显示动图,文档中的视频可播放。</li>
   </ul>
   <h3>应用</h3>
   <ul>
@@ -834,16 +835,23 @@
     <li>应用前做网络层级匹配检查,不匹配时左下角状态栏给出中文提示(如 SOP recipe 进 LOP 网络)。</li>
     <li>node / parm / decoration 预设需先选中目标节点。</li>
   </ul>
+  <h3>代码块</h3>
+  <ul>
+    <li>VEX / Python 代码片段卡片:一卡一文件存 <code>settings/vex_python_lib/</code>(<code>vex/*.h</code>、<code>python/*.py</code>,文件即数据源);内部名 = 文件名,创建后不可改,中文展示名走「自定义显示名」。</li>
+    <li>空白网格区右键「新建代码块」创建(实时查重,重名/非法名禁用确认);卡片缩略图即代码高亮渲染,字号只随卡片高度取档,可读性优先。</li>
+    <li>双击卡片 = 把代码追加到全部选中节点的代码参数(VEX→snippet、Python→python,现有内容非空时空行分隔),整批一个 undo。</li>
+    <li>预览面板为带行号的代码视图(语言/修改时间/行数),右键「编辑代码」;搜索含代码全文。</li>
+  </ul>
   <h3>元数据与文档</h3>
   <ul>
     <li>库只加载「设置 ▸ 库目录」配置的用户文件夹(递归扫描 .hda),出厂库 / Labs 一律不显示;库启动时自动安装,Tab 菜单里的 session tool 从会话开始可用。</li>
-    <li>自定义显示名、标签、颜色、收藏存 <code>settings/recipelib.json</code>,缩略图存 <code>settings/recipe_thumbs/</code>(相对路径存储,项目挪动不失效)。</li>
-    <li>每条 recipe 可配 Markdown 文档(存 <code>settings/recipe_docs/</code>),确认/取消模式编辑,渲染支持 GIF 动图与视频;主面板有文档时直接渲染文档,无文档回退官方备注。</li>
+    <li>自定义显示名、标签(可自定义颜色)、颜色、收藏存 <code>settings/recipelib.json</code>,缩略图存 <code>settings/recipe_thumbs/</code>(相对路径存储,项目挪动不失效)。</li>
+    <li>每条 recipe 可配 Markdown 文档(存 <code>settings/recipe_docs/</code>),确认/取消模式编辑,渲染支持 GIF 动图与视频;主面板有文档时直接渲染文档,无文档回退官方备注;文档/备注渲染区右键「编辑文档」。</li>
     <li>设置缩略图支持两种来源:右键「设置缩略图」选图后框选裁剪(比例与卡片锁定),或「截取缩略图」屏幕框选(所有显示器全屏遮罩,选框可跨屏拖拽,混合 DPI 按各屏取像)。</li>
   </ul>
   <h3>数据交换</h3>
   <ul>
-    <li>「设置 ▸ 数据」导出/导入 zip 交换包(元数据 + 缩略图 + 文档 + HDA),打包带走、分享。</li>
+    <li>「设置 ▸ 数据」导出/导入 zip 交换包(元数据 + 缩略图 + 文档 + HDA + 代码块),打包带走、分享。</li>
     <li>导入按内部名合并:包内覆盖同名、本地独有保留、收藏取并集;与本地同名定义的 HDA 整文件跳过(避免同名定义二选一的不可预期)。</li>
   </ul>
 </section>
