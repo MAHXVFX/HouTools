@@ -1709,48 +1709,59 @@ def main():
     print("RecipeLibrary metadata + window OK")
 
     # ------------------------------------------------------------------
-    # 代码块（codeblock.py）：存储 CRUD / 唯一名 / 高亮与缩略图渲染 /
-    # 编辑弹窗 / 面板集成（侧栏段、代码搜索、预览代码视图、双击追加、
-    # 右键菜单）/ transfer 打包往返（纯 Qt，不触 hou）
+    # 代码块（codeblock.py）：一卡一文件存储 / 内部名查重 / 旧数据迁移 /
+    # 高亮与缩略图渲染 / 编辑弹窗 / 面板集成 / transfer 打包往返
+    # （纯 Qt，不触 hou）
     # ------------------------------------------------------------------
     from houtools.recipelib import codeblock as rl_cb
     from PySide6 import QtCore as _qtc
     from PySide6 import QtGui as _qtg
+    import zipfile as _zf
 
     with tempfile.TemporaryDirectory() as tmp:
         cb_store = houtools.core.settings.JsonStore(
             "_smoke_rl_cb.json", defaults=dict(rl_meta._DEFAULTS))
         _track_rm(cb_store.path)
-        with patch.object(rl_meta, "_SETTINGS", cb_store):
-            # ---- 存储层：CRUD / 唯一名 / 中文名回退 / 时间戳 ----
-            n1 = rl_meta.unique_code_name("my vex", "vex")
-            assert n1 == "htcode::my_vex", n1
-            rl_meta.set_code_block(n1, "vex", "int x = 1;\n// 注释")
-            assert rl_meta.unique_code_name("my vex", "vex") \
-                == "htcode::my_vex_2"
-            # 纯中文名无 ASCII 可留：按语言回退生成 token，中文由
-            # display_names 承载（显示链不变）
-            assert rl_meta.unique_code_name("烟雾", "python") \
-                == "htcode::python_code"
-            assert rl_meta.sanitize_code_name("烟雾") == ""
-            rec = rl_meta.set_code_block("htcode::py_a", "python",
-                                         "print(1)\n")
-            assert rec["created"] and rec["modified"]
-            created0 = rec["created"]
-            # 语言不认识 → vex 收敛；更新保留 created
-            rl_meta.set_code_block("htcode::py_a", "rust", "x")
-            assert rl_meta.get_code_block("htcode::py_a")["language"] == "vex"
-            rl_meta.set_code_block("htcode::py_a", "python", "print(2)")
-            assert rl_meta.get_code_block("htcode::py_a")["created"] \
-                == created0
-            assert len(rl_meta.list_code_blocks()) == 2
-            rl_meta.delete_code_block(n1)
-            assert rl_meta.get_code_block(n1) is None
-            # unique_safe_name 的撞名检测数据源必须含代码块内部名
-            assert "htcode::py_a" in rl_meta._iter_metadata_names()
-            rl_meta.delete_code_block("htcode::py_a")   # 清掉本段残留
-            assert len(rl_meta.list_code_blocks()) == 0
-            print("code block metadata CRUD OK")
+        with patch.object(rl_meta, "_SETTINGS", cb_store), \
+             patch.object(rl_cb, "CODELIB_ROOT",
+                          Path(tmp) / "vex_python_lib"):
+            # ---- 存储层：一卡一文件 / 查重 / 换语言搬文件 / 删除 ----
+            assert rl_cb.validate_stem("烟雾")[0] is False   # 非 ASCII 拒绝
+            assert rl_cb.validate_stem("")[0] is False       # 空名拒绝
+            ok, msg = rl_cb.validate_stem("my_vex-1")
+            assert ok, msg
+            rl_cb.save_code("my_vex-1", "vex", "int x = 1;\n// 注释")
+            assert (Path(tmp) / "vex_python_lib" / "vex"
+                    / "my_vex-1.h").is_file()
+            assert rl_cb.stem_exists("MY_VEX-1")   # 大小写不敏感查重
+            ok, msg = rl_cb.validate_stem("my_vex-1")
+            assert not ok and "已被使用" in msg
+            rl_cb.save_code("py_a", "python", "print(1)\n")
+            # 换语言 = 文件搬目录（旧扩展名文件删除）
+            rl_cb.save_code("py_a", "vex", "# moved")
+            assert not (Path(tmp) / "vex_python_lib" / "python"
+                        / "py_a.py").exists()
+            assert (Path(tmp) / "vex_python_lib" / "vex"
+                    / "py_a.h").is_file()
+            assert rl_cb.read_code("py_a", "vex") == "# moved"
+            rl_cb.delete_code("py_a", "vex")
+            assert not rl_cb.stem_exists("py_a")
+            # 迁移：旧 json 段 → 一卡一文件 + 元数据键改挂（幂等）
+            rl_meta.set_display_name("htcode::old_vex", "旧卡")
+            rl_meta.set_favorite("htcode::old_vex", True)
+            cb_store.set("code_blocks", {
+                "htcode::old_vex": {"language": "vex",
+                                    "code": "int old = 1;",
+                                    "created": "t0", "modified": "t1"}})
+            assert rl_cb.migrate_legacy_code_blocks() == 1
+            assert (Path(tmp) / "vex_python_lib" / "vex"
+                    / "old_vex.h").is_file()
+            assert rl_cb.read_code("old_vex", "vex") == "int old = 1;"
+            assert rl_meta.get_display_name("old_vex") == "旧卡"
+            assert rl_meta.is_favorite("old_vex")
+            assert rl_cb.migrate_legacy_code_blocks() == 0   # 幂等
+            rl_cb.delete_code("old_vex", "vex")   # 清掉本段残留（面板段从零起）
+            print("code block file storage + migration OK")
 
             # ---- 模块层：高亮器 / 缩略图渲染 / CodeInfo ----
             doc = _qtg.QTextDocument()
@@ -1765,39 +1776,44 @@ def main():
             # 空代码给占位文案，不崩、非空图
             assert not rl_cb.render_code_pixmap(
                 "", "vex", 100, 66, 1.0).isNull()
-            ci = rl_cb.CodeInfo.from_record(
-                "htcode::x", {"language": "python", "code": "print(1)"})
-            assert ci.is_code and ci.display_label == "x"
-            assert ci.language == "python" and ci.category == "code"
-            # 坏记录容错：语言不认识归 vex、非 dict 记录给空码
-            ci_bad = rl_cb.CodeInfo.from_record("htcode::y", "junk")
-            assert ci_bad.language == "vex" and ci_bad.code == ""
+            ci = rl_cb.CodeInfo(name="old_vex", language="vex",
+                                code="int x = 0;")
+            assert ci.is_code and ci.display_label == "old_vex"
+            assert ci.language == "vex" and ci.category == "code"
             print("codeblock highlight/render/model OK")
 
-            # ---- 编辑弹窗：offscreen 实例化 + 语言切换不清码 + 取值 ----
-            dlg = rl_cb.CodeEditorDialog(None, info=ci)
-            assert dlg.name_edit.text() == "x"
-            assert dlg.editor.toPlainText() == "print(1)"
-            dlg.lang_combo.setCurrentIndex(dlg.lang_combo.findData("vex"))
-            assert dlg.editor.toPlainText() == "print(1)"
-            dlg.name_edit.setText("自定义名")
-            assert dlg.result_values() == ("自定义名", "vex", "print(1)")
+            # ---- 编辑弹窗：创建态实时查重（重名/非法禁用确定键）/
+            # 编辑态名称只读 ----
+            dlg = rl_cb.CodeEditorDialog(None, info=None)
+            assert not dlg._ok_btn.isEnabled()   # 空名禁用
+            dlg.name_edit.setText("烟雾")
+            assert not dlg._ok_btn.isEnabled()   # 非法字符禁用
+            dlg.name_edit.setText("my_vex-1")
+            assert "已被使用" in dlg.name_hint.text()
+            assert not dlg._ok_btn.isEnabled()
+            dlg.name_edit.setText("fresh_one")
+            assert dlg._ok_btn.isEnabled()
+            dlg.editor.setPlainText("float f = 0.0;")
+            assert dlg.result_values() == ("fresh_one", "vex",
+                                           "float f = 0.0;")
             dlg.deleteLater()
+            dlg2 = rl_cb.CodeEditorDialog(None, info=ci)
+            assert dlg2.name_edit.isReadOnly()   # 内部名称创建后不可改
+            assert dlg2.name_edit.text() == "old_vex"
+            assert dlg2.editor.toPlainText() == "int x = 0;"
+            dlg2.deleteLater()
             print("codeblock editor dialog OK")
 
             # ---- 面板集成：侧栏段 / 过滤 / 搜索 / 预览 / 双击 / 右键 ----
-            rl_meta.set_code_block("htcode::smoke_vex", "vex",
-                                   "int smoke = 1;")
-            rl_meta.set_display_name("htcode::smoke_vex", "烟雾测试")
-            rl_meta.set_tags("htcode::smoke_vex", ["测试"])
-            rl_meta.set_favorite("htcode::smoke_vex", True)
-            rl_meta.set_code_block("htcode::smoke_py", "python",
-                                   "print('x')")
+            rl_meta.set_display_name("my_vex-1", "烟雾测试")
+            rl_meta.set_tags("my_vex-1", ["测试"])
+            rl_meta.set_favorite("my_vex-1", True)
+            rl_cb.save_code("smoke_py", "python", "print('x')")
             cb_ui_store = houtools.core.settings.JsonStore(
                 "_smoke_rl_cb_ui.json",
                 defaults=dict(rl_browser._UI_SETTINGS._defaults))
             _track_rm(cb_ui_store.path)
-            # 未配置库目录也加载代码块（内容存 metadata，不依赖 .hda）
+            # 未配置库目录也加载代码块（文件在插件 settings 下，与库无关）
             with patch.object(rl_meta, "get_lib_dirs", return_value=[]), \
                  patch.object(rl_browser, "_UI_SETTINGS", cb_ui_store):
                 wcb = rl_browser._RecipeLibraryWindow()
@@ -1813,8 +1829,7 @@ def main():
                 wcb.search.setText("print")
                 wcb._apply_filter()
                 assert wcb.list.count() == 1
-                assert wcb.list.item(0).data(_qtc.Qt.UserRole) \
-                    == "htcode::smoke_py"
+                assert wcb.list.item(0).data(_qtc.Qt.UserRole) == "smoke_py"
                 wcb.search.setText("")
                 wcb._apply_filter()
                 # 标签段含代码块标签；收藏段含代码块
@@ -1825,7 +1840,7 @@ def main():
                 wcb._select_category(rl_browser.KEY_CODE)
                 # 卡片缩略图 = 代码文本渲染（无自定义缩略图）
                 pm_card = wcb.thumb_pixmap(
-                    wcb._info_by_name["htcode::smoke_vex"], 100, 66)
+                    wcb._info_by_name["my_vex-1"], 100, 66)
                 assert not pm_card.isNull()
                 # 选中 → 预览代码视图接码（内容与 info.code 一致）
                 wcb.list.setCurrentRow(0)
@@ -1854,7 +1869,7 @@ def main():
                                   return_value=["/obj/n1", "/obj/n2"]), \
                      patch.object(rl_browser.codeblock, "append_to_nodes",
                                   side_effect=_fake_append):
-                    wcb._apply_recipe(wcb._info_by_name["htcode::smoke_py"])
+                    wcb._apply_recipe(wcb._info_by_name["smoke_py"])
                 assert calls == {"nodes": ["/obj/n1", "/obj/n2"],
                                  "language": "python",
                                  "code": "print('x')"}, calls
@@ -1864,7 +1879,7 @@ def main():
                                   return_value=[]), \
                      patch.object(rl_browser.codeblock, "append_to_nodes",
                                   side_effect=_fake_append) as m_ap:
-                    wcb._apply_recipe(wcb._info_by_name["htcode::smoke_py"])
+                    wcb._apply_recipe(wcb._info_by_name["smoke_py"])
                 assert m_ap.call_count == 0
                 assert "选中" in wcb.status.text()
                 # 空白数据区右键：菜单 = 新建代码块
@@ -1890,7 +1905,7 @@ def main():
                 wcb.deleteLater()
             print("code block panel integration OK")
 
-            # ---- transfer：代码块随包导出/导入往返 ----
+            # ---- transfer：代码文件随包导出/导入往返 ----
             import houtools.recipelib.transfer as rl_transfer2
             with patch.object(rl_meta, "THUMBS_DIR", Path(tmp) / "thumbs"), \
                  patch.object(rl_meta, "DOCS_DIR", Path(tmp) / "docs"):
@@ -1900,20 +1915,26 @@ def main():
                 summary = rl_transfer2.export_recipes(
                     items, zip_path, include_hda=False)
                 assert summary["code_blocks"] == 2, summary
+                with _zf.ZipFile(zip_path) as z:
+                    members = z.namelist()
+                assert "vex_python_lib/vex/my_vex-1.h" in members, members
+                assert "vex_python_lib/python/smoke_py.py" in members, members
                 dst_store = houtools.core.settings.JsonStore(
                     "_smoke_rl_cb_dst.json",
                     defaults=dict(rl_meta._DEFAULTS))
                 _track_rm(dst_store.path)
-                with patch.object(rl_meta, "_SETTINGS", dst_store):
+                with patch.object(rl_meta, "_SETTINGS", dst_store), \
+                     patch.object(rl_cb, "CODELIB_ROOT",
+                                  Path(tmp) / "dst_vex_python_lib"):
                     result = rl_transfer2.import_package(zip_path)
                     assert result["code_blocks"] == 2, result
-                    got = rl_meta.get_code_block("htcode::smoke_py")
-                    assert got and got["code"] == "print('x')", got
-                    assert got["language"] == "python"
+                    assert (Path(tmp) / "dst_vex_python_lib" / "python"
+                            / "smoke_py.py").is_file()
+                    assert rl_cb.read_code("smoke_py", "python") \
+                        == "print('x')"
                     # 收藏/显示名按内部名随包合并
-                    assert rl_meta.is_favorite("htcode::smoke_vex")
-                    assert rl_meta.get_display_name("htcode::smoke_vex") \
-                        == "烟雾测试"
+                    assert rl_meta.is_favorite("my_vex-1")
+                    assert rl_meta.get_display_name("my_vex-1") == "烟雾测试"
             print("code block transfer roundtrip OK")
 
     # 文档编辑器：实例化（无文档=空白）+ 确认/取消模式 + 实时预览渲染

@@ -1,9 +1,12 @@
 """代码块：Recipe Library 的文本型卡片（VEX / Python 片段）。
 
-与 HDA recipe 完全不同的数据源：内容存在 metadata 的 code_blocks 段
-（settings/recipelib.json），内部名 htcode:: 前缀与 recipe 内部名空间
-隔离；收藏/标签/颜色/缩略图/显示名/文档全部复用按内部名键控的元数据
-层，侧栏「代码块」段、搜索、卡片主题色都自动生效。
+**一卡一文件**（2026-10-18 用户拍板，对照 Houdini 官方 vex include 的
+存放方式 `$HFS/houdini/vex/include/*.h`）：代码存
+`settings/vex_python_lib/vex/<内部名>.h` 与
+`settings/vex_python_lib/python/<内部名>.py`，文件名 = 用户命名的内部
+名（首次创建时设置、查重、之后不可改）；收藏/标签/颜色/缩略图/显示名
+/文档仍按内部名键控复用 metadata 层，侧栏「代码块」段、搜索、卡片主
+题色自动生效。
 
 交互语义（2026-10 用户拍板）：
 - 双击卡片 = 把代码**追加**到全部选中节点的代码参数（VEX→snippet、
@@ -11,21 +14,26 @@
 - 拖入文本编辑框（VEX 编辑器等）= 真 QDrag + text/plain，Houdini
   编辑器原生接受后在落点光标处插入（原生拖放指示随编辑器自带，追加
   语义由 Qt 文本拖放保证）。只做这一个方案，不做程序化插入兜底；
-  若实测编辑器不接受外来文本拖放，整体换方案 B（见调研报告），不并存
+  若实测编辑器不接受外来文本拖放，整体换方案 B（见调研报告），不并存。
+  **MIME 文本必须 CRLF**：Houdini VEX 编辑框的行模型按 \\r\\n 切行，
+  投 \\n-only 会整段挤成一行且排版错乱（2026-10-18 会话实测）
 - 拖入网络编辑器 = 外部 MIME 不被网络编辑器接受，QDrag.exec 返回
   IgnoreAction → 按松手点创建对应节点（VEX→attribwrangle、
   Python→python SOP）并填入代码
-- 卡片无自定义缩略图时，缩略图区直接渲染代码文本（深底 + 行号 +
-  语法色；文本从第一行可读，不做 cover 中心裁剪）
+- 卡片无自定义缩略图时，缩略图区直接渲染代码文本（深底 + 语法色，
+  可读性优先，见 render_code_pixmap）
 
 无头约束：import hou 一律在函数内；模型/高亮器/弹窗/渲染可无头测试。
 """
 
+import os
 import re
+from datetime import datetime
 from dataclasses import dataclass, field
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from houtools.core.constants import SETTINGS_DIR
 from houtools.core.log import get_logger
 from houtools.recipelib import metadata
 from houtools.recipelib.vex_keywords import VEX_FUNCTIONS
@@ -41,18 +49,203 @@ _PARM_FOR_LANGUAGE = {"vex": "snippet", "python": "python"}
 
 
 # --------------------------------------------------------------------------
-# 数据模型（与 RecipeInfo 同名同语义的接口字段，卡片/预览/侧栏共用渲染）
+# 数据模型与文件存储（一卡一文件，见模块 docstring）
 # --------------------------------------------------------------------------
+
+# 库根目录：settings/vex_python_lib/{vex,python}/，各语言一个子文件夹；
+# 所有路径在调用时由它派生（smoke test 打补丁只换这一个常量）
+CODELIB_ROOT = SETTINGS_DIR / "vex_python_lib"
+FILE_EXT = {"vex": ".h", "python": ".py"}
+# 内部名 = 文件名 stem（用户命名）：字母/数字开头，只收字母数字 _ -
+_STEM_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+
+
+def code_dir(language):
+    """某语言的代码库文件夹（不自动创建；写文件时 mkdir）。"""
+    return CODELIB_ROOT / ("python" if language == "python" else "vex")
+
+
+def sanitize_stem(text):
+    """用户输入 → 合法文件名 stem：掐空白，其余不合法字符原样保留交由
+    validate_stem 报错（不静默改写——内部名就是文件名，悄悄变形会误导）。"""
+    return str(text or "").strip()
+
+
+def validate_stem(text):
+    """创建时的内部名校验：返回 (合法, 提示文案)。合法与否与文件系统
+    无关的规则固定在此（弹窗实时校验 + 保存侧共用同一结论）。"""
+    stem = sanitize_stem(text)
+    if not stem:
+        return False, "名称不能为空"
+    if not _STEM_RE.match(stem):
+        return False, "只能用字母、数字、_ 或 -（字母或数字开头，≤64 字符）"
+    if stem_exists(stem):
+        return False, "该名称已被使用，换一个"
+    return True, "名称可用"
+
+
+def stem_exists(stem):
+    """内部名查重：两个语言目录都查（同一内部名只能有一张卡片），
+    Windows 文件系统大小写不敏感，比对也大小写不敏感。"""
+    stem_low = stem.lower()
+    for language in metadata.CODE_LANGUAGES:
+        ext = FILE_EXT[language]
+        try:
+            names = os.listdir(str(code_dir(language)))
+        except OSError:
+            continue
+        for fn in names:
+            if fn.lower() == (stem + ext).lower():
+                return True
+    return False
+
+
+def free_stem(stem):
+    """返回不撞名的可用内部名（迁移/旧包导入的兜底自动让名；创建侧
+    是硬拒绝不经此路）。"""
+    unique = sanitize_stem(stem)
+    if not _STEM_RE.match(unique):
+        unique = metadata.sanitize_code_name(stem) or "vex_code"
+    base, i = unique, 2
+    while stem_exists(unique):
+        unique = "{}_{}".format(base, i)
+        i += 1
+    return unique
+
+
+def code_path(name, language):
+    """内部名 -> 代码文件路径（.h=VEX、.py=Python）。"""
+    return code_dir(language) / (name + FILE_EXT[language])
+
+
+def read_code(name, language):
+    """读代码文件；缺失/读失败返回空串（文件可能被外部删除）。"""
+    path = code_path(name, language)
+    try:
+        with open(str(path), encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError as exc:
+        log.warning("cannot read code file %s: %s", path, exc)
+        return ""
+
+
+def save_code(name, language, code):
+    """写代码文件（临时文件 + os.replace 原子替换，项目通用手法）。
+
+    语言变更 = 文件搬到另一语言目录（旧扩展名文件删除）。返回落盘路径。
+    """
+    if not _STEM_RE.match(name):
+        raise RuntimeError("内部名不合法: {}".format(name))
+    language = language if language in metadata.CODE_LANGUAGES else "vex"
+    path = code_path(name, language)
+    old_paths = []
+    for lang in metadata.CODE_LANGUAGES:
+        p = code_path(name, lang)
+        if p != path and p.exists():
+            old_paths.append(p)
+    d = code_dir(language)
+    d.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".~tmp%d" % os.getpid())
+    try:
+        with open(str(tmp), "w", encoding="utf-8", newline="\n") as f:
+            f.write(str(code or ""))
+        os.replace(str(tmp), str(path))
+    finally:
+        if os.path.exists(str(tmp)):
+            try:
+                os.remove(str(tmp))
+            except OSError as exc:
+                log.debug("cannot remove code tmp %s: %s", tmp, exc)
+    for p in old_paths:   # 换语言重设：旧扩展名文件摘除
+        try:
+            os.remove(str(p))
+        except OSError as exc:
+            log.warning("cannot remove old code file %s: %s", p, exc)
+    return str(path)
+
+
+def delete_code(name, language):
+    """删除代码文件（元数据清理由调用方做，同删除 recipe 的分工）。"""
+    path = code_path(name, language)
+    if os.path.isfile(str(path)):
+        try:
+            os.remove(str(path))
+        except OSError as exc:
+            log.warning("cannot remove code file %s: %s", path, exc)
+            raise RuntimeError("删除失败: {}".format(exc))
+
+
+def list_code_infos():
+    """扫描两个语言目录 -> CodeInfo 列表（按显示名排序，网格顺序稳定）。
+
+    modified = 文件 mtime（文件即数据源，外部改动自动反映）；平铺不
+    递归（一卡一文件，子目录不在约定内，忽略）。
+    """
+    out = []
+    for language in metadata.CODE_LANGUAGES:
+        ext = FILE_EXT[language]
+        d = code_dir(language)
+        try:
+            names = sorted(os.listdir(str(d)))
+        except OSError:
+            continue
+        for fn in names:
+            path = d / fn
+            if not fn.lower().endswith(ext) or not path.is_file():
+                continue
+            stem = fn[: -len(ext)]
+            try:
+                mtime = datetime.fromtimestamp(
+                    path.stat().st_mtime).isoformat(timespec="seconds")
+            except OSError as exc:
+                log.warning("stat code file %s failed: %s", path, exc)
+                mtime = ""
+            out.append(CodeInfo(name=stem, language=language,
+                                code=read_code(stem, language),
+                                modified=mtime))
+    out.sort(key=lambda c: c.display_label.lower())
+    return out
+
+
+def migrate_legacy_code_blocks():
+    """旧版（recipelib.json 的 code_blocks 段）一次性迁移为一卡一文件。
+
+    幂等：段空（或已迁过）直接返回 0。每个旧条目落一个 .h/.py（内部名
+    去掉 htcode:: 前缀、撞名时加序号），元数据键 htcode::X 改挂到新名。
+    """
+    blocks = metadata.take_code_blocks_for_migration()
+    if not blocks:
+        return 0
+    moved = 0
+    for old_name, rec in blocks.items():
+        if not isinstance(rec, dict):
+            continue
+        stem = old_name.split("::")[-1] or old_name
+        language = rec.get("language")
+        if language not in metadata.CODE_LANGUAGES:
+            language = "vex"
+        unique = free_stem(stem)
+        save_code(unique, language, str(rec.get("code") or ""))
+        if unique != old_name:
+            metadata.rekey_metadata_name(old_name, unique)
+        moved += 1
+        if unique != stem:
+            log.info("migrated code block %r -> %r (name taken)",
+                     old_name, unique)
+    log.info("migrated %d legacy code blocks to vex_python_lib files",
+             moved)
+    return moved
+
 
 @dataclass
 class CodeInfo:
     """代码块信息（browser 的卡片渲染路径与 RecipeInfo 共用）。"""
 
-    name: str            # 内部名（htcode:: 前缀，元数据键）
+    name: str            # 内部名 = 文件名 stem（用户命名，创建后不可改）
     language: str = "vex"
     code: str = ""
     created: str = ""
-    modified: str = ""
+    modified: str = ""   # 文件 mtime（文件即数据源）
     label: str = ""
     category: str = "code"
     submenu: str = ""
@@ -80,25 +273,6 @@ class CodeInfo:
     @property
     def language_label(self):
         return LANGUAGE_LABELS.get(self.language, self.language)
-
-    @classmethod
-    def from_record(cls, name, record):
-        record = record if isinstance(record, dict) else {}
-        language = record.get("language")
-        if language not in metadata.CODE_LANGUAGES:
-            language = "vex"
-        return cls(name=name, language=language,
-                   code=str(record.get("code") or ""),
-                   created=str(record.get("created") or ""),
-                   modified=str(record.get("modified") or ""))
-
-
-def list_code_infos():
-    """全部代码块 -> CodeInfo 列表（按显示名排序，网格顺序稳定）。"""
-    out = [CodeInfo.from_record(name, rec)
-           for name, rec in metadata.list_code_blocks().items()]
-    out.sort(key=lambda c: c.display_label.lower())
-    return out
 
 
 # --------------------------------------------------------------------------
@@ -399,8 +573,13 @@ class _CodeEditor(QtWidgets.QPlainTextEdit):
 
 
 class CodeEditorDialog(QtWidgets.QDialog):
-    """代码块新建/编辑弹窗：名称 + 语言下拉 + 高亮编辑区，确认/取消
-    模式（确认不落盘，落盘由 browser 在 exec 返回后统一做）。"""
+    """代码块新建/编辑弹窗：内部名称 + 语言下拉 + 高亮编辑区，确认/取消
+    模式（确认不落盘，落盘由 browser 在 exec 返回后统一做）。
+
+    内部名称 = 文件名 stem，**仅首次创建可设**：实时查重（两语言目录
+    合并查、大小写不敏感），重名/非法时提示红字并禁用确定键；编辑态
+    名称只读（2026-10-18 用户拍板）。中文等展示层命名走「自定义显示名」
+    （卡片右键），与本名称解耦。"""
 
     def __init__(self, parent, info=None):
         super().__init__(parent)
@@ -408,9 +587,12 @@ class CodeEditorDialog(QtWidgets.QDialog):
                             else "新建代码块")
         self.resize(680, 520)
         self.setMinimumSize(520, 380)
+        self._create_mode = info is None
 
         self.name_edit = QtWidgets.QLineEdit()
-        self.name_edit.setPlaceholderText("显示名称（支持中文；留空用自动名）")
+        self.name_edit.setPlaceholderText(
+            "内部名称（字母/数字/_/-；创建后不可改）")
+        self.name_hint = QtWidgets.QLabel("")
         self.lang_combo = QtWidgets.QComboBox()
         for lang in metadata.CODE_LANGUAGES:
             self.lang_combo.addItem(LANGUAGE_LABELS[lang], lang)
@@ -431,24 +613,40 @@ class CodeEditorDialog(QtWidgets.QDialog):
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
         localize_buttons(buttons)   # OK/Cancel → 确定/取消
+        self._ok_btn = buttons.button(QtWidgets.QDialogButtonBox.Ok)
 
         lay = QtWidgets.QVBoxLayout(self)
         lay.addLayout(head)
+        lay.addWidget(self.name_hint)
         lay.addWidget(self.editor, 1)
         lay.addWidget(buttons)
 
         if info is not None:
-            self.name_edit.setText(
-                metadata.get_display_name(info.name) or info.display_label)
+            self.name_edit.setText(info.name)
+            self.name_edit.setReadOnly(True)   # 内部名称创建后不可改
+            self.name_edit.setToolTip("内部名称仅在首次创建时可设置")
+            self.name_hint.setText("内部名称创建后不可修改")
+            self.name_hint.setStyleSheet("color: #888888;")
             idx = self.lang_combo.findData(info.language)
             if idx >= 0:
                 self.lang_combo.setCurrentIndex(idx)
             self.editor.setPlainText(info.code)
+        else:
+            self.name_edit.textChanged.connect(self._update_name_state)
         self._on_lang_changed()
+        if self._create_mode:
+            self._update_name_state()   # 空名即禁用确定键
         # 挂树之后压回等宽字体（fonts.py ChildAdded 过滤器刚刷过工具字体，
         # 见 _CodeEditor docstring）
         self.editor.apply_mono()
         self.editor.setFocus()
+
+    def _update_name_state(self, *_args):
+        ok, msg = validate_stem(self.name_edit.text())
+        self.name_hint.setText(msg)
+        self.name_hint.setStyleSheet(
+            "color: #6a9955;" if ok else "color: #d1283e;")
+        self._ok_btn.setEnabled(ok)
 
     def _on_lang_changed(self, *_args):
         lang = self.lang_combo.currentData() or "vex"
@@ -462,14 +660,19 @@ class CodeEditorDialog(QtWidgets.QDialog):
             self.editor.setPlainText(code)
 
     def _on_accept(self):
+        if self._create_mode:
+            ok, msg = validate_stem(self.name_edit.text())
+            if not ok:
+                warn(self, "代码块", msg)
+                return
         if not self.editor.toPlainText().strip():
             warn(self, "代码块", "代码内容为空。")
             return
         self.accept()
 
     def result_values(self):
-        """(显示名, 语言, 代码)——display 名允许空（browser 自动命名）。"""
-        return (self.name_edit.text().strip(),
+        """(内部名, 语言, 代码)。"""
+        return (sanitize_stem(self.name_edit.text()),
                 self.lang_combo.currentData() or "vex",
                 self.editor.toPlainText())
 
@@ -479,16 +682,18 @@ class CodeEditorDialog(QtWidgets.QDialog):
 # --------------------------------------------------------------------------
 
 _THUMB_BG = "#17171b"
-_GUTTER_W = 26
 _TEXT_COLOR = "#d4d4d4"
 
 
 def render_code_pixmap(code, language, w, h, dpr=1.0):
-    """代码文本缩略图：深底 + 行号栏 + 语法色，顶部对齐。
+    """卡片缩略图：代码文本预览（可读性优先，2026-10-18 用户反馈）。
 
-    与图片缩略图不同**不做 cover 中心裁剪**——文本必须从第一行可读；
-    超出按行自然截断。整块内容按可用宽等比缩小（不放大），行号栏不缩。
-    QTextDocument + 高亮器渲染完即弃，随 doc 回收。"""
+    - **无行号栏**：卡片面积有限，行号浪费宽度（预览面板的代码视图
+      才带行号，那边用户已认可）
+    - **字号只随缩略图高度取档、绝不随内容缩小**：长行折行、展示不
+      下的内容按行自然截断——"内容可以不展示完，但字一定要看得清"
+    - 深底 + 语法色；QTextDocument + 高亮器渲染完即弃
+    """
     w, h = max(1, int(w)), max(1, int(h))
     dpr = dpr if dpr and dpr > 0 else 1.0
     pm = QtGui.QPixmap(int(w * dpr), int(h * dpr))
@@ -497,7 +702,7 @@ def render_code_pixmap(code, language, w, h, dpr=1.0):
 
     doc = QtGui.QTextDocument()
     font = mono_font()
-    font.setPixelSize(11)
+    font.setPixelSize(int(min(22, max(10, h / 4.5))))
     doc.setDefaultFont(font)
     doc.setDocumentMargin(0.0)
     doc.setPlainText(code if code.strip() else "（空代码块）")
@@ -507,33 +712,13 @@ def render_code_pixmap(code, language, w, h, dpr=1.0):
     base.setForeground(QtGui.QColor(_TEXT_COLOR))
     cursor.mergeCharFormat(base)     # 默认前景色是黑，深底上必须提亮
     make_highlighter(language, doc)
-
-    fm = QtGui.QFontMetrics(font)
-    line_h = fm.height()
-    avail = max(1.0, w - _GUTTER_W - 8)
-    scale = min(1.0, avail / max(1.0, doc.idealWidth()))
+    # 长行折行（不缩字）；竖向超出部分被裁掉 = 内容截断
+    doc.setTextWidth(max(1.0, w - 8))
 
     painter = QtGui.QPainter(pm)
-    painter.fillRect(0, 0, _GUTTER_W, h, QtGui.QColor("#141417"))
-    painter.fillRect(_GUTTER_W, 0, 1, h, QtGui.QColor("#2a2a30"))
-    painter.setFont(font)
-    painter.setPen(QtGui.QColor("#55555c"))
-    total = max(1, doc.blockCount())
-    step = max(1.0, line_h * scale)
-    y, n = 4.0, 1
-    while y + step <= h and n <= total:
-        painter.drawText(2, int(y), _GUTTER_W - 8, int(round(step)),
-                         QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter,
-                         str(n))
-        y += step
-        n += 1
-    painter.save()
-    painter.setClipRect(QtCore.QRectF(_GUTTER_W + 1, 0,
-                                      w - _GUTTER_W - 1, h))
-    painter.translate(_GUTTER_W + 5, 4)
-    painter.scale(scale, scale)
+    painter.setClipRect(QtCore.QRectF(0, 0, w, h))
+    painter.translate(4, 3)
     doc.drawContents(painter)
-    painter.restore()
     painter.end()
     return pm
 

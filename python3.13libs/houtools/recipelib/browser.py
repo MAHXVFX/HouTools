@@ -1442,6 +1442,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         代码块内容存 metadata、不依赖库文件——未配置库目录也照常加载。"""
         metadata.migrate_legacy_thumb_paths()  # 旧版绝对路径 → 相对插件根
         metadata.migrate_colliding_doc_dirs()  # safe_name 撞名 → 摘要名（幂等）
+        codeblock.migrate_legacy_code_blocks()  # 旧 json 段 → 一卡一文件（幂等）
         self._code_infos = codeblock.list_code_infos()
         lib_dirs = metadata.get_lib_dirs()
         self._recipes = []
@@ -2461,7 +2462,12 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         """
         drag = QtGui.QDrag(self)
         mime = QtCore.QMimeData()
-        mime.setText(info.code)
+        # MIME 文本必须 CRLF：Houdini VEX 编辑框的行模型按 \r\n 切行，
+        # 投 \n-only 会整段挤成一行且排版错乱（2026-10-18 会话实测——
+        # 内容全在、逐字删除才露出后续行）；Windows 文本交换一律 CRLF，
+        # Qt 自家文本控件收到 \r\n 也会归一化回 \n，双投无副作用
+        mime.setText(info.code.replace("\r\n", "\n")
+                     .replace("\n", "\r\n"))
         drag.setMimeData(mime)
         pm = codeblock.render_code_pixmap(
             info.code, info.language, 72, 48,
@@ -2507,41 +2513,38 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
                 self._update_preview(current)
 
     def _new_code_block(self):
-        """空白数据区右键「新建代码块」：弹窗录入，确认才落库；创建后
-        切到「代码块」段并选中新卡片（其他段看不到它，主动亮出来）。"""
+        """空白数据区右键「新建代码块」：弹窗录入（内部名称实时查重，
+        重名/非法禁用确定键），确认才落盘为一卡一文件；创建后切到
+        「代码块」段并选中新卡片（其他段看不到它，主动亮出来）。"""
         dlg = codeblock.CodeEditorDialog(self, info=None)
         if dlg.exec_() != QtWidgets.QDialog.Accepted:
             dlg.deleteLater()   # exec_ 的模态框用完即释放，防积存
             return
-        display, language, code = dlg.result_values()
+        stem, language, code = dlg.result_values()
         dlg.deleteLater()
-        name = metadata.unique_code_name(display, language)
-        metadata.set_code_block(name, language, code)
-        if display:
-            metadata.set_display_name(name, display)
+        codeblock.save_code(stem, language, code)
         self._apply_code_blocks()
         self._select_category(KEY_CODE)
         for i in range(self.list.count()):
-            if self.list.item(i).data(QtCore.Qt.UserRole) == name:
+            if self.list.item(i).data(QtCore.Qt.UserRole) == stem:
                 self.list.setCurrentRow(i)
                 break
-        self.status.setText("已创建代码块「{}」".format(display or name))
+        self.status.setText("已创建代码块「{}」（{}）".format(
+            stem, codeblock.LANGUAGE_LABELS[language]))
 
     def _edit_code(self, info):
-        """编辑代码块内容/语言/显示名（内部名与元数据键不变）。"""
+        """编辑代码块内容/语言（内部名称创建后不可改——弹窗只读）。"""
         dlg = codeblock.CodeEditorDialog(self, info=info)
         if dlg.exec_() != QtWidgets.QDialog.Accepted:
             dlg.deleteLater()   # exec_ 的模态框用完即释放，防积存
             return
-        display, language, code = dlg.result_values()
+        stem, language, code = dlg.result_values()
         dlg.deleteLater()
-        metadata.set_code_block(info.name, language, code)
-        metadata.set_display_name(info.name, display)   # 空串=恢复自动名
+        codeblock.save_code(info.name, language, code)   # 改语言=搬文件
         self._thumb_cache.pop(info.name, None)
         self._cover_cache.clear()   # 代码变了：代码文本缩略图全部重渲染
         self._apply_code_blocks()
-        self.status.setText("已更新代码块「{}」".format(
-            display or info.display_label))
+        self.status.setText("已更新代码块「{}」".format(info.name))
 
     def _delete_code_block(self, info):
         box = QtWidgets.QMessageBox(self)
@@ -2555,7 +2558,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         box.deleteLater()   # exec_ 的模态框用完即释放，防积存
         if choice != QtWidgets.QMessageBox.Yes:
             return
-        metadata.delete_code_block(info.name)
+        codeblock.delete_code(info.name, info.language)
         metadata.clear_thumb(info.name)
         metadata.set_favorite(info.name, False)
         metadata.set_tags(info.name, [])

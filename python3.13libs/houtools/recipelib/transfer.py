@@ -13,16 +13,18 @@ Houdini 按库优先级二选一，行为不可预期，宁跳过不覆盖（导
 
 zip 布局（manifest.json 的 format_version=1）：
   manifest.json            # 格式版本/导出信息/hda_files（文件→内含 recipe 名）
-  recipelib.json           # 过滤后的元数据；thumbs 值改写为包内路径 thumbs/<名>；
-                           #   code_blocks 段携带代码块卡片（v1 起向后兼容——
-                           #   旧包没有该键，导入按空处理）
+  recipelib.json           # 过滤后的元数据；thumbs 值改写为包内路径 thumbs/<名>
   thumbs/<safe名>.<ext>
   docs/<safe名>/doc.md + assets/*
+  vex_python_lib/<语言>/<内部名>.h|.py   # 代码块（一卡一文件，随包直传）
   recipes/<原文件名>.hda     # 仅勾选「连同工具打包」时
 
-代码块随元数据文件整体打包（不单独成文件）：调用方传入的条目列表里
-含代码块 CodeInfo（同样暴露 .name），标签/收藏/缩略图/文档按内部名
-过滤的既有逻辑对其自动生效；导入合并语义 = 包内覆盖同名。
+代码块（2026-10-18 起一卡一文件，见 codeblock.py）按文件整体随包走，
+包内路径镜像本地布局（vex_python_lib/<语言>/<名>），导入时解回
+settings/vex_python_lib/；调用方传入的条目列表里含代码块 CodeInfo
+（同样暴露 .name），标签/收藏/缩略图/文档按内部名过滤的既有逻辑对其
+自动生效。**旧包兼容**：早期版本把代码放在 recipelib.json 的
+code_blocks 段——读取端仍解析该键，导入时落成文件并改挂元数据键。
 
 零 hou 依赖（枚举由调用方传入 store.list_recipes 的结果；导入后的库
 安装走浏览器 reload() → ensure_libraries_installed 链路）——本模块只
@@ -41,7 +43,7 @@ from datetime import datetime
 from pathlib import Path
 
 from houtools.core.log import get_logger
-from houtools.recipelib import metadata
+from houtools.recipelib import codeblock, metadata
 
 log = get_logger("recipelib.transfer")
 
@@ -53,6 +55,7 @@ APP_TAG = "HouTools Recipe Library"
 _THUMB_ARC_DIR = "thumbs/"
 _DOC_ARC_DIR = "docs/"
 _HDA_ARC_DIR = "recipes/"
+_CODE_ARC_DIR = "vex_python_lib/"
 
 
 class TransferError(RuntimeError):
@@ -71,9 +74,9 @@ def _norm(path):
 
 
 def _compress_for(arcname):
-    """json/md 走 deflate，其余（png/gif/视频/hda）原样存储——媒体本身
-    已压缩，deflate 只烧 CPU 不减体积。"""
-    if arcname.lower().endswith((".json", ".md", ".txt")):
+    """json/md/代码文本走 deflate，其余（png/gif/视频/hda）原样存储——
+    媒体本身已压缩，deflate 只烧 CPU 不减体积。"""
+    if arcname.lower().endswith((".json", ".md", ".txt", ".h", ".py")):
         return zipfile.ZIP_DEFLATED
     return zipfile.ZIP_STORED
 
@@ -174,6 +177,21 @@ def export_recipes(recipes, zip_path, include_hda=True, progress=None):
             hda_files[full_arc] = {"original": base, "recipes": rec_names}
             entries.append((full_arc, lib))
 
+    # 代码块：一卡一文件，包内路径镜像本地布局
+    code_names = []
+    for item in recipes:
+        if not getattr(item, "is_code", False):
+            continue
+        src = codeblock.code_path(item.name, item.language)
+        if not src.is_file():
+            log.warning("export: code file missing for %s, skipped",
+                        item.name)
+            continue
+        lang_dir = "python" if item.language == "python" else "vex"
+        arc = _CODE_ARC_DIR + lang_dir + "/" + src.name
+        entries.append((arc, str(src)))
+        code_names.append(item.name)
+
     packaged = {
         "favorites": [n for n in raw["favorites"] if n in name_set],
         "tags": {n: list(v) for n, v in (raw["tags"] or {}).items()
@@ -184,18 +202,14 @@ def export_recipes(recipes, zip_path, include_hda=True, progress=None):
                           if n in name_set and v},
         "colors": {n: v for n, v in (raw["colors"] or {}).items()
                    if n in name_set and v},
-        "code_blocks": {n: dict(rec) for n, rec in
-                        (raw.get("code_blocks") or {}).items()
-                        if n in name_set and isinstance(rec, dict)},
     }
-    code_names = sorted(packaged["code_blocks"])
     manifest = {
         "format_version": FORMAT_VERSION,
         "app": APP_TAG,
         "exported_at": datetime.now().isoformat(timespec="seconds"),
         "recipe_count": len(names),
         "recipes": names,
-        "code_blocks": code_names,
+        "code_blocks": sorted(code_names),
         "include_hda": bool(include_hda),
         "hda_files": hda_files,
     }
@@ -352,11 +366,34 @@ def _hda_plan(manifest, members, existing):
         if any(n in existing for n in rec):
             hda_skip.append((arc, rec))
         else:
-            # manifest 在可信边界之外：original 只取文件名（包作者可任意
-            # 伪造），防 ../ 相对路径与绝对路径把解包目标写出库目录之外
+            # manifest 在可信边界之外：original 只取文件名（包作者可
+            # 任意伪造），防 ../ 相对路径与绝对路径把解包目标写出库目录之外
             original = str((info or {}).get("original") or arc)
             hda_import.append((arc, os.path.basename(original)))
     return hda_import, hda_skip
+
+
+def _code_file_plan(members):
+    """包内 vex_python_lib/ 下的代码文件 → [(rel, 语言)]（读取阶段校验，
+    非法包在确认对话框处即被拒）。路径来自包成员（可信边界之外）：
+    一律过 _safe_rel，落盘时再取 basename 双保险。"""
+    plan = []
+    for m in members:
+        if not m.startswith(_CODE_ARC_DIR):
+            continue
+        rel = m[len(_CODE_ARC_DIR):]
+        parts = [p for p in rel.replace("\\", "/").split("/") if p]
+        if len(parts) != 2 or parts[0] not in metadata.CODE_LANGUAGES:
+            continue
+        lang = parts[0]
+        if not parts[1].lower().endswith(codeblock.FILE_EXT[lang]):
+            continue
+        try:
+            _safe_rel(rel)
+        except TransferError:
+            raise TransferError("包内代码路径不合法: {}".format(m))
+        plan.append((rel, lang))
+    return plan
 
 
 def inspect_package(zip_path, existing_names=()):
@@ -402,10 +439,13 @@ def import_package(zip_path, lib_dir=None, existing_names=(), progress=None):
         meta = _read_packaged_metadata(zf)
         members = {i.filename: i for i in zf.infolist() if not i.is_dir()}
         hda_import, hda_skip = _hda_plan(manifest, members, existing)
+        code_plan = _code_file_plan(members)
+        legacy_blocks = meta.get("code_blocks") or {}
         thumb_items = [(n, a) for n, a in meta["thumbs"].items()
                        if a in members]
         doc_dirs = _doc_dirs_of(members)
-        total = len(thumb_items) + len(doc_dirs) + len(hda_import) + 1
+        total = (len(thumb_items) + len(doc_dirs) + len(hda_import)
+                 + len(code_plan) + len(legacy_blocks) + 1)
         done = 0
 
         # ---- 1) 缩略图 ----
@@ -485,7 +525,32 @@ def import_package(zip_path, lib_dir=None, existing_names=(), progress=None):
                 hda_copied.append(dst)
                 done += 1
 
-        # ---- 4) 元数据合并，一次落盘（不可取消点：文件已就位） ----
+        # ---- 4) 代码块：文件解回 vex_python_lib/（同名覆盖）+ 旧包
+        # json 段落成文件并改挂元数据键（落盘目标只取 basename，包内
+        # 成员名不可信） ----
+        code_done = 0
+        root_abs = os.path.realpath(str(codeblock.CODELIB_ROOT)) + os.sep
+        for rel, lang in code_plan:
+            if _report(progress, done, total, "导入代码块 {}".format(rel)):
+                raise TransferCancelled()
+            target = codeblock.code_dir(lang) / os.path.basename(rel)
+            if not (os.path.realpath(str(target)) + os.sep).startswith(root_abs):
+                raise TransferError("包内代码路径不合法: {}".format(rel))
+            _extract_member(zf, members[_CODE_ARC_DIR + rel], target)
+            code_done += 1
+            done += 1
+        for name, rec in legacy_blocks.items():
+            if _report(progress, done, total, "导入代码块 {}".format(name)):
+                raise TransferCancelled()
+            stem = codeblock.free_stem(name.split("::")[-1] or name)
+            codeblock.save_code(stem, rec.get("language", "vex"),
+                                rec.get("code", ""))
+            if stem != name:
+                metadata.rekey_metadata_name(name, stem)
+            code_done += 1
+            done += 1
+
+        # ---- 5) 元数据合并，一次落盘（不可取消点：文件已就位） ----
         _report(progress, done, total, "合并元数据...")
         local = metadata.all_metadata()
         favs = list(local["favorites"])
@@ -500,11 +565,8 @@ def import_package(zip_path, lib_dir=None, existing_names=(), progress=None):
         display.update(meta["display_names"])
         colors = dict(local["colors"])
         colors.update(meta["colors"])
-        code_blocks = dict(local.get("code_blocks") or {})
-        code_blocks.update(meta.get("code_blocks") or {})
         metadata.bulk_set(favorites=favs, tags=tags, thumbs=merged_thumbs,
-                          display_names=display, colors=colors,
-                          code_blocks=code_blocks)
+                          display_names=display, colors=colors)
         # 登记本次导入产生文档的名字（unique_safe_name 撞名检测的数据源；
         # 按 manifest 里的 recipe 名反查，导出端的包内目录名与本地
         # doc_dir 在非撞名场景下天然一致）
@@ -515,7 +577,7 @@ def import_package(zip_path, lib_dir=None, existing_names=(), progress=None):
         "metadata_names": len(set(meta["tags"]) | set(meta["display_names"])
                               | set(meta["colors"]) | set(new_thumbs)
                               | set(meta["favorites"])),
-        "code_blocks": len(meta.get("code_blocks") or {}),
+        "code_blocks": code_done,
         "docs": len(doc_dirs),
         "thumbs": len(new_thumbs),
         "hda_copied": hda_copied,
