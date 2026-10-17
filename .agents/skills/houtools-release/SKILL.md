@@ -69,15 +69,12 @@ description: HouTools 发版流程（版本号更新、README/About 手册同步
 - 跑无头回归，必须全绿再继续：
   `"$(bash .agents/skills/houtools-release/scripts/find_houdini_python.sh)" tests/smoke_test.py`
 
-## 3. 提交 + 推送 main（此处不打 tag）
+## 3. 提交 + 推送 main
 
 提交拆两个（与仓库历史一致）：docs 改动一个 commit（`docs: ...`），版本号一个
 （`chore: 更新版本号至X.Y.Z`），推送 main：`git push origin main`。
 
-**不要在这一步打附注标签**——附注消息就是发行说明（历史发行版均如此，gitcode
-发行说明即照抄它），文本必须先经第 6 步用户确认才定稿。若先打 tag 推送再确认，
-用户要改措辞就得 `tag -f` 重打 + 强推远端（已公开的引用，fetch 过的副本不会
-自动更新），顺序是错的。
+附注标签不在这一步创建——第 6 步经用户确认发行说明后才创建。
 
 ## 4. 打包 HouTools.zip（文件名硬性要求）
 
@@ -124,8 +121,7 @@ release 端点——**附注 tag 的 message 就是上一版发行说明**，列
   （用户也可直接走选项卡自带的自由输入 Other 填意见，等效且少一步）。
 
 用户确认（或按意见修订完）后，把定稿文本写临时文件，创建附注标签（附注 =
-发行说明，单一来源）并与 main 一起推送——发行文本此刻才首次公开，此前任何
-修订都只是改草稿，不存在强推 tag 的场景。
+发行说明，单一来源）并与 main 一起推送：
 
 ```
 git tag -a vX.Y.Z -F <定稿文本文件>
