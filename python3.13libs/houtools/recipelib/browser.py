@@ -123,14 +123,6 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
                             mix(base.green(), c.green()),
                             mix(base.blue(), c.blue()))
 
-    @staticmethod
-    def _readable(color):
-        """标签行文字：主题色太暗时提亮，保证浅色调背景上可读。"""
-        c = QtGui.QColor(color)
-        if c.lightness() < 90:
-            c = c.lighter(180)
-        return c
-
     def text_block_height(self):
         """缩略图以下文字区的总高度（与 paint 的行序严格一致）。
 
@@ -185,17 +177,16 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
         painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
 
         # 整卡主题（参考官方 Recipe Manager 卡片）：自定义颜色时边框/名字
-        # 竖条/标签行用主题色，背景铺主题色混暗底——文字区 0.35、缩略图区
-        # 更暗 0.12 分出层次；未设置颜色时为默认灰主题
+        # 竖条用主题色，背景铺主题色混暗底——文字区 0.35、缩略图区
+        # 更暗 0.12 分出层次；未设置颜色时为默认灰主题。标签行文字不随
+        # 主题色（2026-10 用户指定），用与显示名一致的固定白
         custom = metadata.get_color(info.name) if info else ""
         if custom:
             theme = QtGui.QColor(custom)
             bar = QtGui.QColor(theme)
-            tag_color = self._readable(theme)
         else:
             theme = QtGui.QColor(self.DEFAULT_THEME)
             bar = QtGui.QColor(self.BAR_DEFAULT)
-            tag_color = QtGui.QColor("#c0c0c8")
         bg = self._tint(theme, 0.35)
         if selected:
             bg = bg.lighter(115)
@@ -286,7 +277,7 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
         y = _line(self._type_line(info), "#a8a8b0")
         y = _line(info.houdini_version, "#a8a8b0")
         _line(" ".join("#" + t for t in metadata.get_tags(info.name)),
-              tag_color)
+              "#eeeeee")
         painter.restore()
 
     @staticmethod
@@ -1276,8 +1267,11 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.tags_view = QtWidgets.QLabel()
         self.tags_view.setWordWrap(True)
         self.tags_view.setAlignment(QtCore.Qt.AlignCenter)
+        # 标签文字用固定配色（同显示名称文字的固定白），不随卡片主题色
+        # 走——2026-10 用户指定；预览面板与卡片标签行均不再取主题色
         self.tags_view.setStyleSheet(
-            "color: #e8e8ec; background: transparent; border: none;")
+            "color: #e8e8ec; font-weight: bold; font-size: 14px; "
+            "background: transparent; border: none;")
         self.tags_panel = QtWidgets.QFrame()
         self.tags_panel.setObjectName("tagsPanel")
         self.tags_panel.setStyleSheet(
@@ -1286,8 +1280,13 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         tags_lay = QtWidgets.QVBoxLayout(self.tags_panel)
         tags_lay.setContentsMargins(8, 3, 8, 3)   # 压低内边距与按钮等高
         tags_lay.addWidget(self.tags_view)
-        self.tags_apply_btn = QtWidgets.QPushButton("标签设置")
-        self.tags_apply_btn.setToolTip("在弹窗中修改标签（逗号分隔）")
+        # 标签设置入口 = 标签栏右键（原右下角按钮取消，2026-10 用户指定）；
+        # 右键事件落在内层 QLabel 或外层 QFrame 上，两层都接
+        for _tw in (self.tags_panel, self.tags_view):
+            _tw.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+            _tw.customContextMenuRequested.connect(
+                self._on_tags_context_menu)
+            _tw.setToolTip("右键设置标签（逗号分隔）")
 
         pv = QtWidgets.QVBoxLayout()
         pv.setContentsMargins(0, 0, 0, 0)
@@ -1297,12 +1296,9 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         pv.addSpacing(8)
         pv.addWidget(self.preview_comment, 1)
         pv.addWidget(self.preview_doc, 1)
-        tag_row = QtWidgets.QHBoxLayout()
-        tag_row.addWidget(self.tags_panel, 1)
-        tag_row.addWidget(self.tags_apply_btn)
-        pv.addLayout(tag_row)
+        pv.addWidget(self.tags_panel)
         # 收藏/编辑文档/设置缩略图走右键菜单，应用走双击/拖拽卡片——
-        # 面板底部只保留标签设置，不放重复入口
+        # 面板底部不放重复入口
 
         preview_panel = QtWidgets.QWidget()
         preview_panel.setLayout(pv)
@@ -1334,7 +1330,6 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         # 逐步全清会让每一步都重算全部缩略图（卡顿）；旧尺寸条目由
         # thumb_pixmap 的缓存上限兜底。gridSize 更新保持在 valueChanged
         self.size_slider.sliderReleased.connect(self._cover_cache.clear)
-        self.tags_apply_btn.clicked.connect(self._edit_tags)
 
         self._search_timer = QtCore.QTimer(self)
         self._search_timer.setSingleShot(True)
@@ -1952,9 +1947,6 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.preview_comment.setVisible(True)
         self.preview_doc.setVisible(False)
         self.tags_view.setText("（无标签）")
-        self._apply_tags_theme(None)
-        for btn in (self.tags_apply_btn,):
-            btn.setEnabled(False)
 
     def _view_image(self):
         """点击预览缩略图：弹大图查看器（原图分辨率，GIF 播放动画）。"""
@@ -1971,8 +1963,6 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         dlg.deleteLater()   # exec_ 的模态框用完即释放，防积存
 
     def _update_preview(self, info):
-        for btn in (self.tags_apply_btn,):
-            btn.setEnabled(True)
         self._preview_info = info
         fav = metadata.is_favorite(info.name)
         self.preview_name.setText(self._display_label(info))
@@ -2014,7 +2004,6 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             self.preview_comment.setText(
                 info.comment or "（无备注——点「编辑文档」补一篇用法说明）")
         self._show_tags(metadata.get_tags(info.name))
-        self._apply_tags_theme(info)
 
         # 大图预览：GIF 动起来，其余静态缩放；有图时光标手形提示可点。
         # 原图存 _preview_pm（面板变宽时 _refresh_preview_image 从原图
@@ -2449,27 +2438,18 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.tags_view.setText(
             " ".join("#" + t for t in tags) if tags else "（无标签）")
 
-    def _apply_tags_theme(self, info):
-        """标签展示卡片主题：与卡片颜色一致（用户自定义色）；未设色时
-        默认灰。文字加大加粗加亮，背景为主题色混暗底。"""
-        custom = metadata.get_color(info.name) if info else ""
-        if custom:
-            theme = QtGui.QColor(custom)
-            text = _CardDelegate._readable(theme)
-        else:
-            theme = QtGui.QColor(_CardDelegate.DEFAULT_THEME)
-            text = QtGui.QColor("#e8e8ec")
-        bg = _CardDelegate._tint(theme, 0.35)
-        self.tags_panel.setStyleSheet(
-            "QFrame#tagsPanel {{ background-color: rgb({}, {}, {}); "
-            "border: 1px solid rgb({}, {}, {}); border-radius: 6px; }}".format(
-                bg.red(), bg.green(), bg.blue(),
-                theme.red(), theme.green(), theme.blue()))
-        self.tags_view.setStyleSheet(
-            "QLabel {{ color: rgb({}, {}, {}); font-weight: bold; "
-            "font-size: 14px; background: transparent; "
-            "border: none; }}".format(
-                text.red(), text.green(), text.blue()))
+    def _on_tags_context_menu(self, pos):
+        """标签栏右键：「标签设置」（原右下角按钮迁入，2026-10 用户指定）。
+        无选中 recipe 时右键不弹。"""
+        if self._preview_info is None:
+            return
+        w = self.sender() or self.tags_panel
+        menu = QtWidgets.QMenu(w)
+        act_edit = menu.addAction("标签设置")
+        act = menu.exec_(w.mapToGlobal(pos))
+        menu.deleteLater()   # exec_ 的模态菜单用完即释放，防积存
+        if act is act_edit:
+            self._edit_tags()
 
     def _edit_tags(self):
         """「标签设置」弹窗：确认后才写入（展示区保持只读）。"""

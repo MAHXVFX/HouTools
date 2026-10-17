@@ -1358,7 +1358,14 @@ def main():
                 assert win.preview_name.text() == "Pyro A", win.preview_name.text()
                 assert win.preview_meta.text().startswith(
                     "内部名称: houtools::pyro::a"), win.preview_meta.text()
-                assert win.tags_apply_btn.isEnabled()
+                # 标签栏右键随选中就绪（原「标签设置」按钮已取消，改为
+                # 标签栏右键菜单——弹出即视为就绪，不选菜单项）
+                from PySide6 import QtCore
+                with patch("houtools.recipelib.browser.QtWidgets.QMenu.exec_",
+                           return_value=None) as mock_menu:
+                    win.tags_panel.customContextMenuRequested.emit(
+                        QtCore.QPoint(10, 10))
+                assert mock_menu.called, "选中后标签栏右键应可弹出菜单"
                 # 自定义显示名（中文）覆盖网格文本与搜索；
                 # 收藏不再加名字前缀，角标合成在图标里（_icon_for）
                 rl_meta.set_display_name("houtools::pyro::a", "火焰·常用")
@@ -1404,9 +1411,14 @@ def main():
                 assert win.meta_cell_version.text() == "版本: "
                 assert win.meta_cell_targets.text() == "焦点: "
                 assert win.preview_comment.isVisibleTo(win)
-                assert not win.tags_apply_btn.isEnabled()
+                # 标签栏右键（原右下角按钮迁入）：空态无选中不得拉起弹窗
+                from PySide6 import QtCore
+                with patch("houtools.recipelib.browser._PromptDialog.exec_") \
+                        as mock_dlg:
+                    win.tags_panel.customContextMenuRequested.emit(
+                        QtCore.QPoint(10, 10))
+                assert not mock_dlg.called, "空态右键不得拉起标签设置"
                 win.list.setCurrentRow(0)
-                assert win.tags_apply_btn.isEnabled()
                 rl_meta.write_doc("houtools::pyro::a", "# 标题甲\n\n正文乙\n")
                 win.list.setCurrentRow(-1)  # 行未变化不触发选中信号，先清再选
                 win.list.setCurrentRow(0)
@@ -1415,7 +1427,6 @@ def main():
                 # 文档渲染区右键：QTextBrowser 自带英文标准菜单必须已禁用
                 # （CustomContextMenu 只发信号）；主面板自建「编辑文档」
                 # 菜单，选中后走 _open_doc_for 打开编辑器
-                from PySide6 import QtCore
                 assert win.preview_doc.contextMenuPolicy() \
                     == QtCore.Qt.CustomContextMenu
                 # 文档区右键（有文档）：菜单 = 编辑文档 + 打开文档文件夹；
@@ -1446,16 +1457,26 @@ def main():
                     rl_meta.doc_dir("houtools::pyro::a"))
                 assert not win.preview_comment.isVisibleTo(win)
                 # 标签设置弹窗：确认后 _apply_filter 须恢复选中态——
-                # 否则 _selected_info() 变 None，按钮第二次点击"失灵"
-                with patch("houtools.recipelib.browser._PromptDialog.exec_",
+                # 否则 _selected_info() 变 None，再次右键"失灵"；
+                # 两条发射路径都验证（外层 QFrame / 内层 QLabel）
+                def _exec_tags_menu(menu, *_a, **_k):
+                    texts = [a.text() for a in menu.actions()]
+                    assert texts == ["标签设置"], texts
+                    return menu.actions()[0]
+
+                with patch("houtools.recipelib.browser.QtWidgets.QMenu.exec_",
+                           _exec_tags_menu), \
+                     patch("houtools.recipelib.browser._PromptDialog.exec_",
                            side_effect=lambda *_a, **_k:
                                QtWidgets.QDialog.Accepted), \
                      patch("houtools.recipelib.browser._PromptDialog.text_value",
                            return_value="夜灯, 常用"):
-                    win.tags_apply_btn.click()
+                    win.tags_panel.customContextMenuRequested.emit(
+                        QtCore.QPoint(10, 10))
                     assert rl_meta.get_tags("houtools::pyro::a") \
                         == ["夜灯", "常用"]
-                    win.tags_apply_btn.click()   # 第二次须仍能打开
+                    win.tags_view.customContextMenuRequested.emit(
+                        QtCore.QPoint(10, 10))   # 第二次须仍能打开
                 assert rl_meta.get_tags("houtools::pyro::a") == ["夜灯", "常用"]
                 assert win.tags_view.text() == "#夜灯 #常用"
                 assert win.list.currentItem() is not None, "选中态须保留"
@@ -1507,7 +1528,11 @@ def main():
                 assert win.list.currentItem() is not None, "存活选中被弄丢"
                 assert win.preview_name.text() == "Light B", \
                     win.preview_name.text()
-                assert win.tags_apply_btn.isEnabled()
+                with patch("houtools.recipelib.browser.QtWidgets.QMenu.exec_",
+                           return_value=None) as mock_menu:
+                    win.tags_panel.customContextMenuRequested.emit(
+                        QtCore.QPoint(10, 10))
+                assert mock_menu.called, "存活选中下标签栏右键应可弹出菜单"
                 win._select_category("cat::")  # 选中被过滤掉 → 预览复位
                 assert win.list.currentItem() is None
                 assert win.preview_name.text() == "", win.preview_name.text()
