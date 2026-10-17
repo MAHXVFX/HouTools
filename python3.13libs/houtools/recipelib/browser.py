@@ -1185,6 +1185,12 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             "border-radius: 6px; color: #666666;")
         self.preview_label.clicked.connect(self._view_image)
         self.preview_label.resized.connect(self._refresh_preview_image)
+        # 预览缩略图右键 = 缩略图设置入口（设置/截取/清除，与卡片右键
+        # 同一套 handler）；QLabel 默认右键本就不弹菜单，无需屏蔽默认行为
+        self.preview_label.setContextMenuPolicy(
+            QtCore.Qt.CustomContextMenu)
+        self.preview_label.customContextMenuRequested.connect(
+            self._on_thumb_context_menu)
 
         self.preview_name = _PreviewNameLabel()
         self.preview_name.setWordWrap(True)
@@ -2019,7 +2025,6 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         thumb = metadata.get_thumb(info.name)
         if thumb:
             self.preview_label.setCursor(QtCore.Qt.PointingHandCursor)
-            self.preview_label.setToolTip("点击查看大图")
         else:
             self.preview_label.setCursor(QtCore.Qt.ArrowCursor)
             self.preview_label.setToolTip("")
@@ -2307,10 +2312,48 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             anchor = w.mapToGlobal(pos)
         menu = QtWidgets.QMenu(w)
         act_doc = menu.addAction("编辑文档")
+        # 目录不存在（无文档）不显示打开入口，与卡片菜单「清除缩略图」
+        # 仅在有缩略图时显示同款约定
+        act_open_dir = None
+        if os.path.isdir(metadata.doc_dir(info.name)):
+            act_open_dir = menu.addAction("打开文档文件夹")
         act = menu.exec_(anchor)
         menu.deleteLater()   # exec_ 的模态菜单用完即释放，防积存
         if act is act_doc:
             self._open_doc_for(info)
+        elif act is not None and act is act_open_dir:
+            self._open_doc_dir(info)
+
+    def _open_doc_dir(self, info):
+        """资源管理器打开该配方的文档文件夹（doc.md + assets/）。
+        失败只状态栏提示不抛（文件夹可能被占用或已被外部删除）。"""
+        path = metadata.doc_dir(info.name)
+        try:
+            os.startfile(path)
+        except OSError as exc:
+            log.warning("cannot open doc folder %s: %s", path, exc)
+            self.status.setText("无法打开文档文件夹: {}".format(exc))
+
+    def _on_thumb_context_menu(self, pos):
+        """预览缩略图区右键：缩略图设置入口（与卡片右键同一套 handler）。
+        无选中 recipe 时右键不弹。"""
+        info = self._preview_info
+        if info is None:
+            return
+        menu = QtWidgets.QMenu(self.preview_label)
+        act_set = menu.addAction("设置缩略图")
+        act_snip = menu.addAction("截取缩略图")
+        act_clear = None
+        if metadata.get_thumb(info.name):
+            act_clear = menu.addAction("清除缩略图")
+        act = menu.exec_(self.preview_label.mapToGlobal(pos))
+        menu.deleteLater()   # exec_ 的模态菜单用完即释放，防积存
+        if act is act_set:
+            self._set_thumb(info)
+        elif act is act_snip:
+            self._snip_thumb(info)
+        elif act is not None and act is act_clear:
+            self._clear_thumb(info, self.list.currentItem())
 
     def _set_color(self, info):
         """卡片颜色框取色（非原生 QColorDialog，中文按钮）。
@@ -2481,7 +2524,7 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
     def _clear_thumb(self, info, item):
         """清除缩略图，带确认防误触：只删工具内保存的缩略图副本，
         用户原图不受影响。item 是右键命中的卡片（右键不改选中，
-        未必是 current）。"""
+        未必是 current）；预览缩略图区入口没有命中卡片，传 None。"""
         box = QtWidgets.QMessageBox(self)
         box.setWindowTitle("清除缩略图")
         box.setText("确定清除「{}」的缩略图？\n"
@@ -2498,7 +2541,8 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         metadata.clear_thumb(info.name)
         self._thumb_cache.pop(info.name, None)
         self._cover_cache.clear()
-        item.setIcon(self._base_icon(info))
+        if item is not None:
+            item.setIcon(self._base_icon(info))
         self._refresh_current_item()
 
     # ---------------- 截取缩略图（屏幕框选，capture.SnipOverlay） ----------------

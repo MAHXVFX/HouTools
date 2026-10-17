@@ -1418,19 +1418,32 @@ def main():
                 from PySide6 import QtCore
                 assert win.preview_doc.contextMenuPolicy() \
                     == QtCore.Qt.CustomContextMenu
-
-                def _fake_exec(menu, *_a, **_k):
-                    assert [a.text() for a in menu.actions()] == ["编辑文档"]
+                # 文档区右键（有文档）：菜单 = 编辑文档 + 打开文档文件夹；
+                # 选「编辑文档」须打开编辑器
+                def _exec_edit_doc(menu, *_a, **_k):
+                    texts = [a.text() for a in menu.actions()]
+                    assert texts == ["编辑文档", "打开文档文件夹"], texts
                     return menu.actions()[0]
 
                 with patch("houtools.recipelib.browser.QtWidgets.QMenu.exec_",
-                           _fake_exec):
+                           _exec_edit_doc):
                     win.preview_doc.customContextMenuRequested.emit(
                         QtCore.QPoint(10, 10))
                 assert isinstance(win._doc_dialog, rl_browser.DocEditorDialog)
                 win._doc_dialog.close()
                 win._doc_dialog.deleteLater()
                 win._doc_dialog = None
+                # 选「打开文档文件夹」须以文档目录调 os.startfile
+                def _exec_open_dir(menu, *_a, **_k):
+                    return menu.actions()[1]
+
+                with patch("houtools.recipelib.browser.QtWidgets.QMenu.exec_",
+                           _exec_open_dir), \
+                     patch.object(rl_browser.os, "startfile") as mock_start:
+                    win.preview_doc.customContextMenuRequested.emit(
+                        QtCore.QPoint(10, 10))
+                mock_start.assert_called_once_with(
+                    rl_meta.doc_dir("houtools::pyro::a"))
                 assert not win.preview_comment.isVisibleTo(win)
                 # 标签设置弹窗：确认后 _apply_filter 须恢复选中态——
                 # 否则 _selected_info() 变 None，按钮第二次点击"失灵"
@@ -1450,17 +1463,38 @@ def main():
                 assert win.preview_comment.isVisibleTo(win)
                 assert not win.preview_doc.isVisibleTo(win)
                 # 无文档 recipe：文档区隐藏，备注区是唯一右键入口——
-                # 同样弹「编辑文档」并打开编辑器
+                # 同样弹「编辑文档」（无文档目录，无「打开文档文件夹」项）
+                # 并打开编辑器
                 assert win.preview_comment.contextMenuPolicy() \
                     == QtCore.Qt.CustomContextMenu
+
+                def _exec_comment(menu, *_a, **_k):
+                    texts = [a.text() for a in menu.actions()]
+                    assert texts == ["编辑文档"], texts
+                    return menu.actions()[0]
+
                 with patch("houtools.recipelib.browser.QtWidgets.QMenu.exec_",
-                           _fake_exec):
+                           _exec_comment):
                     win.preview_comment.customContextMenuRequested.emit(
                         QtCore.QPoint(10, 10))
                 assert isinstance(win._doc_dialog, rl_browser.DocEditorDialog)
                 win._doc_dialog.close()
                 win._doc_dialog.deleteLater()
                 win._doc_dialog = None
+                # 预览缩略图区右键：缩略图设置入口（无缩略图时无「清除」
+                # 项）；不选菜单项，避免拉起文件对话框
+                assert win.preview_label.contextMenuPolicy() \
+                    == QtCore.Qt.CustomContextMenu
+
+                def _exec_thumb(menu, *_a, **_k):
+                    texts = [a.text() for a in menu.actions()]
+                    assert texts == ["设置缩略图", "截取缩略图"], texts
+                    return None
+
+                with patch("houtools.recipelib.browser.QtWidgets.QMenu.exec_",
+                           _exec_thumb):
+                    win.preview_label.customContextMenuRequested.emit(
+                        QtCore.QPoint(10, 10))
                 rl_meta.set_tags("houtools::pyro::a", [])
                 rl_meta.delete_doc_dir("houtools::pyro::a")
                 rl_meta.set_display_name("houtools::pyro::a", None)
