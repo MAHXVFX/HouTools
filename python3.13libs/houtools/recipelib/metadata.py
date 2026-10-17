@@ -36,6 +36,7 @@ _DEFAULTS = {
     "thumbs": {},          # 内部名 -> 缩略图绝对路径
     "display_names": {},   # 内部名 -> 用户自定义显示名（支持中文）
     "colors": {},          # 内部名 -> "#rrggbb"（卡片名字旁的颜色框）
+    "tag_colors": {},      # 标签名 -> "#rrggbb"（标签在各处的显示色）
     "docs": [],            # 内部名 -> 有文档登记（unique_safe_name 撞名
                            #   检测的数据源之一；内部键，不随导出带走）
     "stems": {},           # 内部名 -> 已解析的文件名安全串（unique_safe_name
@@ -269,6 +270,33 @@ def set_color(name, color):
         color = ""
         all_colors.pop(name, None)
     _SETTINGS.set("colors", all_colors)
+    return color
+
+
+# --------------------------------------------------------------------------
+# 标签颜色（侧栏标签行 / 卡片标签行 / 预览面板按此色显示）
+# --------------------------------------------------------------------------
+
+def get_tag_color(tag):
+    """标签的自定义显示色（"#rrggbb"）；未设置返回空串。"""
+    return (_SETTINGS.get("tag_colors") or {}).get(tag) or ""
+
+
+def set_tag_color(tag, color):
+    """写入标签显示色；传空串/None 清除（恢复默认白）。
+
+    只接受 #rrggbb 形式的值（QColorDialog 产出），其余一律视为清除。
+    颜色跟随标签而非单个配方：删除 recipe 不清理（标签可能被其他
+    recipe 复用），标签从所有 recipe 消失后残留条目无害。
+    """
+    all_colors = dict(_SETTINGS.get("tag_colors") or {})
+    color = (str(color).strip() if color else "")
+    if re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+        all_colors[tag] = color
+    else:
+        color = ""
+        all_colors.pop(tag, None)
+    _SETTINGS.set("tag_colors", all_colors)
     return color
 
 

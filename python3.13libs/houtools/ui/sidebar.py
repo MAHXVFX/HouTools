@@ -8,6 +8,8 @@
 - SIDEBAR_HEADER_ROLE（bool）：段头行（画折叠箭头；不可选中由条目 flags 保证）
 - SIDEBAR_COUNT_ROLE（int）：行尾计数
 - SIDEBAR_ICON_ROLE（str）：行首图标种类
+- SIDEBAR_COLOR_ROLE（str）：行着色 "#rrggbb"（可选，标签颜色等场景；
+  行文字用可读化后的该色，图标线稿整体着色）
 """
 
 import math
@@ -23,11 +25,20 @@ log = get_logger("ui.sidebar")
 SIDEBAR_HEADER_ROLE = QtCore.Qt.UserRole + 1   # True=段头行
 SIDEBAR_COUNT_ROLE = QtCore.Qt.UserRole + 2    # 行尾计数
 SIDEBAR_ICON_ROLE = QtCore.Qt.UserRole + 3     # 行首图标种类
+SIDEBAR_COLOR_ROLE = QtCore.Qt.UserRole + 4    # 行着色 "#rrggbb"（可选）
 
 _FAV_SVG_PATH = (Path(__file__).resolve().parent.parent / "icons"
                  / "favorite_badge.svg")
 _FAV_SVG_RENDERER = False   # False=未初始化；None=不可用
-_SIDEBAR_ICON_CACHE = {}    # (kind, size, dpr) -> QPixmap
+_SIDEBAR_ICON_CACHE = {}    # (kind, size, dpr, tint) -> QPixmap
+
+
+def readable_on_dark(color):
+    """深色底上的可读色：颜色过暗时提亮（侧栏标签行/卡片标签行共用）。"""
+    c = QtGui.QColor(color)
+    if c.lightness() < 90:
+        c = c.lighter(180)
+    return c
 
 
 def _favorite_svg_renderer():
@@ -52,13 +63,15 @@ def _favorite_svg_renderer():
     return _FAV_SVG_RENDERER
 
 
-def sidebar_icon_pixmap(kind, size, dpr):
+def sidebar_icon_pixmap(kind, size, dpr, tint=None):
     """侧栏行首图标（扁平线稿风，参考外部蓝图管理面板）：grid/star/folder/tag/level。
 
     QPainter 手绘而非 SVG 文件：颜色随主题写死在函数里、不新增资源文件；
-    统一在 14×14 逻辑坐标绘制后缩放，按 (种类, 尺寸, DPR) 缓存保证高分屏不糊。
+    统一在 14×14 逻辑坐标绘制后缩放，按 (种类, 尺寸, DPR, tint) 缓存保证
+    高分屏不糊。tint 非空时线稿整体改用该色（标签色等场景），None 用
+    各 kind 的默认色。
     """
-    key = (kind, size, round(dpr, 2))
+    key = (kind, size, round(dpr, 2), tint)
     pm = _SIDEBAR_ICON_CACHE.get(key)
     if pm is not None:
         return pm
@@ -71,6 +84,8 @@ def sidebar_icon_pixmap(kind, size, dpr):
     color = {"grid": "#b4b4bc", "star": "#d9a544",
              "folder": "#a4a4ac", "tag": "#5b9bd5",
              "level": "#9b8cd9"}.get(kind, "#a4a4ac")
+    if tint:
+        color = tint
     if kind == "grid":
         pen = QtGui.QPen(QtGui.QColor(color), 1.2)
         pen.setJoinStyle(QtCore.Qt.RoundJoin)
@@ -221,6 +236,7 @@ class SidebarDelegate(QtWidgets.QStyledItemDelegate):
         is_header = bool(index.data(SIDEBAR_HEADER_ROLE))
         count = index.data(SIDEBAR_COUNT_ROLE)
         kind = index.data(SIDEBAR_ICON_ROLE)
+        color_hint = index.data(SIDEBAR_COLOR_ROLE) or None
         selected = bool(option.state & QtWidgets.QStyle.State_Selected)
         rect = QtCore.QRectF(option.rect)
 
@@ -257,7 +273,7 @@ class SidebarDelegate(QtWidgets.QStyledItemDelegate):
         if kind:
             widget = option.widget
             dpr = widget.devicePixelRatioF() if widget is not None else 1.0
-            pm = sidebar_icon_pixmap(kind, self.ICON_PX, dpr)
+            pm = sidebar_icon_pixmap(kind, self.ICON_PX, dpr, tint=color_hint)
             painter.drawPixmap(
                 int(round(x)),
                 int(round(rect.center().y() - self.ICON_PX / 2)), pm)
@@ -276,6 +292,10 @@ class SidebarDelegate(QtWidgets.QStyledItemDelegate):
                 text_color, count_color = "#d8d8de", "#d29a55"
         else:
             text_color, count_color = "#e2e2e8", "#a8a8b0"
+        if color_hint and not is_header:
+            # 带色的行（标签颜色）：文字用可读化后的标签色，深色过暗
+            # 会提亮（readable_on_dark），选中态仍白字覆盖
+            text_color = readable_on_dark(color_hint).name()
         if selected:
             text_color = count_color = "#ffffff"
         painter.setPen(QtGui.QColor(text_color))

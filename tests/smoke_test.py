@@ -1478,7 +1478,60 @@ def main():
                     win.tags_view.customContextMenuRequested.emit(
                         QtCore.QPoint(10, 10))   # 第二次须仍能打开
                 assert rl_meta.get_tags("houtools::pyro::a") == ["夜灯", "常用"]
-                assert win.tags_view.text() == "#夜灯 #常用"
+                assert "#夜灯" in win.tags_view.text() \
+                    and "#常用" in win.tags_view.text()
+                # 标签颜色：持久化 + 非法值视为清除
+                assert rl_meta.set_tag_color("夜灯", "#ff0000") == "#ff0000"
+                assert rl_meta.get_tag_color("夜灯") == "#ff0000"
+                assert rl_meta.set_tag_color("夜灯", "not-a-color") == ""
+                assert rl_meta.get_tag_color("夜灯") == ""
+                rl_meta.set_tag_color("夜灯", "#ff0000")
+                win._rebuild_sidebar()
+
+                def _find_sidebar_item(text):
+                    for i in range(win.sidebar.topLevelItemCount()):
+                        top = win.sidebar.topLevelItem(i)
+                        for j in range(top.childCount()):
+                            if top.child(j).text(0) == text:
+                                return top.child(j)
+                    return None
+
+                item_ye = _find_sidebar_item("夜灯")
+                assert item_ye is not None
+                assert item_ye.data(0, rl_browser.SIDEBAR_COLOR_ROLE) \
+                    == "#ff0000"
+                # 预览面板富文本按标签色着色（#ff0000 亮度不过暗不提亮）
+                win._update_preview(win._preview_info)
+                assert 'color: #ff0000;' in win.tags_view.text()
+                assert "#夜灯" in win.tags_view.text()
+                # 侧栏标签行右键 → 自定义颜色 → 对话框确认 → 持久化 +
+                # 重建后行角色更新
+                def _exec_color_menu(menu, *_a, **_k):
+                    texts = [a.text() for a in menu.actions()]
+                    assert texts == ["自定义颜色"], texts
+                    return menu.actions()[0]
+
+                from PySide6 import QtGui
+                with patch("houtools.recipelib.browser.QtWidgets.QMenu.exec_",
+                           _exec_color_menu), \
+                     patch("houtools.recipelib.browser.QtWidgets."
+                           "QColorDialog.exec_",
+                           return_value=QtWidgets.QDialog.Accepted), \
+                     patch("houtools.recipelib.browser.QtWidgets."
+                           "QColorDialog.currentColor",
+                           return_value=QtGui.QColor("#00aa00")):
+                    win.sidebar.customContextMenuRequested.emit(
+                        win.sidebar.visualItemRect(item_ye).center())
+                assert rl_meta.get_tag_color("夜灯") == "#00aa00"
+                assert _find_sidebar_item("夜灯").data(
+                    0, rl_browser.SIDEBAR_COLOR_ROLE) == "#00aa00"
+                # 非标签行（「全部」）右键不弹菜单
+                with patch("houtools.recipelib.browser.QtWidgets.QMenu.exec_") \
+                        as mock_menu:
+                    win.sidebar.customContextMenuRequested.emit(
+                        win.sidebar.visualItemRect(
+                            win.sidebar.topLevelItem(0)).center())
+                assert not mock_menu.called, "非标签行右键不得弹菜单"
                 assert win.list.currentItem() is not None, "选中态须保留"
                 win.list.setCurrentRow(1)
                 assert win.preview_comment.isVisibleTo(win)

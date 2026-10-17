@@ -18,6 +18,7 @@
 reload() 里经 store.list_recipes()（测试里打补丁替换）。
 """
 
+import html
 import os
 import time
 
@@ -29,8 +30,9 @@ from houtools.recipelib.crop import ThumbCropDialog
 from houtools.recipelib.capture import HIDE_DELAY_MS, SnipOverlay
 from houtools.recipelib.docs import DocEditorDialog, MarkdownMediaView, MediaDialog
 from houtools.ui import fonts as tool_fonts
-from houtools.ui.sidebar import (SIDEBAR_COUNT_ROLE, SIDEBAR_HEADER_ROLE,
-                                 SIDEBAR_ICON_ROLE, SidebarDelegate,
+from houtools.ui.sidebar import (SIDEBAR_COLOR_ROLE, SIDEBAR_COUNT_ROLE,
+                                 SIDEBAR_HEADER_ROLE, SIDEBAR_ICON_ROLE,
+                                 SidebarDelegate, readable_on_dark,
                                  sidebar_icon_pixmap)
 from houtools.ui.badge import FavoriteBadge
 from houtools.ui.dialogs import info, localize_buttons, localize_color_dialog, warn
@@ -276,8 +278,28 @@ class _CardDelegate(QtWidgets.QStyledItemDelegate):
 
         y = _line(self._type_line(info), "#a8a8b0")
         y = _line(info.houdini_version, "#a8a8b0")
-        _line(" ".join("#" + t for t in metadata.get_tags(info.name)),
-              "#eeeeee")
+        # 标签行逐标签着色：设了颜色的标签用可读化后的标签色，无色的用
+        # 固定白；超出文字区整体裁切（clip），不做逐 token 省略
+        tags = metadata.get_tags(info.name)
+        if tags:
+            tfm = painter.fontMetrics()
+            space_w = tfm.horizontalAdvance(" ")
+            tag_rect = QtCore.QRectF(card.left() + m, y, text_w, line_h)
+            painter.save()
+            painter.setClipRect(tag_rect)
+            tx = tag_rect.left()
+            for t in tags:
+                if tx > tag_rect.right():
+                    break
+                token = "#" + t
+                raw = metadata.get_tag_color(t)
+                color = readable_on_dark(raw).name() if raw else "#eeeeee"
+                painter.setPen(QtGui.QPen(QtGui.QColor(color)))
+                painter.drawText(
+                    QtCore.QRectF(tx, y, text_w, line_h),
+                    QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, token)
+                tx += tfm.horizontalAdvance(token) + space_w
+            painter.restore()
         painter.restore()
 
     @staticmethod
@@ -1131,6 +1153,10 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         self.sidebar.setMaximumWidth(280)
         self.sidebar.setItemDelegate(SidebarDelegate())
         self.sidebar.setObjectName("sidebarTree")
+        # 标签行右键 = 自定义标签颜色（_on_sidebar_context_menu，仅标签行）
+        self.sidebar.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.sidebar.customContextMenuRequested.connect(
+            self._on_sidebar_context_menu)
         # 行区（Qt 行绘制用 palette base 填充）与行以下空白区（viewport
         # 自身底色）在 Houdini 全局样式下色值不一致，出现亮暗分界——
         # viewport 显式同色 + delegate 整行铺底（_SidebarDelegate.paint），
@@ -1606,7 +1632,10 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         if tag_counts:
             tag = _add(None, "标签", len(tag_counts), KEY_TAG_HDR, header=True)
             for t in sorted(tag_counts, key=str.lower):
-                _add(tag, t, tag_counts[t], TAG_PREFIX + t, "tag")
+                it = _add(tag, t, tag_counts[t], TAG_PREFIX + t, "tag")
+                c = metadata.get_tag_color(t)
+                if c:
+                    it.setData(0, SIDEBAR_COLOR_ROLE, c)
             tag.setExpanded(bool(_UI_SETTINGS.get("tag_expanded")))
         if level_counts:
             lvl = _add(None, "层级", len(level_counts), KEY_LEVEL_HDR,
@@ -2345,30 +2374,47 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             self._clear_thumb(info, self.list.currentItem())
 
     def _set_color(self, info):
-        """卡片颜色框取色（非原生 QColorDialog，中文按钮）。
+        """卡片颜色框取色（_pick_color，颜色/恢复默认语义见其 docstring）。"""
+        color, cleared = self._pick_color(
+            "自定义颜色 - {}".format(self._display_label(info)),
+            metadata.get_color(info.name) or _CardDelegate.DEFAULT_THEME,
+            _CardDelegate.DEFAULT_THEME)
+        if color is None:
+            return
+        if cleared:
+            metadata.set_color(info.name, None)
+            self.status.setText("{}：颜色已恢复默认".format(
+                self._display_label(info)))
+        else:
+            metadata.set_color(info.name, color)
+            self.status.setText("{}：颜色已更新（{}）".format(
+                self._display_label(info), color))
+        self._refresh_current_item()
 
-        「恢复默认」= 清除自定义色（卡片回默认灰主题）：点击后预览色切到
-        默认主题色并置清除标志，用户点「确认」才生效；期间再选其他颜色
-        自动撤销标志。清除靠标志而非色值判断——用户如果本来就设的是
-        默认主题色，点恢复默认 + 确认也能清除。
+    def _pick_color(self, title, current, default):
+        """卡片颜色/标签颜色共用的非原生取色对话框（中文按钮）。
+
+        「恢复默认」= 清除自定义色：点击后预览色切到默认色并置清除
+        标志，用户点「确认」才生效；期间再选其他颜色自动撤销标志。
+        清除靠标志而非色值判断——用户如果本来就设的是默认色，点恢复
+        默认 + 确认也能清除。返回 (color|None, cleared)：取消 =
+        (None, False)；确认 = (色值, cleared)。
         """
-        current = metadata.get_color(info.name) or _CardDelegate.DEFAULT_THEME
         dlg = QtWidgets.QColorDialog(QtGui.QColor(current), self)
-        dlg.setWindowTitle("自定义颜色 - {}".format(self._display_label(info)))
+        dlg.setWindowTitle(title)
         dlg.setOption(QtWidgets.QColorDialog.DontUseNativeDialog, True)
         localize_buttons(dlg)
         localize_color_dialog(dlg)   # Pick Screen Color 等内部英文 → 中文
         state = {"clear": False}
-        hint = QtGui.QColor(_CardDelegate.DEFAULT_THEME)
+        hint = QtGui.QColor(default)
 
         def _on_changed(color):
-            if state["clear"] and color.name().lower() \
-                    != _CardDelegate.DEFAULT_THEME:
+            if state["clear"] and color.name().lower() != default.lower():
                 state["clear"] = False   # 用户又选了其他颜色
 
         def _reset_default():
             state["clear"] = True
-            dlg.setCurrentColor(hint)    # 视觉提示：默认主题色
+            dlg.setCurrentColor(hint)    # 视觉提示：默认色
 
         # QColorDialog 没有 QMessageBox 式 addButton：往内部按钮条插按钮
         bbox = dlg.findChild(QtWidgets.QDialogButtonBox)
@@ -2380,16 +2426,48 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
         accepted = dlg.exec_() == QtWidgets.QDialog.Accepted
         dlg.deleteLater()   # exec_ 的模态框用完即释放，防积存
         if not accepted:
+            return None, False
+        return dlg.currentColor().name(), state["clear"]
+
+    def _set_tag_color(self, tag):
+        """标签颜色取色：侧栏标签行/卡片标签行/预览面板按此色显示
+        （用户指定，同卡片主题色的交互模式）。"""
+        color, cleared = self._pick_color(
+            "自定义颜色 - #{}".format(tag),
+            metadata.get_tag_color(tag) or _CardDelegate.DEFAULT_THEME,
+            _CardDelegate.DEFAULT_THEME)
+        if color is None:
             return
-        if state["clear"]:
-            metadata.set_color(info.name, None)
-            self.status.setText("{}：颜色已恢复默认".format(
-                self._display_label(info)))
+        if cleared:
+            metadata.set_tag_color(tag, None)
+            self.status.setText("#{}：颜色已恢复默认".format(tag))
         else:
-            metadata.set_color(info.name, dlg.currentColor().name())
-            self.status.setText("{}：颜色已更新（{}）".format(
-                self._display_label(info), dlg.currentColor().name()))
-        self._refresh_current_item()
+            metadata.set_tag_color(tag, color)
+            self.status.setText("#{}：颜色已更新（{}）".format(tag, color))
+        # 标签色影响侧栏行/卡片标签行/预览面板三处显示，整层重建
+        self._rebuild_sidebar()
+        self._apply_filter()
+        if self._preview_info is not None:
+            self._update_preview(self._preview_info)
+
+    def _on_sidebar_context_menu(self, pos):
+        """侧栏右键：目前仅标签行有菜单（自定义标签颜色）。pos 是
+        viewport 坐标（QAbstractScrollArea 投递右键给 viewport）。"""
+        item = self.sidebar.itemAt(pos)
+        if item is None or item.data(0, SIDEBAR_HEADER_ROLE):
+            return
+        if item.data(0, SIDEBAR_ICON_ROLE) != "tag":
+            return
+        key = item.data(0, QtCore.Qt.UserRole)
+        if not key or not key.startswith(TAG_PREFIX):
+            return
+        tag = key[len(TAG_PREFIX):]
+        menu = QtWidgets.QMenu(self.sidebar)
+        act_color = menu.addAction("自定义颜色")
+        act = menu.exec_(self.sidebar.viewport().mapToGlobal(pos))
+        menu.deleteLater()   # exec_ 的模态菜单用完即释放，防积存
+        if act is act_color:
+            self._set_tag_color(tag)
 
     def _refresh_current_item(self):
         """当前条目按最新元数据重刷（收藏星标/图标/提示）。"""
@@ -2434,9 +2512,21 @@ class _RecipeLibraryWindow(QtWidgets.QWidget):
             self._display_label(info), "已收藏" if fav else "已取消收藏"))
 
     def _show_tags(self, tags):
-        """预览面板标签展示（# 前缀，与卡片标签行同款；只读不可编辑）。"""
-        self.tags_view.setText(
-            " ".join("#" + t for t in tags) if tags else "（无标签）")
+        """预览面板标签展示（# 前缀，与卡片标签行同款；只读不可编辑）。
+
+        富文本逐标签着色：设了颜色的标签按其颜色显示（同卡片标签行），
+        过暗的颜色经 readable_on_dark 提亮；标签名经 html.escape 防
+        用户标签内容被当 HTML 解析。"""
+        if not tags:
+            self.tags_view.setText("（无标签）")
+            return
+        parts = []
+        for t in tags:
+            raw = metadata.get_tag_color(t)
+            color = readable_on_dark(raw).name() if raw else "#e8e8ec"
+            parts.append('<span style="color: {};">#{}</span>'.format(
+                color, html.escape(t)))
+        self.tags_view.setText(" ".join(parts))
 
     def _on_tags_context_menu(self, pos):
         """标签栏右键：「标签设置」（原右下角按钮迁入，2026-10 用户指定）。
